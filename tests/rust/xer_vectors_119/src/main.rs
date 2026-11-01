@@ -37,14 +37,12 @@ fn check(label: &str, cond: bool, failures: &mut i32) {
 
 // -P files: PER-incompatible by design (alphabet or SIZE constraint
 // violation) — same set as the C++ leg's KNOWN_P; UPER encode must fail.
-// data-119-10-P.in is not in it: its SIZE(6) on UTF8String members is not
-// PER-visible (X.691 §10.3.18, §30.6) under the default --per-nkm-size=strict,
-// so it round-trips; asn1c makes that SIZE PER-visible and rejects it.
 fn known_p() -> HashSet<&'static str> {
     [
         "data-119-04-P.in",
         "data-119-06-P.in",
         "data-119-07-P.in",
+        "data-119-10-P.in",
         "data-119-11-P.in",
         "data-119-12-P.in",
         "data-119-13-P.in",

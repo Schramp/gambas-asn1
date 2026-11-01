@@ -718,7 +718,16 @@ public:
         const Constraints& pc = def.constraints;
         if (pc.flags & Constraints::PER_SIZE_INVISIBLE) {
             // X.691 §30.6: no PER-visible constraint on a non-known-multiplier
-            // string — encode as the unconstrained type.
+            // string — encode as the unconstrained type. The SIZE still bounds
+            // the values of the type, and a conforming sender does not send a
+            // value outside a non-extensible SIZE (X.691 §10.3, note), so such
+            // a value is rejected rather than written with the general length.
+            if ((pc.flags & Constraints::SIZE_CONSTRAINED) && !(pc.flags & Constraints::EXTENSIBLE) &&
+                (str.size() < static_cast<std::size_t>(pc.size_lower) ||
+                 str.size() > static_cast<std::size_t>(pc.size_upper))) {
+                stream.set_encode_failed("string length violates SIZE constraint");
+                return;
+            }
             TypeDescriptor plain = def;
             plain.constraints = Constraints{};
             encode(codec, stream, plain, src);

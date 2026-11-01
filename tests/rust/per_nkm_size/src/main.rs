@@ -50,20 +50,22 @@ fn main() {
     check(&format!("bytes {} == {expected}", hex(&bytes)), hex(&bytes) == expected, &mut failures);
     check("round-trips", decode_pdu::<Rec::Rec>(&bytes).is_ok_and(|r| r == value()), &mut failures);
 
-    // 40 characters exceed SIZE(0..32): carried by an unconstrained length
-    // when the SIZE is not PER-visible, rejected when it is.
+    // 40 characters exceed the non-extensible SIZE(0..32): a constraint on
+    // the values of the type in every mode, so encode rejects it (a
+    // conforming sender does not send it, X.691 §10.3 note).
     let mut big = value();
     big.s = Utf8String("x".repeat(40));
-    let big_enc = encode_pdu(&big);
-    if mode == "visible" {
-        check("40-char s rejected by the visible SIZE(0..32)", big_enc.is_err(), &mut failures);
-    } else {
-        check(
-            "40-char s carried with an unconstrained length",
-            big_enc.as_ref().is_ok_and(|b| b.len() > 40 && b[0] == 40),
-            &mut failures,
-        );
-    }
+    check("40-char s (SIZE(0..32)) rejected", encode_pdu(&big).is_err(), &mut failures);
+
+    // 200 characters are outside the root of the extensible SIZE(1..150, ...),
+    // still a value of the type: encodes in every mode.
+    let mut wide = value();
+    wide.ext = Utf8String("y".repeat(200));
+    check(
+        "200-char ext (SIZE(1..150, ...)) encodes and round-trips",
+        encode_pdu(&wide).is_ok_and(|b| decode_pdu::<Rec::Rec>(&b).is_ok_and(|r| r == wide)),
+        &mut failures,
+    );
     check(
         "validate_string still applies SIZE(0..32)",
         validate_string(&big.s.0, &Rec::REC_S_CONSTRAINTS) != 0

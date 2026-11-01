@@ -762,10 +762,15 @@ members exist, but ETSI LI is BER, where SIZE never changes the encoding.
 six types, when they carry a SIZE. Not affected:
 
 - BER, DER, XER and JER: identical in both modes.
-- `validate()` / `ASN1CPP_VALIDATE`: the SIZE is still checked in both modes. A 40-character
-  value in a `UTF8String (SIZE(0..32))` fails validation either way. Under `strict`, PER
-  can still carry it, because the length is unconstrained. Under `visible`, PER encode
-  rejects it like any non-extensible SIZE violation.
+- Which values are valid. "Not PER-visible" means only that the constraint does not shape
+  the encoding (X.691 §3.7.22). The SIZE still restricts the values of the type, and X.691
+  §10.3 (note) is explicit that this "does not ... imply that values violating such
+  constraints are allowed to be transmitted by a conforming sender". So in both modes
+  `validate()` checks the SIZE, and PER encode rejects a value outside a non-extensible
+  SIZE: a 40-character value in a `UTF8String (SIZE(0..32))` fails encoding either way. A
+  value outside the root of an extensible SIZE such as `SIZE(1..150, ...)` is a value of
+  the type and encodes in both modes. Decode is lenient: it accepts whatever length
+  arrives, and checking the decoded value is `validate()`'s job.
 - Known-multiplier strings, OCTET STRING, BIT STRING and SEQUENCE OF: their SIZE is always
   PER-visible.
 

@@ -7,10 +7,6 @@
 //   - (none) files: round-trip must succeed; output must equal input (whitespace-stripped).
 //   - -P files: PER-incompatible input (alphabet/size constraint violation);
 //               PerCodec must reject them (encode returns failed=true).
-//   - data-119-10-P.in breaks SIZE(6) on UTF8String members, a SIZE that is not
-//     PER-visible (X.691 §10.3.18, §30.6) under the default --per-nkm-size=strict,
-//     so PER carries it and it is a round-trip vector here. asn1c makes that
-//     SIZE PER-visible and rejects it, hence the -P name in its suite.
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
@@ -34,6 +30,7 @@ static const std::set<std::string> KNOWN_P = {
     "data-119-04-P.in",
     "data-119-06-P.in",
     "data-119-07-P.in",
+    "data-119-10-P.in",
     "data-119-11-P.in",
     "data-119-12-P.in",
     "data-119-13-P.in",

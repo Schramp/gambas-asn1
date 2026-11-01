@@ -81,18 +81,28 @@ int main() {
     check("round-trips", back.s.str() == "ab" && back.ext.str() == "abc"
           && back.named.str() == "xyz" && back.g.str() == "AB" && back.ia5.str() == "hi");
 
-    // 40 characters exceed SIZE(0..32). With no PER-visible SIZE the length
-    // is unconstrained, so PER itself can carry the value; with a visible,
-    // non-extensible SIZE it cannot.
+    // 40 characters exceed the non-extensible SIZE(0..32). Not PER-visible
+    // under strict, but still a constraint on the values of the type: a
+    // conforming sender does not send such a value (X.691 §10.3, note), so
+    // encode rejects it in every mode.
     Rec big = value();
     big.s = Utf8String{std::string(40, 'x')};
     std::vector<uint8_t> bbuf;
-    bool big_ok = per_enc(big, bbuf);
-#if defined(NKM_MODE_VISIBLE)
-    check("40-char s rejected by the visible SIZE(0..32)", !big_ok);
-#else
-    check("40-char s carried with an unconstrained length", big_ok && bbuf.size() > 40 && bbuf[0] == 40);
-#endif
+    check("40-char s (SIZE(0..32)) rejected", !per_enc(big, bbuf));
+
+    // 200 characters are outside the root of the extensible SIZE(1..150, ...),
+    // which is still a value of the type: encodes in every mode.
+    Rec wide = value();
+    wide.ext = Utf8String{std::string(200, 'y')};
+    std::vector<uint8_t> wbuf;
+    Rec wide_back{};
+    bool wide_ok = per_enc(wide, wbuf);
+    PerDecodeStream wds{std::span<const uint8_t>(wbuf)};
+    IDecodeStream& wis = wds;
+    check("200-char ext (SIZE(1..150, ...)) encodes and round-trips",
+          wide_ok && PerCodec::instance().decode(wis, Rec::asn_DEF, &wide_back).has_value()
+          && wide_back.ext.str() == wide.ext.str());
+
     const Constraints& sc = Rec::asn_DEF.sequence_spec->members[0].type_descriptor->constraints;
     check("validate() still applies SIZE(0..32)", big.s.validate(sc) != 0 && value().s.validate(sc) == 0);
 
