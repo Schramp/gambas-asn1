@@ -1331,6 +1331,27 @@ field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the n
 decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
 asserts on malformed input.
 
+Inside the repository, `validation-tools/xval_sweep/xval_sweep.py` runs the same kind
+of matrix (C++ vs Rust, BER/XER/JER/PER, every round trip) over each schema and PDU
+type in `targets.txt`. It adds independent ground-truth legs when the tools are found:
+
+- **asn1c**, when `asn1c` is on `PATH`, in `ASN1C_BIN_DIR` or in `/usr/local/bin`
+  (`--asn1c-dir DIR` to point elsewhere, `--no-asn1c` to skip it).
+- **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
+  it). The schema is compiled once with `-bber +der` and once with `-buper`, and
+  `erl_harness.escript` adds these rows per target:
+  - `orig vs erl.B2D(orig)`: Erlang decodes the records and re-encodes them as DER.
+  - `erl.PER vs cpp.PER` and `erl.PER vs rust.PER`: Erlang's UPER for the same
+    values.
+  - `orig vs erl.P2B(cpp.PER)`: Erlang decodes our UPER.
+  - `cpp.PER vs erl.P2P(cpp.PER)`: Erlang decodes our UPER and re-encodes it.
+
+  Every Erlang row is informational: a mismatch is printed for comparison but never
+  fails the target. Before compiling, comments and XER/JER encoding instructions are
+  removed from the schema copy, since BER and PER ignore them. When `erlc` rejects the
+  schema for one codec, only the rows that need that codec are skipped. Erlang has no
+  XER, and its JER is not compared.
+
 ### Fully Table-Based: Minimal Generated Code
 
 The fundamental principle is that generated files are data, not code. No `switch`

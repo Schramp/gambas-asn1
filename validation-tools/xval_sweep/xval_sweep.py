@@ -30,6 +30,12 @@ target (e.g. a construct asn1c itself rejects), that target's asn1c leg
 is skipped with a note — never a hard failure, and the C++/Rust legs
 always run regardless.
 
+Erlang leg (optional): when `erlc` and `escript` are on PATH, the schema
+is also compiled with Erlang/OTP's asn1 compiler (DER and UPER), and
+erl_harness.escript re-encodes the records as DER, encodes them as UPER
+and decodes our UPER (see build_erlang and run_target). A schema erlc
+rejects skips only this leg.
+
 Build dependency handling: each target's `make` (C++ side) and
 `make gen` + `cargo build` (Rust side, via build.rs's own
 rerun-if-changed) track their own source/schema/compiler staleness — this
@@ -39,7 +45,7 @@ of this script is always safe and cheap when nothing changed.
 
 Usage:
   python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--shard K/N] [--verbose]
-                        [--asn1c-dir DIR] [--no-asn1c] [-j N] [--reuse asn1c,cpp]
+                        [--asn1c-dir DIR] [--no-asn1c] [--no-erlang] [-j N] [--reuse asn1c,cpp]
                         [--corpus {targets,asn1c-compiler}] [--with-asn1c]
 
   --target NAME    only run the target whose schema path or PDU type
@@ -53,6 +59,8 @@ Usage:
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
   --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
+  --no-erlang      skip the Erlang/OTP asn1 leg even if erlc and escript
+                   are on PATH.
   -j, --jobs N     run N targets in parallel (default min(4, cpus/3)).
   --reuse LEGS     comma list (asn1c, cpp): skip codegen+build of those legs
                    when their key (schema + tool/runtime signature) matches
@@ -557,6 +565,20 @@ ASN1C_VERDICTS = {
 }
 
 
+# Status printed for a mismatch on an Erlang-leg row (always
+# informational) when a target option states its cause; INFORMATIONAL
+# otherwise. Same statuses as ASN1C_VERDICTS.
+ERL_VERDICTS = {
+    "@real-reencode": "SEMANTICIDENTICAL",         # REAL binary vs decimal form
+}
+
+
+def erl_verdict(options) -> str | None:
+    """Status a target option states for its informational Erlang-leg
+    mismatches (see ERL_VERDICTS), or None."""
+    return next((ERL_VERDICTS[o] for o in sorted(options) if o in ERL_VERDICTS), None)
+
+
 def asn1c_verdict(options) -> str | None:
     """Status a target option states for its informational asn1c-leg
     mismatches (see ASN1C_VERDICTS), or None."""
@@ -564,31 +586,7 @@ def asn1c_verdict(options) -> str | None:
 
 
 def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool, info: str | None = None) -> tuple[int, int]:
-    recs_a = split_per_records(per_a)
-    recs_b = split_per_records(per_b)
-    n = min(len(recs_a), len(recs_b))
-    # A side that produced fewer records (a crash, a decode error, an
-    # unsupported construct) fails the records it is missing; "no records"
-    # is only fine when both sides are empty.
-    short = abs(len(recs_a) - len(recs_b))
-    if n == 0 and short == 0:
-        print(f"  [{label}] no records to compare")
-        return 0, 0
-    matches = mismatches = 0
-    for i in range(n):
-        if recs_a[i] == recs_b[i]:
-            matches += 1
-        else:
-            mismatches += 1
-            if verbose:
-                print(f"  MISMATCH record #{i + 1}: "
-                      f"expected {len(recs_a[i])} bytes, got {len(recs_b[i])}")
-    if short:
-        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
-    mismatches += short
-    status = "OK" if mismatches == 0 else (info or "FAIL")
-    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
-    return matches, mismatches
+    return compare_record_lists(label, split_per_records(per_a), split_per_records(per_b), verbose, info)
 
 
 def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
@@ -820,8 +818,14 @@ def run_comparison_jer(label: str, jer_a: str, jer_b: str, verbose: bool) -> tup
 
 
 def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool, info: str | None = None) -> tuple[int, int]:
-    recs_a = split_ber_records(ber_a)
-    recs_b = split_ber_records(ber_b)
+    return compare_record_lists(label, split_ber_records(ber_a), split_ber_records(ber_b), verbose, info)
+
+
+def compare_record_lists(label: str, recs_a: list[bytes], recs_b: list[bytes], verbose: bool,
+                         info: str | None = None) -> tuple[int, int]:
+    """Compares two lists of binary records position by position (the BER
+    and PER comparisons above, and the Erlang leg, whose failed records
+    are empty placeholders). Returns (matches, mismatches)."""
     n = min(len(recs_a), len(recs_b))
     # A side that produced fewer records (a crash, a decode error, an
     # unsupported construct) fails the records it is missing; "no records"
@@ -894,7 +898,7 @@ def parse_targets(path):
             rest = parts[2:]
             n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
             options = set(rest[:n_opts])
-            unknown = options - {"@expect-errors", *ASN1C_VERDICTS}
+            unknown = options - {"@expect-errors", *ASN1C_VERDICTS, *ERL_VERDICTS}
             if unknown:
                 print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
                 sys.exit(1)
@@ -1283,6 +1287,163 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, j
     return {"tool": tool}
 
 
+ERL_HARNESS = os.path.join(HERE, "erl_harness.escript")
+
+# erlc options per Erlang leg codec: DER output (X.690 §10) to compare
+# with our canonical BER, unaligned PER (X.691) to compare with our UPER.
+ERL_CODECS = {
+    "ber": ["-bber", "+der", "+maps"],
+    "uper": ["-buper", "+maps"],
+}
+
+
+def find_erlang():
+    """Locate `erlc` and `escript` (Erlang/OTP's asn1 application) on PATH.
+    Returns (erlc, escript), or None (never raises) — like asn1c, the
+    Erlang leg is optional and auto-detected."""
+    erlc = shutil.which("erlc")
+    escript = shutil.which("escript")
+    return (erlc, escript) if erlc and escript else None
+
+
+# Text erlc can't parse and the BER/PER legs don't need: comments (they
+# can sit between a module's name and DEFINITIONS, hiding the header from
+# _MODULE_HEADER_RE) and encoding instructions, which affect only the
+# codec they name (X.680 §13.1 EncodingReferenceDefault, §31.3 encoding
+# prefix, §54 encoding control sections).
+_ERL_STRIP_RES = [
+    (re.compile(r"/\*.*?\*/", re.S), " "),
+    (re.compile(r"--.*$", re.M), ""),
+    (re.compile(r"\b(?:XER|JER|PER|BER|OER)\s+INSTRUCTIONS\b"), ""),
+    (re.compile(r"\[\s*(?:XER|JER|PER|BER|OER)\s*:[^\]]*\]"), ""),
+    (re.compile(r"\bENCODING-CONTROL\b.*(?=\bEND\b)", re.S), ""),
+]
+
+_ERL_BARE_PREFIX_RE = re.compile(
+    r"(?<!\[)\[(?!\[)\s*(?!(?:APPLICATION|UNIVERSAL|PRIVATE)\b)[A-Z][A-Z0-9-]*\b[^\]]*\](?!\])")
+
+
+def split_modules(asn1_files_abs):
+    """{module name: module text} for every module in the schema files,
+    with _ERL_STRIP_RES applied. erlc compiles one module per file and
+    requires the file to be named after the module, so a file defining
+    several modules is cut at each module header. Returns None when a
+    module name repeats."""
+    modules = {}
+    for path in asn1_files_abs:
+        text = open(path, errors="replace").read()
+        for rx, sub in _ERL_STRIP_RES[:2]:
+            text = rx.sub(sub, text)
+        heads = list(_MODULE_HEADER_RE.finditer(text))
+        for i, m in enumerate(heads):
+            if m.group(1) in modules:
+                return None
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            body = text[m.start():end]
+            if _ERL_STRIP_RES[2][0].search(body):
+                # With an encoding reference default a prefix needs no
+                # "XER:" (X.680 §31.3): any bracket starting with an
+                # upper-case word that is not a tag class.
+                body = _ERL_BARE_PREFIX_RE.sub("", body)
+            for rx, sub in _ERL_STRIP_RES[2:]:
+                body = rx.sub(sub, body)
+            modules[m.group(1)] = body
+    return modules
+
+
+def build_erlang(target_dir, asn1_files_abs, erl_bins):
+    """Compile the schema with Erlang/OTP's asn1 compiler once per
+    ERL_CODECS entry — a third, independently written ground-truth
+    implementation next to asn1c. Returns {"escript", codec: beam dir} with
+    the codecs erlc built at least one module for, or None (not a hard
+    error) when it built none: the rows needing a missing codec are
+    skipped, the other legs never depend on this one.
+
+    erlc resolves IMPORTS from the .asn1db files of modules compiled
+    before, so modules are compiled in rounds until none is left or a
+    round makes no progress."""
+    erlc, _ = erl_bins
+    modules = split_modules(asn1_files_abs)
+    if not modules:
+        print("  Erlang leg: no distinct ASN.1 modules found, skipping")
+        return None
+    out = {"escript": erl_bins[1]}
+    for codec, flags in ERL_CODECS.items():
+        d = os.path.join(target_dir, "erl", codec)
+        key_path = os.path.join(d, ".reuse-key")
+        key = reuse_key(asn1_files_abs, " ".join(flags), file_sig(erlc))
+        note_path = os.path.join(d, ".erlc-failed")
+        if key_matches(key_path, key):
+            if os.path.isfile(note_path):
+                print(open(note_path).read().rstrip())
+            out[codec] = d
+            continue
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        for name, text in modules.items():
+            with open(os.path.join(d, name + ".asn1"), "w") as f:
+                f.write(text)
+        pending = sorted(modules)
+        while pending:
+            failed, err = [], ""
+            for name in pending:
+                r = run(erlc, *flags, "-I", ".", name + ".asn1", cwd=d)
+                if r.returncode != 0:
+                    failed.append(name)
+                    err = (r.stdout + r.stderr).decode(errors="replace")
+            if len(failed) == len(pending):
+                break
+            pending = failed
+        if pending:
+            # A module erlc rejects (e.g. one importing a name no module
+            # defines) only matters to a PDU type that needs it; the
+            # harness reports a type it can't find.
+            first = next((l for l in err.splitlines() if l.strip()), "")
+            note = f"  Erlang leg: erlc {codec} failed on {', '.join(pending)} — {first[:300]}"
+            print(note)
+            if len(pending) == len(modules):
+                continue
+            write_if_changed(note_path, note + "\n")
+        write_if_changed(key_path, key)
+        out[codec] = d
+    return out if len(out) > 1 else None
+
+
+def erl_run(erl, mode, codec, pdu_type, data, work_dir):
+    """One erl_harness.escript stage with the Erlang `codec` ("ber" or
+    "uper"): decode turns pack_per_records-framed records into Erlang
+    terms, encode the reverse. Returns (output bytes, stderr)."""
+    fd_in, in_path = tempfile.mkstemp(dir=work_dir)
+    fd_out, out_path = tempfile.mkstemp(dir=work_dir)
+    os.close(fd_out)
+    try:
+        with os.fdopen(fd_in, "wb") as f:
+            f.write(data)
+        r = run(erl["escript"], ERL_HARNESS, mode, erl[codec], pdu_type, in_path, out_path)
+        with open(out_path, "rb") as f:
+            result = f.read()
+        err = r.stderr.decode(errors="replace").strip()
+        if r.returncode != 0:
+            err = f"exit {r.returncode}: {err}"
+        return result, err
+    finally:
+        os.unlink(in_path)
+        os.unlink(out_path)
+
+
+def erl_transcode(erl, src, dst, pdu_type, records, work_dir):
+    """Decode each record with the Erlang `src` codec and re-encode the
+    values with `dst`. Returns (records, stderr summary or None); a record
+    Erlang fails on comes back empty, keeping later records in place."""
+    terms, err1 = erl_run(erl, "decode", src, pdu_type, pack_per_records(records), work_dir)
+    out, err2 = erl_run(erl, "encode", dst, pdu_type, terms, work_dir) if terms else (b"", "")
+    errs = [l for e in (err1, err2) for l in e.splitlines() if l]
+    summary = None
+    if errs:
+        summary = f"{len(errs)} line(s), first: {errs[0][:300]}"
+    return split_per_records(out), summary
+
+
 def group_key(t):
     """Targets with the same schema, extra files and compiler flags share
     one build (`build_group`)."""
@@ -1307,13 +1468,13 @@ def schema_files(schema_rel, extra_files=()):
 
 
 def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slot=None,
-                cpp_jobs=4, cargo_jobs=None, reuse=()):
-    """Builds the C++, Rust and (with `asn1c_bin`) asn1c tools once for a
-    build group: the targets that share a schema, extra files and compiler
-    flags. Compiling the schema dominates a target's cost, so its PDU types
-    share one build and each target only runs its own checks. Returns
-    {"dir", "cpp", "rust", "asn1c"}, or None when the C++ or Rust build
-    fails."""
+                cpp_jobs=4, cargo_jobs=None, reuse=(), erl_bins=None):
+    """Builds the C++, Rust, (with `asn1c_bin`) asn1c and (with `erl_bins`)
+    Erlang tools once for a build group: the targets that share a schema,
+    extra files and compiler flags. Compiling the schema dominates a
+    target's cost, so its PDU types share one build and each target only
+    runs its own checks. Returns {"dir", "cpp", "rust", "asn1c", "erlang"},
+    or None when the C++ or Rust build fails."""
     asn1_files_abs, slug_base = schema_files(schema_rel, extra_files)
     target_dir = os.path.join(TESTBUILD, slug_base + "_" + "_".join(pdu_types))
     if len(pdu_types) > 1:
@@ -1326,12 +1487,14 @@ def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slo
         return None
     asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, "asn1c" in reuse, cpp_jobs)
                    if asn1c_bin else None)
-    return {"dir": target_dir, "cpp": cpp_tools, "rust": rust_tools, "asn1c": asn1c_tools}
+    erl_tools = build_erlang(target_dir, asn1_files_abs, erl_bins) if erl_bins else None
+    return {"dir": target_dir, "cpp": cpp_tools, "rust": rust_tools, "asn1c": asn1c_tools,
+            "erlang": erl_tools}
 
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_reason=None,
                extra_files=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False,
-               info=None):
+               info=None, erl_info=None):
     """Runs one target's checks against its build group's tools
     (`build_group`); `built` is None when that build failed."""
     extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
@@ -1349,6 +1512,7 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         rust_tools.pop("p2b", None)
     asn1c_tools = (built["asn1c"]
                    if not skip_asn1c_reason and not expect_errors and fuzz is None else None)
+    erl_tools = built.get("erlang") if not expect_errors and fuzz is None else None
     target_dir = os.path.join(built["dir"], "pdu_" + pdu_type)
     os.makedirs(target_dir, exist_ok=True)
 
@@ -1627,6 +1791,41 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
     elif not skip_asn1c_reason:
         print("  asn1c leg: skipped (not found or unsupported for this target)")
 
+    # Erlang/OTP asn1 leg: a third ground truth, written independently of
+    # both asn1c and asn1cpp, so it catches a reading of the standard the
+    # other two share. Its BER encoder runs in DER mode, so decoding the
+    # original records and re-encoding them should give the same bytes; its
+    # UPER output should equal ours, and it should decode our UPER back to
+    # the original value. Every row is informational: it never fails the
+    # target. A target option (ERL_VERDICTS) labels a known cause.
+    if erl_tools:
+        def erl_check(label, a, b):
+            compare_record_lists(f"{label} [informational]", a, b, verbose,
+                                 info=erl_info or "INFORMATIONAL")
+
+        orig_recs = split_ber_records(ber_orig)
+        if "ber" in erl_tools:
+            der_erl, err = erl_transcode(erl_tools, "ber", "ber", pdu_type, orig_recs, target_dir)
+            if err:
+                print(f"  erl b2d stderr: {err}")
+            erl_check("orig vs erl.B2D(orig)", orig_recs, der_erl)
+        if "b2p" in rust_tools and "uper" in erl_tools:
+            cpp_per_recs = split_per_records(per_cpp)
+            per_erl_per, err = erl_transcode(erl_tools, "uper", "uper", pdu_type, cpp_per_recs, target_dir)
+            if err:
+                print(f"  erl p2p stderr: {err}")
+            erl_check("cpp.PER vs erl.P2P(cpp.PER)", cpp_per_recs, per_erl_per)
+            if "ber" in erl_tools:
+                per_erl, err = erl_transcode(erl_tools, "ber", "uper", pdu_type, orig_recs, target_dir)
+                if err:
+                    print(f"  erl b2p stderr: {err}")
+                erl_check("erl.PER vs cpp.PER", per_erl, cpp_per_recs)
+                erl_check("erl.PER vs rust.PER", per_erl, split_per_records(per_rust))
+                der_erl_per, err = erl_transcode(erl_tools, "uper", "ber", pdu_type, cpp_per_recs, target_dir)
+                if err:
+                    print(f"  erl p2b stderr: {err}")
+                erl_check("orig vs erl.P2B(cpp.PER)", orig_recs, der_erl_per)
+
     tool_failures = _tool_failures.items
     _tool_failures.items = None
     for f in tool_failures:
@@ -1681,6 +1880,8 @@ def main():
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
     ap.add_argument("--no-asn1c", action="store_true",
                      help="skip the asn1c leg even if asn1c is found")
+    ap.add_argument("--no-erlang", action="store_true",
+                     help="skip the Erlang/OTP asn1 leg even if erlc and escript are on PATH")
     ap.add_argument("--corpus", default="targets", choices=["targets", "asn1c-compiler"],
                      help="'targets' (default): the curated, manually-verified list in "
                           "targets.txt. 'asn1c-compiler': auto-discover a PDU-type candidate "
@@ -1770,6 +1971,13 @@ def main():
 
         targets = parse_targets(opts.targets_file)
 
+    erl_bins = None if opts.no_erlang else find_erlang()
+    if erl_bins:
+        print(f"Erlang leg: ON  ({erl_bins[0]})")
+    else:
+        print("Erlang leg: OFF (erlc/escript not on PATH)" if not opts.no_erlang
+              else "Erlang leg: OFF (--no-erlang)")
+
     if opts.target:
         targets = [t for t in targets if opts.target in t[0] or opts.target in t[1]]
         if not targets:
@@ -1847,7 +2055,9 @@ def main():
             try:
                 built = build_group(schema_rel, [targets[i][1] for i in members], extra_files, asncpp_flags,
                                     asn1c_bin if any(wants_asn1c(targets[i]) for i in members) else None,
-                                    slot=slot, cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse)
+                                    slot=slot, cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
+                                    erl_bins=erl_bins if not opts.fuzz and any(
+                                        "@expect-errors" not in targets[i][5] for i in members) else None)
             except Exception as e:  # keep the sweep going; the group's targets fail
                 print(f"  EXCEPTION: {e!r}")
             build_log = "".join(tl_out.tl.buf)
@@ -1861,6 +2071,7 @@ def main():
                                         expect_errors="@expect-errors" in options,
                                         asn1c_opaque_contents="@asn1c-opaque-contents" in options,
                                         info=asn1c_verdict(options),
+                                        erl_info=erl_verdict(options),
                                         fuzz=opts if opts.fuzz else None)
                 except Exception as e:  # keep the sweep going; report as a failed target
                     print(f"  EXCEPTION: {e!r}")

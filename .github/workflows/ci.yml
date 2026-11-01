@@ -174,7 +174,8 @@ jobs:
   # Cross-validation, once build-and-test is green; mergeability is
   # build-and-test's, an xval failure is a finding to act on. A pull
   # request runs C++ vs Rust split round-robin over 4 runners; main (or a
-  # manual run) runs every target in one job with the asn1c leg on.
+  # manual run) runs every target in one job with the asn1c leg on. Both
+  # run the informational Erlang/OTP asn1 leg.
   xval:
     needs: [build-and-test, asn1c]
     runs-on: ubuntu-latest
@@ -195,6 +196,13 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Erlang/OTP's asn1 compiler: xval_sweep finds erlc/escript on PATH
+      # and adds its informational Erlang leg (never fails a target).
+      - name: Install Erlang/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '29'
 
       - name: Download xval inputs
         uses: actions/download-artifact@v8
