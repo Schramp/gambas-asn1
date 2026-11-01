@@ -5,11 +5,17 @@ import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
+import io.github.schramp.gambasasn1.wire.ber.BerPrimitive;
+import io.github.schramp.gambasasn1.wire.ber.BerReal;
 import io.github.schramp.gambasasn1.wire.ber.UniversalTag;
+import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
+import io.github.schramp.gambasasn1.wire.types.Asn1Real;
+import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
@@ -41,6 +47,13 @@ public final class PerPrimitive {
             case Asn1OctetString o -> encodeOctets(o.get(), c, w);
             case Asn1BitString b -> encodeBits(b, c, w);
             case Asn1CharString s -> encodeChars(s.octets(), s.universalTagNumber(), c, w);
+            // X.691 §24, §25: the BER contents octets after a general length.
+            case Asn1ObjectIdentifier o -> PerLength.putOctets(w, BerPrimitive.encodeObjectIdentifier(o.get()));
+            case Asn1RelativeOid o -> PerLength.putOctets(w, BerPrimitive.encodeRelativeOid(o.get()));
+            // X.691 §15: the CER/DER contents octets (X.690 §11.3) after a general length.
+            case Asn1Real r -> PerLength.putOctets(w, BerReal.encode(r));
+            // X.691 §11.2: an open type field, the value's encoding after a general length.
+            case Asn1Any a -> PerLength.putOctets(w, a.get());
             default -> throw new EncodeException("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -60,6 +73,10 @@ public final class PerPrimitive {
             case Asn1OctetString o -> o.set(decodeOctets(c, r));
             case Asn1BitString b -> decodeBits(b, c, r);
             case Asn1CharString s -> s.setOctets(decodeChars(s.universalTagNumber(), c, r));
+            case Asn1ObjectIdentifier o -> o.set(BerPrimitive.decodeObjectIdentifier(PerLength.getOctets(r), r.position()));
+            case Asn1RelativeOid o -> o.set(BerPrimitive.decodeRelativeOid(PerLength.getOctets(r), r.position()));
+            case Asn1Real real -> real.set(BerReal.decode(PerLength.getOctets(r), r.position()));
+            case Asn1Any a -> a.set(PerLength.getOctets(r));
             default -> throw r.error("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }

@@ -106,7 +106,7 @@ public final class BerPrimitive {
             case Asn1OctetString o -> BerWriter.writePrimitive(out, tag, o.get());
             case Asn1CharString c -> BerWriter.writePrimitive(out, tag, c.octets());
             case Asn1ObjectIdentifier o -> BerWriter.writePrimitive(out, tag, encodeObjectIdentifier(o.get()));
-            case Asn1RelativeOid r -> BerWriter.writePrimitive(out, tag, encodeSubidentifiers(r.get(), 0, new byte[r.get().length * 10], 0));
+            case Asn1RelativeOid r -> BerWriter.writePrimitive(out, tag, encodeRelativeOid(r.get()));
             case Asn1Real r -> BerWriter.writePrimitive(out, tag, BerReal.encode(r));
             // X.690 §8.6.2: the initial octet counts the unused bits of the last octet.
             case Asn1BitString b -> BerWriter.writeTagged(out, tag, c -> {
@@ -143,7 +143,7 @@ public final class BerPrimitive {
             case Asn1OctetString o -> o.set(v.remainingBytes());
             case Asn1CharString c -> c.setOctets(v.remainingBytes());
             case Asn1ObjectIdentifier o -> o.set(decodeObjectIdentifier(v.remainingBytes(), start));
-            case Asn1RelativeOid rel -> rel.set(decodeSubidentifiers(v.remainingBytes(), 0, new long[0], start));
+            case Asn1RelativeOid rel -> rel.set(decodeRelativeOid(v.remainingBytes(), start));
             case Asn1Real real -> real.set(BerReal.decode(v.remainingBytes(), start));
             case Asn1BitString b -> {
                 if (v.atEnd()) {
@@ -229,6 +229,20 @@ public final class BerPrimitive {
         long first = firstOut[0];
         long x = first < 80 ? first / 40 : 2;
         return decodeSubidentifiers(v, i, new long[] {x, first - x * 40}, pos);
+    }
+
+    /** RELATIVE-OID contents (X.690 §8.20): one subidentifier per arc. */
+    public static byte[] encodeRelativeOid(long[] arcs) {
+        return encodeSubidentifiers(arcs, 0, new byte[arcs.length * 10], 0);
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeRelativeOid}.
+     *
+     * @param pos the TLV's position, for the error
+     */
+    public static long[] decodeRelativeOid(byte[] v, int pos) {
+        return decodeSubidentifiers(v, 0, new long[0], pos);
     }
 
     /**

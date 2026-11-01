@@ -7,13 +7,6 @@ import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
-import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
-import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
-import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
-import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
-import io.github.schramp.gambasasn1.wire.types.Asn1Null;
-import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
-import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Set;
@@ -31,19 +24,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class BuiltinAliasPerTest {
 
-    /** Kinds the PER walker writes so far. */
+    /** Every builtin and ENUMERATED type assignment has its PER field. */
     private static boolean hasPerField(AsMemberRef v) {
-        return switch (v.asMemberRef()) {
-            case MemberRef.Primitive(Asn1Boolean b) -> true;
-            case MemberRef.Primitive(Asn1Null n) -> true;
-            case MemberRef.Primitive(Asn1Integer i) -> true;
-            case MemberRef.Primitive(Asn1UInteger u) -> true;
-            case MemberRef.Enumerated e -> true;
-            case MemberRef.Primitive(Asn1OctetString o) -> true;
-            case MemberRef.Primitive(Asn1CharString s) -> true;
-            case MemberRef.Primitive(Asn1BitString b) -> true;
-            default -> false;
-        };
+        return v.asMemberRef() instanceof MemberRef.Primitive || v.asMemberRef() instanceof MemberRef.Enumerated;
     }
 
     /**
