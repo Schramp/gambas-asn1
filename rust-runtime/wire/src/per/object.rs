@@ -94,26 +94,35 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
 // ---------------------------------------------------------------------
 
 /// @brief Presence bits of a SEQUENCE/SET preamble or extension bitmap,
-///        read from the wire; up to 64 in place, more on the heap.
+///        read from the wire one word at a time and kept in words, the
+///        first wire bit in a word's most significant bit: one word in
+///        place, more on the heap.
 /// @see X.691 §19.2 (root bitmap, `roms_count` bits), §19.7 (extension
 ///      bitmap, a count from the wire).
 struct PresenceBits {
     inline: u64,
-    heap: Vec<bool>,
+    heap: Vec<u64>,
     n: usize,
 }
 
 impl PresenceBits {
+    const WORD_BITS: usize = u64::BITS as usize;
+
     /// @brief Reads `n` presence bits.
     /// @return `Err` when the input ends first.
     fn read(r: &mut Reader, n: usize) -> Result<Self, DecodeError> {
         let mut bits = PresenceBits { inline: 0, heap: Vec::new(), n };
-        for i in 0..n {
-            let bit = r.get_bits(1)? != 0;
-            if n <= 64 {
-                bits.inline |= (bit as u64) << i;
+        let words = n.div_ceil(Self::WORD_BITS);
+        if words > 1 {
+            bits.heap.reserve_exact(words);
+        }
+        for k in 0..words {
+            let take = Self::WORD_BITS.min(n - k * Self::WORD_BITS);
+            let word = r.get_bits(take as u32)? << (Self::WORD_BITS - take);
+            if words > 1 {
+                bits.heap.push(word);
             } else {
-                bits.heap.push(bit);
+                bits.inline = word;
             }
         }
         Ok(bits)
@@ -122,12 +131,10 @@ impl PresenceBits {
     /// @brief Bit `i`, false past the bits read.
     fn get(&self, i: usize) -> bool {
         if i >= self.n {
-            false
-        } else if self.n <= 64 {
-            self.inline >> i & 1 == 1
-        } else {
-            self.heap[i]
+            return false;
         }
+        let word = if self.n > Self::WORD_BITS { self.heap[i / Self::WORD_BITS] } else { self.inline };
+        word >> (Self::WORD_BITS - 1 - i % Self::WORD_BITS) & 1 == 1
     }
 }
 

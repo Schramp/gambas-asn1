@@ -1047,7 +1047,9 @@ static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStrea
                                            Asn1Object* dest);
 
 /// @brief Presence bits of a SEQUENCE/SET preamble or extension bitmap,
-///        read from the wire; up to 64 in place, more on the heap.
+///        read from the wire one word at a time and kept in words, the
+///        first wire bit in a word's most significant bit: one word in
+///        place, more on the heap.
 /// @see X.691 §19.2 (root bitmap, roms_count bits), §19.7 (extension
 ///      bitmap, a count from the wire).
 class PresenceBits {
@@ -1056,25 +1058,29 @@ public:
     /// @return An error when the stream ends first.
     DecodeResult read(PerDecodeStream& stream, int n) {
         n_ = n;
-        if (n > kInline) heap_.assign(static_cast<std::size_t>(n), false);
-        for (int i = 0; i < n; ++i) {
-            auto bit = stream.get_bits(1);
-            if (!bit) return decode_err(bit.error());
-            if (n > kInline) heap_[static_cast<std::size_t>(i)] = (*bit != 0);
-            else inline_[i] = (*bit != 0);
+        int words = (n + kWordBits - 1) / kWordBits;
+        if (words > 1) heap_.assign(static_cast<std::size_t>(words), 0);
+        Word* w = words > 1 ? heap_.data() : &inline_;
+        for (int k = 0; k < words; ++k) {
+            int take = std::min(kWordBits, n - k * kWordBits);
+            auto bits = stream.get_bits(take);
+            if (!bits) return decode_err(bits.error());
+            w[k] = *bits << (kWordBits - take);
         }
         return decode_ok();
     }
     /// @brief Bit @p i, false past the bits read.
     bool operator[](int i) const {
         if (i < 0 || i >= n_) return false;
-        return n_ > kInline ? static_cast<bool>(heap_[static_cast<std::size_t>(i)]) : inline_[i];
+        const Word* w = n_ > kWordBits ? heap_.data() : &inline_;
+        return (w[i / kWordBits] >> (kWordBits - 1 - i % kWordBits)) & 1;
     }
 
 private:
-    static constexpr int kInline = 64;
-    bool inline_[kInline] = {};
-    std::vector<bool> heap_;
+    using Word = uint64_t;
+    static constexpr int kWordBits = std::numeric_limits<Word>::digits;
+    Word inline_ = 0;
+    std::vector<Word> heap_;
     int n_ = 0;
 };
 
