@@ -2147,6 +2147,10 @@ unconstrained, and the extension bit with the unconstrained form outside an
 extensible root. A value outside a non-extensible range fails the encode,
 and a field beyond the range fails the decode. With unsigned storage, a
 value from 2^63 up outside the root takes nine octets (§11.8.3).
+ENUMERATED is its item's index in the value-sorted table (X.691 §14): the root
+index in the table's `rootBits`, and with an extension marker a bit first and
+an extension item's index as a normally small number. A value that is no item
+fails the encode, an unknown index the decode.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

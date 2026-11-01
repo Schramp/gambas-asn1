@@ -60,6 +60,7 @@ public final class PerObject {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
             case MemberRef.Primitive(var p) -> PerPrimitive.encode(p, c, w);
+            case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.encodeEnumerated(slot, spec, w);
             default -> throw new EncodeException("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -69,6 +70,7 @@ public final class PerObject {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw r.error(reason);
             case MemberRef.Primitive(var p) -> PerPrimitive.decode(p, c, r);
+            case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.decodeEnumerated(slot, spec, r);
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }

@@ -31,6 +31,7 @@ class BuiltinAliasPerTest {
             case MemberRef.Primitive(Asn1Null n) -> true;
             case MemberRef.Primitive(Asn1Integer i) -> true;
             case MemberRef.Primitive(Asn1UInteger u) -> true;
+            case MemberRef.Enumerated e -> true;
             default -> false;
         };
     }
