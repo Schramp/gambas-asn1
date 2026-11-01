@@ -453,6 +453,8 @@ struct MemberTypeDescriptorSpec {
 ///        backend-delegated) emit_member_type_descriptor call.
 struct SeqOfSpec : TaggedTypeSpec {
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
+    TypeDescriptorRefSpec elem_tdref; // the element type's descriptor decision, for a backend whose
+                                      // element constraints live on the referenced type (empty elem_ref)
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
     int         range_bits = 0;
     int64_t     size_lower = 0;

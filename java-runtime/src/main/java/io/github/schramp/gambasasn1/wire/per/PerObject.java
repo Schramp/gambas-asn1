@@ -5,6 +5,7 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
@@ -12,6 +13,7 @@ import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -71,6 +73,7 @@ public final class PerObject {
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.encodeEnumerated(slot, spec, w);
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
+            case MemberRef.SeqOf(Asn1SeqOf q) -> encodeSeqOf(q, c, w);
             default -> throw new EncodeException("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -96,6 +99,7 @@ public final class PerObject {
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.decodeEnumerated(slot, spec, r);
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
+            case MemberRef.SeqOf(Asn1SeqOf q) -> decodeSeqOf(q, c, r);
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -358,5 +362,68 @@ public final class PerObject {
         }
         int i = root + (int) ext;
         decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.sub(field));
+    }
+
+    /** An element's encoding and its exact length in bits. */
+    private record Part(byte[] bytes, long bits) {
+    }
+
+    /**
+     * A SEQUENCE OF or SET OF (X.691 §20, §22): the count under the type's
+     * SIZE, with the extension bit of an extensible SIZE (§20.4), then the
+     * elements under the element constraints; a SET OF's elements in the
+     * order of §22.1.
+     *
+     * @param c the collection's own constraints
+     */
+    static void encodeSeqOf(Asn1SeqOf q, Constraints c, PerWriter w) {
+        Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
+        if (q.naturalTag().number() == 17 && q.size() > 1) {
+            List<Part> parts = sortedSetOfParts(q, elem, w);
+            PerLength.putExtSize(w, c, parts.size(), (out, from, to) -> {
+                for (Part p : parts.subList(from, to)) {
+                    out.putBitString(p.bytes(), p.bits());
+                }
+            });
+            return;
+        }
+        PerLength.putExtSize(w, c, q.size(), (out, from, to) -> {
+            for (int i = from; i < to; i++) {
+                encodeValue(q.get(i), elem, out);
+            }
+        });
+    }
+
+    /**
+     * A SET OF's element encodings in ascending order, compared as octet
+     * strings padded with zero bits and the shorter extended with zero
+     * octets (X.691 §22.1, the CANONICAL-PER order, also valid BASIC-PER);
+     * asn1c and the C++ and Rust runtimes write the same order.
+     */
+    private static List<Part> sortedSetOfParts(Asn1SeqOf q, Constraints elem, PerWriter w) {
+        List<Part> parts = new ArrayList<>(q.size());
+        for (int i = 0; i < q.size(); i++) {
+            PerWriter one = new PerWriter().withContained(w.contained());
+            encodeValue(q.get(i), elem, one);
+            parts.add(new Part(one.toByteArray(), one.bitPos()));
+        }
+        parts.sort((a, b) -> {
+            int n = Math.max(a.bytes().length, b.bytes().length);
+            byte[] x = Arrays.copyOf(a.bytes(), n);
+            byte[] y = Arrays.copyOf(b.bytes(), n);
+            return Arrays.compareUnsigned(x, y);
+        });
+        return parts;
+    }
+
+    /** Decode counterpart of {@link #encodeSeqOf}; a SET OF is taken in any order. */
+    static void decodeSeqOf(Asn1SeqOf q, Constraints c, PerReader r) {
+        Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
+        q.clear();
+        PerLength.getExtSize(r, c, (in, count) -> {
+            for (int i = 0; i < count; i++) {
+                decodeValue(q.addDefault(), elem, in);
+            }
+        });
     }
 }

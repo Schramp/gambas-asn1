@@ -3295,6 +3295,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
+    spec.elem_tdref = type_descriptor_ref_spec_for(elem_node);
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
