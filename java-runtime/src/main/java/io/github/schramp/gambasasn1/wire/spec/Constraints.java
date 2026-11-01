@@ -49,6 +49,23 @@ public record Constraints(
     public static final Constraints UNCONSTRAINED =
             new Constraints(0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, null, 0, null, 0.0, 0.0);
 
+    /**
+     * {@code c} with a permitted alphabet (X.680 §51.7): {@code alphabet}
+     * holds the sorted characters, each written as its index in
+     * {@code bits} bits under PER (X.691 §30.5.2); the character-to-index
+     * table is built from it.
+     */
+    public static Constraints withAlphabet(Constraints c, int bits, byte[] alphabet) {
+        char[] table = new char[256];
+        java.util.Arrays.fill(table, (char) 0xFFFF);
+        for (int i = 0; i < alphabet.length; i++) {
+            table[alphabet[i] & 0xFF] = (char) i;
+        }
+        return new Constraints(c.flags, c.rangeBits, c.lowerBound, c.upperBound, c.lowerU64, c.upperU64,
+                c.sizeRangeBits, c.sizeLower, c.sizeUpper, table, bits, alphabet, alphabet.length, c.element,
+                c.realLower, c.realUpper);
+    }
+
     /** {@code c} with {@code element} as a SEQUENCE OF / SET OF element's own constraints. */
     public static Constraints withElement(Constraints c, Constraints element) {
         return new Constraints(c.flags, c.rangeBits, c.lowerBound, c.upperBound, c.lowerU64, c.upperU64,

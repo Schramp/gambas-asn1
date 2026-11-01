@@ -52,6 +52,8 @@ Rules for the boundary:
 - **File identity belongs to the backend.** It comes through `TypeOutputSession`, `declaration_extension()` and `definition_extension()`. A language without a header/body split returns the same extension for both, and both halves go to one file (`2c95318`).
 - **Cross-type references go through the backend** (`emit_type_reference`, `emit_forward_declaration`, `232cc23`). Use the language's import or include form. `finalize_output` writes any per-output manifest the language needs, such as a module list.
 
+**C++ text still in `Generator` is a leftover of the first port, not part of the contract.** A few decisions in `Generator` still build C++ syntax or assume C++ shapes (for example `cpp_type_descriptor_ref_for`, which formats `&asn1::asn_DEF_X` and is tracked in #239). They remain only because moving them needs state that `Backend` has no access to yet. A new backend never copies, calls or relies on one of them: it asks for the typed decision behind it, and where that decision does not exist yet, it is added to `Generator` as a backend-agnostic field. Where possible, each leftover moves into `CppBackend` with the two-step pattern below.
+
 How the first port moved the interface: it first extracted naming into `Backend` with C++ as the only implementation, and checked that by a byte-identical regeneration of the full test corpus (`eaec58f`). Then each construct moved in two steps, first into `CppBackend`, then implemented in the new backend: ENUMERATED, INTEGER, builtin alias, SEQUENCE OF, SEQUENCE/SET, CHOICE, top-level dispatch. If you need to move more C++ text out of `Generator`, follow the same two-step pattern and keep the C++ output byte-identical.
 
 ---
@@ -100,6 +102,15 @@ A flat record: `flags`, `range_bits`, `int_kind`, signed and unsigned bounds, SI
 - **Precompute every schema-derived fact in the tables** (`b1319a3`): counts, bit widths, sorted tag lists, alphabet maps. A codec that recounts at runtime is a missing table field.
 
 ### How the existing backends render a member row
+
+The row for member `text` of this type (`tests/asn1/jer_escape_test.asn1`, `AUTOMATIC TAGS`):
+
+```asn1
+JeRec ::= SEQUENCE {
+    text UTF8String,                          -- [0] IMPLICIT, mandatory
+    alt  CHOICE { name UTF8String, n INTEGER } -- [1], an inline CHOICE
+}
+```
 
 ```
 C++:   { "text", asn1::Tag{asn1::TagClass::Context, 0, false}, false, false,
@@ -171,14 +182,45 @@ Make each decision once, document it in the backend's header, and test it.
 | | value types (structs) | an optional wrapper. For large members, box them: a struct of inline optionals measured 22× the C++ size (`4ef2183`). |
 | Recursion | value types | box the members that close a real cycle, found by cycle detection in `Generator` (`8ca1ba0`, `a5aa19c`) |
 | | reference types only | nothing extra for storage, but the decode depth limit still applies |
-| INTEGER storage | 64-bit signed and unsigned types | `IntStorageKind::S64` / `U64` map to them |
-| | no unsigned 64-bit type | map `U64` to the arbitrary-precision type, or to signed storage with unsigned compare and convert helpers. Decide in `native_int_type` and nowhere else. |
+| INTEGER storage | — | one ASN.1 type, several storages: see [INTEGER storage kinds](#integer-storage-kinds) below |
 | Collections | reified generics | a typed list per SEQUENCE OF |
 | | type erasure | a typed list for the API, but the walker reaches elements through the SeqOf accessor, never through runtime element-type tests |
 | Decode target | — | decode **in place** into a default-constructed value. Grow collections in place and decode into the new slot; don't build a temporary and copy it in (`d167b3e`). |
 | Type alias (`A ::= B`) | type aliases | `A` names `B`'s type, and every table is `B`'s |
 | | no type aliases, but subclassing | an empty subclass of `B` named `A`; generated classes must not be sealed or final |
 | Default construction | — | every type needs a default value. For ENUMERATED and CHOICE, make the default explicit (`e8d1d72`). |
+
+### INTEGER storage kinds
+
+One ASN.1 type, INTEGER (X.680 §19), has several storage implementations. The value range picks one, so a schema value never silently overflows its storage.
+
+**The choice.** `Generator::classify_integer_storage` decides an `IntStorageKind` from the effective value range (X.680 §51.4), once per type, member or element:
+
+| Kind | Picked when | Runtime wrapper (C++ / second backend) |
+|------|-------------|---------------------------------------|
+| `S64` | a range inside the signed 64-bit range; unconstrained, unless `--integer-type` says otherwise | `Integer` |
+| `U64` | lower bound ≥ 0 and the upper bound is `MAX` or above 2^63 − 1 (for example `INTEGER (0..MAX)`, `INTEGER (0..18446744073709551615)`) | `UInteger` |
+| `I128` | reserved: `--integer-type=int128` warns and falls back to `S64` | `BigInteger` (stub) |
+| `ARBITRARY` | reserved for unconstrained big values (keys): `--integer-type=arbitrary` warns and falls back to `S64` | `ArbitraryInteger` (stub in C++) |
+
+The kind reaches a backend as a typed field (`IntegerSpec::storage_kind`, `BuiltinAliasSpec`, `MemberTypeDescriptorSpec`), never as text to match (§2). It reaches the tables as `Constraints::int_kind`: an unsigned kind stores its bounds in `lower_u64`/`upper_u64`, read as unsigned, a signed one in `lower_bound`/`upper_bound`. The canonical dump (Appendix A) prints the bounds of the kind in use, so two runtimes with different native types still dump alike, and the table diff checks that the kind and bounds agree.
+
+**Encoding and decoding per kind.** The wire never depends on the storage: a value has one encoding.
+- BER: the minimal two's-complement contents (X.690 §8.3.2). An unsigned value from 2^63 up takes nine octets, the first one 0x00. Decoding into `S64` fails for a value outside the signed 64-bit range; into `U64` for a negative value or one beyond 2^64 − 1.
+- PER: the range offset is computed in the kind's own arithmetic (X.691 §13, §11.5); a 64-bit range is a 64-bit field (§11.5.6). An unsigned value outside an extensible root uses the unconstrained form, nine octets from 2^63 up (§11.8.3).
+- XER and JER: the decimal value, printed unsigned for an unsigned kind.
+
+**Out of range.** A value outside a non-extensible range has no PER encoding, so the PER encode fails, and a PER field beyond the range fails the decode. Under the other codecs the value has an encoding; the C++ runtime records it as a constraint violation (`DBG_VALIDATE_TRACE` prints it). Follow the reference runtime's behaviour per codec rather than inventing a stricter one.
+
+**A language without an unsigned 64-bit type.** Decide once, in `native_int_type`, and nowhere else:
+
+| Option | API ergonomics | Performance | Table identity |
+|--------|---------------|-------------|----------------|
+| arbitrary-precision storage for `U64` | natural values, no sign surprises | an allocation per value, slower arithmetic | unchanged: the kind is still `U64` |
+| signed 64-bit storage read as unsigned, with unsigned compare, divide and convert helpers | users must call the helpers; a plain print shows negative numbers from 2^63 up | as fast as `S64` | unchanged |
+| a dedicated wrapper around signed storage | the wrapper's methods hide the helpers | as fast as `S64` | unchanged |
+
+Whichever is chosen, the dumped `int_kind` and the unsigned bounds must still match the reference runtime, and the codecs must use unsigned comparisons for range checks and offsets. The second option with a wrapper (the third row) keeps both speed and a safe API.
 
 Performance work comes after correctness, and it is driven by measurement:
 - Profile allocations first. In the second port, the C++ vs. other-language gap was dominated by allocation, not by dispatch (`1a3e858`, `9a625b5`).
@@ -284,7 +326,7 @@ All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693
   - Smallest content codec; zero-length content. The first leg and the first table-diff target.
 - [ ] **B2 INTEGER (64-bit storage) and ENUMERATED**
   - Ref: X.690 §8.3, §8.4; X.680 §19, §20; value range X.680 §51.4.
-  - Minimal two's-complement content; `EnumSpec` arrives here.
+  - Minimal two's-complement content; `EnumSpec` arrives here. Storage: [INTEGER storage kinds](#integer-storage-kinds).
 - [ ] **B3 OCTET STRING and BIT STRING**
   - Ref: X.690 §8.6, §8.7; DER §10.2, §11.2; X.680 §22, §23; size X.680 §51.5.
   - Unused-bits byte (X.690 §8.6.2.2), named bits; constructed form on decode.
@@ -307,7 +349,7 @@ All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693
   - ⚠ BER and XER do not read these fields, so every BER and XER leg passed without them. The third backend emitted none, and the gap showed only in JER, where base-10-only picks the text form (X.697 §23). A table field no codec reads yet is checked only by the table diff.
 - [ ] **B9 INTEGER with unsigned or arbitrary storage, and ANY**
   - Ref: X.690 §8.3, §8.15; X.680 §19.
-  - The storage decision of §5; an open type's TLV kept as bytes.
+  - The storage decision of [INTEGER storage kinds](#integer-storage-kinds); an open type's TLV kept as bytes.
 
 ### BER constructed types
 
@@ -345,7 +387,7 @@ All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693
 - [ ] **C11 Contained values: status model, registry and decoders**
   - Ref: contents constraints X.682 §11.
   - Against hand-written tables. Unit-test every status transition of the reference runtime: setting raw bytes drops the inner value and resets the status; a field already decoded from its inline text form is kept by the post-decode pass.
-  - ⚠ The third runtime copied only what BER showed. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
+  - ⚠ The third runtime copied only what BER showed and missed the skip of an inline-decoded field. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
 - [ ] **C12 Contained values: container-config codegen**
   - Ref: X.682 §11; the container config is a project extension for fields the schema leaves as plain OCTET STRING.
   - The rows from `--container-config` and their leg.
@@ -504,7 +546,7 @@ The third backend never emitted REAL constraints (range, open bounds, base-10-on
 
 ### Port shared state transitions, not observed behaviour (C11)
 
-A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: setting the raw bytes did not reset the status, and the post-decode pass did not skip a field already decoded from its inline text form. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
+A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: its post-decode pass did not skip a field already decoded from its inline text form, the C++ `decode_one`'s first check. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
 
 ### The new backend tests the existing ones
 
@@ -530,7 +572,16 @@ First drafts cited wrong X.697 clauses for strings, bit strings and constructed 
 
 Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`; Java `TableDump.dump`, `java-runtime/.../spec/TableDump.java`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
 
-The dump is JSON Lines: one object per type, one line each.
+The dump is JSON Lines: one object per type, one line each. For the type of §3 (`tests/asn1/jer_escape_test.asn1`, `AUTOMATIC TAGS`):
+
+```asn1
+JeRec ::= SEQUENCE {
+    text UTF8String,
+    alt  CHOICE { name UTF8String, n INTEGER }
+}
+```
+
+its line starts like this (only the first member row is shown):
 
 ```json
 {"name":"JeRec","kind":"SEQUENCE","tag":{"class":"UNIVERSAL","number":16,"constructed":true},
