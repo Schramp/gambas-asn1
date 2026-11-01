@@ -2141,6 +2141,12 @@ its message (`… (bit 13)`).
 counts, general lengths with 16K fragmentation, normally small lengths) and
 the length-prefixed whole numbers (semi-constrained, unconstrained, normally
 small), which the type fields build on.
+INTEGER takes its table's constraints (X.691 §13): a constrained whole number
+in the table's `rangeBits` (64-bit ranges included), semi-constrained,
+unconstrained, and the extension bit with the unconstrained form outside an
+extensible root. A value outside a non-extensible range fails the encode,
+and a field beyond the range fails the decode. With unsigned storage, a
+value from 2^63 up outside the root takes nine octets (§11.8.3).
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

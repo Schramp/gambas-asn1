@@ -3,8 +3,10 @@ package io.github.schramp.gambasasn1.wire.per;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
+import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 
 /**
  * Unaligned PER fields of the builtin leaf types: one switch over the
@@ -28,6 +30,8 @@ public final class PerPrimitive {
             // X.691 §18: no field.
             case Asn1Null n -> {
             }
+            case Asn1Integer i -> encodeInteger(i.get(), c, w);
+            case Asn1UInteger u -> encodeUInteger(u.get(), c, w);
             default -> throw new EncodeException("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -42,7 +46,160 @@ public final class PerPrimitive {
             case Asn1Boolean b -> b.set(r.getBits(1) == 1);
             case Asn1Null n -> {
             }
+            case Asn1Integer i -> i.set(decodeInteger(c, r));
+            case Asn1UInteger u -> u.set(decodeUInteger(c, r));
             default -> throw r.error("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
+    }
+
+    private static boolean has(Constraints c, int flag) {
+        return (c.flags() & flag) != 0;
+    }
+
+    /**
+     * An INTEGER with signed storage (X.691 §13): the extension bit of an
+     * extensible constraint, 1 and the unconstrained form for a value
+     * outside the root (§13.1); then a constrained whole number in the
+     * table's {@code rangeBits} (§11.5.6), a semi-constrained whole number
+     * (§13.2.3, §11.7) or an unconstrained one (§11.8).
+     */
+    static void encodeInteger(long v, Constraints c, PerWriter w) {
+        if (has(c, Constraints.CONSTRAINED)) {
+            if (has(c, Constraints.EXTENSIBLE)) {
+                boolean inRoot = v >= c.lowerBound() && v <= c.upperBound();
+                w.putBits(inRoot ? 0 : 1, 1);
+                if (!inRoot) {
+                    PerLength.putUnconstrained(w, v);
+                    return;
+                }
+            } else if (v < c.lowerBound() || v > c.upperBound()) {
+                throw new EncodeException("PER: INTEGER " + v + " outside " + c.lowerBound() + ".." + c.upperBound());
+            }
+            w.putBits(v - c.lowerBound(), c.rangeBits());
+        } else if (has(c, Constraints.SEMI_CONSTRAINED)) {
+            if (has(c, Constraints.EXTENSIBLE)) {
+                boolean inRoot = v >= c.lowerBound();
+                w.putBits(inRoot ? 0 : 1, 1);
+                if (!inRoot) {
+                    PerLength.putUnconstrained(w, v);
+                    return;
+                }
+            } else if (v < c.lowerBound()) {
+                throw new EncodeException("PER: INTEGER " + v + " below " + c.lowerBound());
+            }
+            PerLength.putSemiConstrained(w, v - c.lowerBound());
+        } else {
+            PerLength.putUnconstrained(w, v);
+        }
+    }
+
+    /** Decode counterpart of {@link #encodeInteger}. */
+    static long decodeInteger(Constraints c, PerReader r) {
+        boolean bounded = has(c, Constraints.CONSTRAINED) || has(c, Constraints.SEMI_CONSTRAINED);
+        if (bounded && has(c, Constraints.EXTENSIBLE) && r.getBits(1) == 1) {
+            return PerLength.getUnconstrained(r);
+        }
+        if (has(c, Constraints.CONSTRAINED)) {
+            long offset = r.getBits(c.rangeBits());
+            if (Long.compareUnsigned(offset, c.upperBound() - c.lowerBound()) > 0) {
+                throw r.error("PER: INTEGER beyond " + c.lowerBound() + ".." + c.upperBound());
+            }
+            return c.lowerBound() + offset;
+        }
+        if (has(c, Constraints.SEMI_CONSTRAINED)) {
+            long offset = PerLength.getSemiConstrained(r);
+            // n - lb fits when it is at most Long.MAX_VALUE - lb, read as unsigned.
+            if (Long.compareUnsigned(offset, Long.MAX_VALUE - c.lowerBound()) > 0) {
+                throw r.error("PER: semi-constrained INTEGER exceeds its storage");
+            }
+            return c.lowerBound() + offset;
+        }
+        return PerLength.getUnconstrained(r);
+    }
+
+    /**
+     * An INTEGER with unsigned 64-bit storage, bounds {@code lowerU64} and
+     * {@code upperU64}: {@link #encodeInteger}'s cases with unsigned
+     * compares. A value outside the root is the unconstrained form of the
+     * value itself, which takes a ninth octet from 2^63 up (X.691 §11.8.3,
+     * §11.4.6).
+     */
+    static void encodeUInteger(long v, Constraints c, PerWriter w) {
+        if (has(c, Constraints.CONSTRAINED)) {
+            boolean inRoot = Long.compareUnsigned(v, c.lowerU64()) >= 0 && Long.compareUnsigned(v, c.upperU64()) <= 0;
+            if (has(c, Constraints.EXTENSIBLE)) {
+                w.putBits(inRoot ? 0 : 1, 1);
+                if (!inRoot) {
+                    putUnsignedUnconstrained(w, v);
+                    return;
+                }
+            } else if (!inRoot) {
+                throw new EncodeException("PER: INTEGER " + Long.toUnsignedString(v) + " outside "
+                        + Long.toUnsignedString(c.lowerU64()) + ".." + Long.toUnsignedString(c.upperU64()));
+            }
+            w.putBits(v - c.lowerU64(), c.rangeBits());
+        } else if (has(c, Constraints.SEMI_CONSTRAINED)) {
+            boolean inRoot = Long.compareUnsigned(v, c.lowerU64()) >= 0;
+            if (has(c, Constraints.EXTENSIBLE)) {
+                w.putBits(inRoot ? 0 : 1, 1);
+                if (!inRoot) {
+                    putUnsignedUnconstrained(w, v);
+                    return;
+                }
+            } else if (!inRoot) {
+                throw new EncodeException("PER: INTEGER " + Long.toUnsignedString(v) + " below "
+                        + Long.toUnsignedString(c.lowerU64()));
+            }
+            PerLength.putSemiConstrained(w, v - c.lowerU64());
+        } else {
+            putUnsignedUnconstrained(w, v);
+        }
+    }
+
+    /** Decode counterpart of {@link #encodeUInteger}. */
+    static long decodeUInteger(Constraints c, PerReader r) {
+        boolean bounded = has(c, Constraints.CONSTRAINED) || has(c, Constraints.SEMI_CONSTRAINED);
+        if (bounded && has(c, Constraints.EXTENSIBLE) && r.getBits(1) == 1) {
+            return getUnsignedUnconstrained(r);
+        }
+        if (has(c, Constraints.CONSTRAINED)) {
+            long offset = r.getBits(c.rangeBits());
+            if (Long.compareUnsigned(offset, c.upperU64() - c.lowerU64()) > 0) {
+                throw r.error("PER: INTEGER beyond " + Long.toUnsignedString(c.lowerU64()) + ".."
+                        + Long.toUnsignedString(c.upperU64()));
+            }
+            return c.lowerU64() + offset;
+        }
+        if (has(c, Constraints.SEMI_CONSTRAINED)) {
+            long offset = PerLength.getSemiConstrained(r);
+            if (Long.compareUnsigned(offset, -1L - c.lowerU64()) > 0) {
+                throw r.error("PER: semi-constrained INTEGER exceeds its storage");
+            }
+            return c.lowerU64() + offset;
+        }
+        return getUnsignedUnconstrained(r);
+    }
+
+    /** {@code v}, read as unsigned, as an unconstrained whole number (X.691 §11.8.3). */
+    private static void putUnsignedUnconstrained(PerWriter w, long v) {
+        if (v >= 0) {
+            PerLength.putUnconstrained(w, v);
+            return;
+        }
+        byte[] octets = new byte[9];
+        System.arraycopy(PerWhole.nonNegativeOctets(v), 0, octets, 1, 8);
+        PerLength.putOctets(w, octets);
+    }
+
+    /** Decode counterpart of {@link #putUnsignedUnconstrained}: a negative value has no unsigned storage. */
+    private static long getUnsignedUnconstrained(PerReader r) {
+        byte[] octets = PerLength.getOctets(r);
+        if (octets.length == 9 && octets[0] == 0 && octets[1] < 0) {
+            return PerWhole.fromNonNegative(java.util.Arrays.copyOfRange(octets, 1, 9));
+        }
+        if (octets.length == 0 || octets.length > 8 || octets[0] < 0) {
+            throw r.error("PER: INTEGER outside its unsigned 64-bit storage");
+        }
+        return PerWhole.fromNonNegative(octets);
     }
 }
