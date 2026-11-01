@@ -235,52 +235,104 @@ Generated names are API. Two distinct ASN.1 names must never map to one generate
 
 ---
 
-## 9. Construct order and milestones
+## 9. Porting checklist
 
-Build BER first, then XER, JER and PER. Each later codec is a new walker over the same tables, with no codegen change. §11 gives the step order inside each codec batch and the step size that worked.
+Build BER first, then XER, JER and PER. Each later codec is a new walker over the same tables, with no codegen change.
 
-### BER primitives, in order
+Work the list top to bottom. Every `- [ ]` item is one issue and one pull request of about 200–500 changed lines. Its bold title is the issue title; its sub-items are the issue body. An item marked **⚠** exists because an earlier port missed it; the note says what went wrong. §11 has the evidence behind the order.
 
-| Step | Construct | Why at this point |
-|------|-----------|-------------------|
-| 1 | BOOLEAN | smallest content codec; exercises tag and length end to end |
-| 2 | NULL | zero-length content |
-| 3 | INTEGER, 64-bit storage | two's-complement minimal encoding, sign extension |
-| 4 | ENUMERATED | reuses INTEGER content; adds the EnumSpec table |
-| 5 | OCTET STRING | raw content; constructed (segmented) form on decode |
-| 6 | BIT STRING | unused-bits byte; named bits |
-| 7 | 8-bit restricted strings: UTF8, IA5, Printable, Numeric, Visible, Teletex, Videotex, Graphic, General, ObjectDescriptor | one codec, one wrapper type per tag |
-| 8 | Wide strings: BMPString, UniversalString | 2- and 4-byte code units |
-| 9 | OBJECT IDENTIFIER | base-128 arcs, with the first two arcs combined |
-| 10 | RELATIVE-OID | reuses the arc codec |
-| 11 | UTCTime, GeneralizedTime | string content with a time-type tag |
-| 12 | REAL | X.690 §8.5 binary, decimal and special values. Share vectors with the existing runtimes. |
-| 13 | INTEGER with unsigned or arbitrary storage | the storage decision of §5 |
-| 14 | ANY / open type | raw TLV kept as bytes |
-
-Each step has four parts:
-- a runtime unit test with shared vectors;
-- codegen for the type assignment (`emit_builtin_alias`, `emit_integer`, `emit_enumerated`);
-- a table-diff target;
+**Every BER primitive and constructed item** delivers four parts, so they are not repeated below:
+- runtime codec plus a unit test using the shared vectors;
+- codegen for the construct (`emit_builtin_alias`, `emit_integer`, `emit_enumerated`, `emit_sequence`, …);
+- a table-diff target whose schema carries every `Constraints` field the construct can have;
 - a test leg mirroring the C++ test.
 
-### Constructed types, in order
-1. CHOICE: alternative dispatch through the sorted `ber_tags`.
-2. SEQUENCE: member walk, OPTIONAL.
-3. SEQUENCE OF / SET OF.
-4. SET: its own tag, canonical order, any-order decode.
-5. The tagging matrix: IMPLICIT / EXPLICIT / AUTOMATIC, at type and member level.
-6. DEFAULT.
-7. Extensibility: extension members, groups, unknown alternatives.
-8. Recursive types.
-9. Contained values (X.682 §11), in three steps: the runtime registry and decoders against hand-written tables; codegen of the container-config rows; per-call options (§11).
+**Every text-codec item** (XER, JER) delivers the runtime walker code, unit tests, and a leg against the asn1c column of the shared vectors.
 
-### Milestone gates
-1. **First roundtrip:** a SEQUENCE of plain INTEGERs encodes and decodes (`3d86c2d`).
-2. **Table diff clean** against C++ on every target in `validation-tools/xval_sweep/targets.txt`.
-3. **xval leg:** the language joins `xval_sweep.py`. Random records cross-encode byte-identically against C++, the second backend, and asn1c.
-4. **Real-schema build probe:** the full ETSI LI PS-PDU schema compiles and round-trips. The second port's first probe showed 232 compile errors (`a4ed52c`). The third port ran it after all BER constructs and still found three compile gaps: empty SEQUENCE, tagged contained types, over-long names (#991). Run it compile-only as soon as SEQUENCE and CHOICE land, then again at the end of every batch.
-5. XER byte-identical to asn1c, including whitespace; then JER; then PER.
+**Standing items**, filed whenever they come up and not tied to a step:
+- [ ] **Fix in the reference runtime: <bug>.** A C++ or second-backend bug found while porting gets its own issue and is fixed on the main branch first. The port follows the reference behaviour until then. Expect several of these (§11).
+- [ ] **Report asn1c deviation: <shape>.** Upstream, low priority. asn1c is not patched; tests get an explicit allowance.
+
+### Foundations
+
+- [ ] **F1 Ground-truth vectors for every planned codec**
+  - Every shared `.vectors` file has the DER column plus asn1c's text for every codec the port will cover (§10). Add any missing column in this one mechanical change.
+  - Done when: the regenerated files differ only in the new columns.
+  - ⚠ The third port added the XER and JER columns inside the first XER and JER code steps: about 100 regenerated lines mixed into each code diff.
+- [ ] **F2 Runtime skeleton: I/O base, tags, primitive tables, member-reference type, table dump**
+  - Byte sink/source, decode and encode errors (§4); `Tag`/`Tagging`; `TypeDescriptor`, `MemberDescriptor`, `Constraints`; the member-reference sum type; the PDU marker; the dumper (Appendix A).
+  - Done when: the runtime's unit tests run under ctest and the dumper prints a hand-written table.
+  - ⚠ Leave `SequenceSpec`, `ChoiceSpec`, `SeqOfSpec` and `EnumSpec` to the items that use them. The third port's skeleton carried every spec record and came to ~1,980 lines.
+- [ ] **F3 Backend skeleton: target flag, naming, one file per type**
+  - Target and package flags, naming primitives (§7), cases added to `test_backend_naming`. `emit_*` keep the throwing default.
+- [ ] **F4 Test plumbing: legs, table diff, CI**
+  - Leg harness under `tests/<lang>/`, the language in `table_diff.py` with its own target list, a CI job with the language toolchain.
+  - Done when: an empty leg and an empty table-diff run pass in CI.
+
+### BER primitives
+
+- [ ] **B1 BOOLEAN and NULL.** Smallest content codec; zero-length content. The first leg and the first table-diff target.
+- [ ] **B2 INTEGER (64-bit storage) and ENUMERATED.** Minimal two's-complement content; `EnumSpec` arrives here.
+- [ ] **B3 OCTET STRING and BIT STRING.** Unused-bits byte, named bits. SIZE constraints in the table-diff target.
+- [ ] **B4 Restricted character strings: 8-bit and wide.** One codec and one wrapper per tag; 2- and 4-byte code units for BMPString/UniversalString. Alphabet constraints in the table-diff target.
+- [ ] **B5 OBJECT IDENTIFIER and RELATIVE-OID.** Base-128 arcs; RELATIVE-OID reuses the arc codec.
+- [ ] **B6 UTCTime and GeneralizedTime.** String content under a time-type tag.
+- [ ] **B7 REAL.** X.690 §8.5 binary, decimal and special values; vectors shared with the existing runtimes.
+- [ ] **B8 REAL constraints in the tables**
+  - Range, open bounds and base-10-only (`WITH COMPONENTS { ..., base (10) }`) on type assignments and members; table-diff targets for REAL range, base and DEFAULT schemas.
+  - Done when: the table diff is clean on those targets.
+  - ⚠ BER and XER do not read these fields, so every BER and XER leg passed without them. The third backend emitted none, and the gap showed only in JER, where base-10-only picks the text form. A table field no codec reads yet is checked only by the table diff.
+- [ ] **B9 INTEGER with unsigned or arbitrary storage, and ANY.** The storage decision of §5; raw TLV kept as bytes.
+
+### BER constructed types
+
+- [ ] **C1 CHOICE.** `ChoiceSpec`; alternative dispatch through the sorted `ber_tags`.
+- [ ] **C2 SEQUENCE.** `SequenceSpec`; member walk; OPTIONAL. First round trip of a SEQUENCE of INTEGERs (`3d86c2d`).
+- [ ] **C3 Real-schema compile probe**
+  - Generate and compile the full ETSI LI PS-PDU schema; constructs not done yet become `Unsupported` stubs. File each compile gap as its own issue.
+  - ⚠ The second port's first probe showed 232 compile errors (`a4ed52c`). The third ran it only after all BER constructs and still found three gaps: empty SEQUENCE, tagged contained types, over-long names (#991).
+- [ ] **C4 SEQUENCE OF / SET OF.** `SeqOfSpec`; element constraints.
+- [ ] **C5 Inline member constraints.** Constraints written on a member or an element rather than on a named type, in the tables and the table diff.
+- [ ] **C6 SET.** Its own tag, canonical order on encode, any order on decode.
+- [ ] **C7 Tagging matrix.** IMPLICIT / EXPLICIT / AUTOMATIC at type and member level (§6).
+- [ ] **C8 DEFAULT.** Fill on decode, skip on DER encode.
+- [ ] **C9 Extensibility.** Extension members, groups, unknown alternatives and enumerations.
+- [ ] **C10 Recursive types.** Cycle handling (§5) and the 256-level decode limit.
+- [ ] **C11 Contained values: status model, registry and decoders**
+  - Against hand-written tables. Unit-test every status transition of the reference runtime: setting raw bytes drops the inner value and resets the status; a field already decoded from its inline text form is kept by the post-decode pass.
+  - ⚠ The third runtime copied only what BER showed. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
+- [ ] **C12 Contained values: container-config codegen.** The rows from `--container-config` and their leg.
+- [ ] **C13 Contained values: per-call options.** Decode off, registry override.
+- [ ] **C14 BER cross-validation leg.** The language joins `xval_sweep.py`: random records round-trip byte for byte against C++, the second backend and asn1c.
+- [ ] **C15 BER fuzz smoke test.** Corrupted BER gives errors, never aborts.
+- [ ] **C16 Real-schema round trip.** The full ETSI LI PS-PDU schema compiles with no stubs and round-trips.
+
+### XER (the template for every text codec)
+
+- [ ] **X1 I/O layer + BOOLEAN, NULL, INTEGER, ENUMERATED + first leg**
+  - Settle the comparison rules here: byte-for-byte against asn1c's XER, and an explicit allowance for each known asn1c deviation. Later items only add rows.
+  - ⚠ An I/O layer has nothing to test on its own, so it pulls in every primitive unless the item stops at these four. The third port's XER and JER primitive steps came to ~1,150 and ~1,360 lines.
+- [ ] **X2 Strings and escaping,** wide strings included.
+- [ ] **X3 Hex kinds:** OCTET STRING, ANY, the BIT STRING forms.
+- [ ] **X4 OBJECT IDENTIFIER, RELATIVE-OID, time types.**
+- [ ] **X5 REAL text.**
+- [ ] **X6 Constructed walker:** SEQUENCE/SET, CHOICE, SEQUENCE OF. One switch; its legs exercise every primitive already done.
+- [ ] **X7 Encoding instructions on rows** (X.693 §21 BASE64/UTF8, value lists).
+- [ ] **X8 Contained values, row form.** Hex, inline, inline-raw.
+- [ ] **X9 Contained values, per-call override.**
+  - ⚠ The third port had to split X8 and X9 after the fact (#1003, #1004).
+- [ ] **X10 XER cross-validation leg.** Rows against C++ and asn1c, plus the round-trip and cross-decode matrix.
+
+### JER
+
+Same items as XER, J1–J10, with these differences:
+- [ ] **J1** compares as parsed JSON, because asn1c indents its JER. Known asn1c deviations to allow for: extension-group members nested in an `extN` object (X.697 §27.3.1 keeps them flat); some absent DEFAULT members left out; wide strings not escaped.
+- [ ] **J5 REAL text** needs the shortest round-trip number format. The third port checked it against the reference runtime on 200,000 doubles; the host language's own float-to-text was not shortest.
+- [ ] **J7** is the REAL base-10 forms (bare number under base-10-only, `{"base10Value":…}` otherwise, X.697 §23), which rely on B8. No runtime implements JER encoding instructions yet.
+
+### PER
+
+Not yet ported to a third language; to be refined when it is. Start with the bit-level reader/writer plus constrained INTEGER and BOOLEAN, then follow the XER shape: primitives by family, the walker (preamble bitmap, CHOICE index, extension bitmap), then the cross-validation leg.
 
 ---
 
@@ -299,7 +351,7 @@ A divergence between asn1c and the compiler is presumed to be a compiler bug. A 
 
 ---
 
-## 11. Slicing the work (lessons from the third port)
+## 11. Why the checklist looks like this (lessons from the third port)
 
 The third port took 35 pull requests into its integration branch, about 90 commits, against about 346 commits for the second port. The table-only design held: no codec after BER needed a codegen change, except where a table field had never been emitted (below). What still went wrong was step size and order.
 
@@ -315,22 +367,13 @@ Most steps were 200–500 changed lines and passed review and CI on the first pu
 | BER contained values | ~1,000 | registry, decoders, container-config codegen and options in one step |
 | BER REAL | ~870 | binary, decimal and special forms plus their vectors |
 
-Two patterns. **The first step of a new layer** carries the I/O layer and every primitive, because an I/O layer has nothing to test until a value goes through it. **A feature with several switches** (contained values: per-row form, per-call override, decoder registry) lands all switches at once. The XER contained step had to be split after the fact (#1003, #1004).
+These produced the step boundaries of §9 (F1, F2, X1, B7/B8, C11–C13, X8/X9). Two patterns. **The first step of a new layer** carries the I/O layer and every primitive, because an I/O layer has nothing to test until a value goes through it. **A feature with several switches** (contained values: per-row form, per-call override, decoder registry) lands all switches at once. The XER contained step had to be split after the fact (#1003, #1004).
 
-### Step order inside a codec batch
-
-1. **Every codec's ground-truth column first, alone.** The asn1c text columns were added to all shared vector files inside the first primitive step of XER and again of JER, about 100 regenerated lines mixed into each code diff. Generate all planned columns in one mechanical change at the start of the epic. Its check is simple: the existing columns are unchanged.
-2. **I/O layer + BOOLEAN, NULL, INTEGER, ENUMERATED + the first leg** against the asn1c column. Settle the comparison rules here: byte compare or parsed compare, and the normalisations for known asn1c deviations (for JER: asn1c nests extension-group members in an `extN` object, X.697 §27.3.1 keeps them flat; it leaves out some absent DEFAULT members). Later steps then only add rows.
-3. **The other primitives, one representation family per step:** strings and escaping (wide strings included); hex kinds (OCTET STRING, ANY, the BIT STRING forms); OID and time types; REAL alone. Text REAL needs the shortest round-trip number format; checking it against the reference runtime took 200,000 doubles, and the host language's own float-to-text was not shortest.
-4. **The constructed walker:** SEQUENCE/SET, CHOICE and SEQUENCE OF in one step. The walker is one switch, and its legs exercise every primitive already in place.
-5. **Instructions, contained values, per-call options:** one switch per step. The per-row form first, the per-call override after it.
-6. **The cross-validation leg.** 100–200 lines once the harness has the record loop of an earlier codec.
-
-### A table field that no codec reads yet is untested
+### A table field that no codec reads yet is untested (B8)
 
 The third backend never emitted REAL constraints (range, open bounds, base-10-only). BER and XER do not read them, so every BER and XER leg passed. The gap showed only in the JER step, where base-10-only picks the text form, and table_diff had no REAL-constrained target. When a construct's table rows land, add a table_diff target that carries every `Constraints` field the construct can have, even fields no codec of the new runtime reads yet. The table diff is the only check that sees them.
 
-### Port shared state transitions, not observed behaviour
+### Port shared state transitions, not observed behaviour (C11)
 
 A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: setting the raw bytes did not reset the status, and the post-decode pass did not skip a field already decoded from its inline text form. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
 
@@ -344,7 +387,7 @@ The port found bugs in the reference runtimes, each fixed on the main branch fir
 - wide strings in JER carrying XML escapes (#1010);
 - JER `null` for an absent member not accepted (#1013).
 
-asn1c deviations were reported upstream, not patched. Budget for this, and keep each fix out of the port's own step.
+asn1c deviations were reported upstream, not patched. These are the standing items of §9: budget for them, and keep each fix out of the port's own step.
 
 ### Check clause numbers against the text
 
