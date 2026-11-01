@@ -7,9 +7,11 @@ import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,6 +34,8 @@ class BuiltinAliasPerTest {
             case MemberRef.Primitive(Asn1Integer i) -> true;
             case MemberRef.Primitive(Asn1UInteger u) -> true;
             case MemberRef.Enumerated e -> true;
+            case MemberRef.Primitive(Asn1OctetString o) -> true;
+            case MemberRef.Primitive(Asn1BitString b) -> true;
             default -> false;
         };
     }

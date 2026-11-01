@@ -262,13 +262,18 @@ public final class PerLength {
     }
 
     /**
-     * Decode counterpart of {@link #putSize}.
+     * Decode counterpart of {@link #putSize}; a count outside a
+     * non-extensible SIZE fails.
      *
      * @return the item count
      */
     public static int getSize(PerReader r, Constraints c, ItemReader items) {
         if (!countIsConstrained(c)) {
-            return getLengthAndItems(r, items);
+            int n = getLengthAndItems(r, items);
+            if ((c.flags() & Constraints.SIZE_CONSTRAINED) != 0 && (n < c.sizeLower() || n > c.sizeUpper())) {
+                throw r.error("PER: length " + n + " outside SIZE (" + c.sizeLower() + ".." + c.sizeUpper() + ")");
+            }
+            return n;
         }
         long n = c.sizeLower() + r.getBits(c.sizeRangeBits());
         if (n > c.sizeUpper()) {
