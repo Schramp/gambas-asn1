@@ -289,7 +289,7 @@ fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &m
     for i in begin..end {
         if present[i - begin] {
             access_decode(obj, i, &mut g)?;
-        } else {
+        } else if obj.spec().members[i].has_default {
             obj.set_default(i);
         }
     }
@@ -313,7 +313,9 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
             let present = bitmap.get(opt_idx);
             opt_idx += 1;
             if !present {
-                obj.set_default(i);
+                if obj.spec().members[i].has_default {
+                    obj.set_default(i);
+                }
                 continue;
             }
         }

@@ -1633,8 +1633,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     is_default_equal_expr = std::format("Some(|v| v.{} == Some({}()))", m.mname, fname);
                 } else if (m.optional && covered) {
                     // An OPTIONAL member's value when the encoding leaves
-                    // it out is "absent" (X.680 §25.6): a decoder that
-                    // already reached the member resets it.
+                    // it out is "absent" (X.680 §25.6). JER decode resets a
+                    // member it already reached when the value is `null`
+                    // (X.697 §27.3.4); BER/PER skip this entry, as the
+                    // row's has_default is false.
                     set_default_expr = std::format("Some(|v| v.{} = None)", m.mname);
                 }
 
@@ -1766,9 +1768,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
 
                 meta_lines.push_back(std::format(
-                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, contained: {} }},",
+                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, has_default: {}, contained: {} }},",
                     m.asn1_name, tag_text, m.optional ? "true" : "false", ber_framing_expr, constraints_ref,
                     covered ? rust_xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default",
+                    m.has_default && m.has_default_setter ? "true" : "false",
                     m.contained ? std::format("Some(&{})", contained_spec_ident(m.contained_base)) : "None"));
                 getter_lines.push_back(std::format("    {},", get_expr));
                 getter_mut_lines.push_back(std::format("    {},", get_mut_expr));
