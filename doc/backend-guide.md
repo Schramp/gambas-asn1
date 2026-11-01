@@ -2,7 +2,7 @@
 
 How to add a new target language to the compiler: a codegen backend plus its runtime.
 
-This guide is language-neutral. It is distilled from the history of the existing backends, mainly the second one, whose port went through several redesigns before reaching its current shape. Commit hashes in parentheses point at the change where a lesson was learned. `git show <hash>` gives the full reasoning.
+This guide is language-neutral. It is distilled from the history of the existing backends: the second one, whose port went through several redesigns before reaching its current shape, and the third, which followed this guide and fed back how to slice the work (§11). Commit hashes in parentheses point at the change where a lesson was learned. `git show <hash>` gives the full reasoning; `#N` is a pull request or issue of the project.
 
 The reference implementation is the C++ backend (`CppBackend`, `runtime/`). The second backend (`RustBackend`, `rust-runtime/wire/`) is the reference for a language without `offsetof` and without inheritance-based dispatch. Every rule below holds for both.
 
@@ -237,7 +237,7 @@ Generated names are API. Two distinct ASN.1 names must never map to one generate
 
 ## 9. Construct order and milestones
 
-Build BER first, then XER, JER and PER. Each later codec is a new walker over the same tables, with no codegen change.
+Build BER first, then XER, JER and PER. Each later codec is a new walker over the same tables, with no codegen change. §11 gives the step order inside each codec batch and the step size that worked.
 
 ### BER primitives, in order
 
@@ -273,13 +273,13 @@ Each step has four parts:
 6. DEFAULT.
 7. Extensibility: extension members, groups, unknown alternatives.
 8. Recursive types.
-9. Contained values (X.682 §11).
+9. Contained values (X.682 §11), in three steps: the runtime registry and decoders against hand-written tables; codegen of the container-config rows; per-call options (§11).
 
 ### Milestone gates
 1. **First roundtrip:** a SEQUENCE of plain INTEGERs encodes and decodes (`3d86c2d`).
 2. **Table diff clean** against C++ on every target in `validation-tools/xval_sweep/targets.txt`.
 3. **xval leg:** the language joins `xval_sweep.py`. Random records cross-encode byte-identically against C++, the second backend, and asn1c.
-4. **Real-schema build probe:** the full ETSI LI PS-PDU schema compiles and round-trips. The second port's first probe showed 232 compile errors (`a4ed52c`). Expect the same kind of number and run the probe early.
+4. **Real-schema build probe:** the full ETSI LI PS-PDU schema compiles and round-trips. The second port's first probe showed 232 compile errors (`a4ed52c`). The third port ran it after all BER constructs and still found three compile gaps: empty SEQUENCE, tagged contained types, over-long names (#991). Run it compile-only as soon as SEQUENCE and CHOICE land, then again at the end of every batch.
 5. XER byte-identical to asn1c, including whitespace; then JER; then PER.
 
 ---
@@ -288,7 +288,7 @@ Each step has four parts:
 
 From cheapest to most thorough. All of it runs under `ctest`.
 
-1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes. `tests/vectors/make_ber_vectors.py SCHEMA VALUES.xer OUT.vectors` makes such vectors: asn1c encodes each listed XER value to DER, and the committed `.vectors` file (`Type<TAB>XER<TAB>hex` per line) needs no asn1c to use.
+1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes. `tests/vectors/make_ber_vectors.py SCHEMA VALUES.xer OUT.vectors` makes such vectors: asn1c encodes each listed XER value to DER and writes its own text encodings of that DER. The committed `.vectors` file (`Type<TAB>XER<TAB>DER-hex<TAB>asn1c-XER<TAB>asn1c-JER` per line) needs no asn1c to use, and gives every codec leg its ground truth from the same line.
 2. **Naming test:** `test_backend_naming` covers each backend's naming primitives (keywords, hyphens, collisions).
 3. **Generated-code test legs:** `tests/<lang>/<case>`, one per C++ test (`tests/<codec>/test_<case>.cpp`). They use the same schema under `tests/asn1/` and the same vectors, and print the same PASS/FAIL lines. The build compiles the generated code with warnings as errors.
 4. **Table diff:** `validation-tools/table_diff/table_diff.py` dumps every generated type's tables in each runtime (Appendix A) and diffs them against C++.
@@ -296,6 +296,66 @@ From cheapest to most thorough. All of it runs under `ctest`.
 6. **Fuzz smoke test:** corrupted BER must give errors, never aborts.
 
 A divergence between asn1c and the compiler is presumed to be a compiler bug. A divergence between two backends with identical tables is a runtime bug. A table diff is a backend or `Generator` bug.
+
+---
+
+## 11. Slicing the work (lessons from the third port)
+
+The third port took 35 pull requests into its integration branch, about 90 commits, against about 346 commits for the second port. The table-only design held: no codec after BER needed a codegen change, except where a table field had never been emitted (below). What still went wrong was step size and order.
+
+### Which steps were too big
+
+Most steps were 200–500 changed lines and passed review and CI on the first push. The outliers:
+
+| Step | Own diff | What made it big |
+|------|----------|------------------|
+| Runtime skeleton (I/O, spec tables, BER reader/writer, table dump) | ~1,980 lines, 47 files | spec records for every construct, before any construct used them |
+| JER I/O layer + all primitives | ~1,360 | I/O layer, every primitive, and a vectors column regenerated in every file |
+| XER I/O layer + all primitives | ~1,150 | the same shape |
+| BER contained values | ~1,000 | registry, decoders, container-config codegen and options in one step |
+| BER REAL | ~870 | binary, decimal and special forms plus their vectors |
+
+Two patterns. **The first step of a new layer** carries the I/O layer and every primitive, because an I/O layer has nothing to test until a value goes through it. **A feature with several switches** (contained values: per-row form, per-call override, decoder registry) lands all switches at once. The XER contained step had to be split after the fact (#1003, #1004).
+
+### Step order inside a codec batch
+
+1. **Every codec's ground-truth column first, alone.** The asn1c text columns were added to all shared vector files inside the first primitive step of XER and again of JER, about 100 regenerated lines mixed into each code diff. Generate all planned columns in one mechanical change at the start of the epic. Its check is simple: the existing columns are unchanged.
+2. **I/O layer + BOOLEAN, NULL, INTEGER, ENUMERATED + the first leg** against the asn1c column. Settle the comparison rules here: byte compare or parsed compare, and the normalisations for known asn1c deviations (for JER: asn1c nests extension-group members in an `extN` object, X.697 §27.3.1 keeps them flat; it leaves out some absent DEFAULT members). Later steps then only add rows.
+3. **The other primitives, one representation family per step:** strings and escaping (wide strings included); hex kinds (OCTET STRING, ANY, the BIT STRING forms); OID and time types; REAL alone. Text REAL needs the shortest round-trip number format; checking it against the reference runtime took 200,000 doubles, and the host language's own float-to-text was not shortest.
+4. **The constructed walker:** SEQUENCE/SET, CHOICE and SEQUENCE OF in one step. The walker is one switch, and its legs exercise every primitive already in place.
+5. **Instructions, contained values, per-call options:** one switch per step. The per-row form first, the per-call override after it.
+6. **The cross-validation leg.** 100–200 lines once the harness has the record loop of an earlier codec.
+
+### A table field that no codec reads yet is untested
+
+The third backend never emitted REAL constraints (range, open bounds, base-10-only). BER and XER do not read them, so every BER and XER leg passed. The gap showed only in the JER step, where base-10-only picks the text form, and table_diff had no REAL-constrained target. When a construct's table rows land, add a table_diff target that carries every `Constraints` field the construct can have, even fields no codec of the new runtime reads yet. The table diff is the only check that sees them.
+
+### Port shared state transitions, not observed behaviour
+
+A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: setting the raw bytes did not reset the status, and the post-decode pass did not skip a field already decoded from its inline text form. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
+
+### The new backend tests the existing ones
+
+The port found bugs in the reference runtimes, each fixed on the main branch first, in its own change:
+- an EXPLICIT tag around a tagged CHOICE (#951);
+- untagged CHOICE alternative order in PER (#952);
+- CHOICE and inline-type cycles that did not compile (#975, #979);
+- a CHOICE alternative ignoring its BASE64/UTF8 instruction (#1001);
+- wide strings in JER carrying XML escapes (#1010);
+- JER `null` for an absent member not accepted (#1013).
+
+asn1c deviations were reported upstream, not patched. Budget for this: a fix branch on main, then main merged into the integration branch. Keep the fix out of the port's step.
+
+### Stacked steps
+
+- Branch each step from the previous step's tip and open its pull request against that step's branch, so the diff shows only its own changes. When the base merges, retarget to the integration branch. The host does this by itself only when the base branch is deleted.
+- Merging the integration branch into a step branch works but puts merge commits into each later step and inflates its listed diff (the SET, tagging and DEFAULT steps). Rebase onto the integration branch once the base has merged, and push only then.
+- A pull request into a branch other than the default one does not close its issue on merge. Close it by hand.
+- Locally, run only the step's own unit tests and legs. The full cross-validation runs in CI on every pull request. Building each schema once for all its PDU types made the extra language leg cheap enough for that.
+
+### Check clause numbers against the text
+
+First drafts cited wrong X.697 clauses for strings, bit strings and constructed types. Convert each standard to plain text once, and search it before writing a clause number into a comment.
 
 ---
 

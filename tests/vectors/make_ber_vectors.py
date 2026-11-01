@@ -7,9 +7,9 @@ encoder: asn1c is the ground truth, so vectors are never written by hand.
 VALUES.xer holds one `Type<TAB>XER` line per value (# starts a comment).
 OUT.vectors gets one `Type<TAB>XER<TAB>DER-hex<TAB>asn1c-XER<TAB>asn1c-JER` line per value;
 the runtime legs decode the hex, compare with the value, and re-encode it byte
-for byte. The last column is asn1c's own XER output for that DER (its exact
-BASIC-XER text, for the XER legs) and the next asn1c's JER output for it (for
-the JER legs, which compare it as JSON: asn1c indents its JER), both with
+for byte. The fourth column is asn1c's own XER output for that DER (its exact
+BASIC-XER text, for the XER legs) and the fifth its JER output (for the JER
+legs, which compare it as JSON: asn1c indents its JER), both with
 backslash, newline and tab written as \\, \n and \t.
 Needs asn1c on PATH; the committed .vectors files need nothing.
 """
