@@ -1,0 +1,30 @@
+-- X.693 §21 BASE64/UTF8 ENCODING-CONTROL instructions on CHOICE
+-- alternatives: the instruction comes from the alternative's own inline
+-- OCTET STRING or from the named OCTET STRING type it references, as for
+-- a SEQUENCE member (xer_encoding_instr_test.asn1).
+
+XerAltInstructionTest DEFINITIONS AUTOMATIC TAGS XER INSTRUCTIONS ::= BEGIN
+
+    Blob ::= OCTET STRING
+    Text ::= OCTET STRING
+
+    Pick ::= CHOICE {
+        blob    Blob,
+        text    Text,
+        inline  [BASE64] OCTET STRING,
+        plain   OCTET STRING,
+        num     INTEGER
+    }
+
+    Holder ::= SEQUENCE {
+        pick   Pick,
+        picks  SEQUENCE OF Pick
+    }
+
+    ENCODING-CONTROL XER
+        GLOBAL-DEFAULTS MODIFIED-ENCODINGS
+        BASE64 Blob
+        Text OCTET STRING ::= utf8
+    END
+
+END

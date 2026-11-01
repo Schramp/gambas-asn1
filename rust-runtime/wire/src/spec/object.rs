@@ -104,6 +104,9 @@ pub struct AltMeta {
     pub name: &'static str,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
+    /// X.693 §21 BASE64/UTF8 override of an OCTET STRING alternative,
+    /// read off the row as for `MemberMeta::xer_instruction`.
+    pub xer_instruction: XerInstruction,
     /// Set for a contained alternative (see `MemberMeta::contained`).
     pub contained: Option<&'static crate::containing::ContainedSpec>,
 }
@@ -176,7 +179,8 @@ pub trait Asn1Seq {
     fn get_member(&self, index: usize) -> MemberRef<'_>;
     fn get_member_mut(&mut self, index: usize) -> MemberRefMut<'_>;
     /// Fills in member `index`'s schema DEFAULT (X.680 §25.1) when the
-    /// wire omitted it; a no-op for a member with no default.
+    /// wire omitted it; an OPTIONAL member with no DEFAULT becomes absent;
+    /// a no-op for a mandatory member.
     fn set_default(&mut self, index: usize);
     /// `true` when member `index`'s current value equals its schema
     /// DEFAULT (X.690 §11.5 — suppress encoding it); `false` for a

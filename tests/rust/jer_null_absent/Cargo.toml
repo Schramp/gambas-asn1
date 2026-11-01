@@ -1,0 +1,14 @@
+[package]
+name = "jer-null-absent-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the JER null-for-absent-member test (jer_null_absent_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_jer_null_absent), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "jer_null_absent"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

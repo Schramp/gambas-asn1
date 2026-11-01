@@ -2736,6 +2736,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             const sema::ContainedField* contained = nullptr;
             std::string contained_base;
             bool boxed = false;
+            ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
+            ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
         };
         std::vector<AltRow> rows;
 
@@ -2793,6 +2795,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool alt_ref_is_seq_of = false;
             std::optional<ast::BuiltinType> alt_ref_builtin_alias;
             std::string alt_ref_constraints_owner;
+            ast::XerEncoding alt_ref_xer_encoding = ast::XerEncoding::Default;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
@@ -2820,6 +2823,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                             // identical exclusion.
                             if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
                                 alt_ref_builtin_alias = *rbt;
+                                alt_ref_xer_encoding = resolved->xer_encoding;
                                 alt_ref_constraints_owner = resolved_name_for_ref(resolved->name, current_module_);
                             }
                         }
@@ -2844,6 +2848,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                              contained_for(*m),
                              contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{},
                              choice_alternative_in_cycle(*m, def.name) });
+            rows.back().xer_encoding = m->xer_encoding;
+            rows.back().ref_xer_encoding = alt_ref_xer_encoding;
             ++auto_tag_num;
           }
         }
@@ -2868,6 +2874,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.contained = r.contained;
             alt.contained_base = r.contained_base;
             alt.boxed = r.boxed;
+            alt.xer_encoding = r.xer_encoding;
+            alt.ref_xer_encoding = r.ref_xer_encoding;
             spec.alternatives.push_back(std::move(alt));
         }
 
