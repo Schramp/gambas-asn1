@@ -123,10 +123,6 @@ public final class Containing<T extends AsMemberRef> implements Asn1Contained, A
     public void setRawFromWire(byte[] raw, ContainedEncoding encoding) {
         setBytes(raw);
         rawEncoding = encoding;
-        inner = null;
-        status = ContainedStatus.NOT_DECODED;
-        error = "";
-        dirty = false;
     }
 
     @Override
