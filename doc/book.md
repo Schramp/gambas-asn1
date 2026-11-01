@@ -2161,11 +2161,12 @@ NumericString in 4 bits (space 0, digits 1 to 10), PrintableString, IA5String,
 VisibleString, UTCTime and GeneralizedTime in 7 bits, BMPString in 16 and
 UniversalString in 32, each other kind as its octets; a PER-visible FROM
 alphabet writes each character's index, and an extensible SIZE or FROM adds
-the extension bit. asn1c differs on three points, so the Java PER leg checks
-those types against the standard instead: it writes the time types in 8 bits,
-an unconstrained NumericString's digits unmapped, and, like the C++ and Rust
-runtimes, it applies SIZE to UTF8String and the other kinds that X.691 §30.6
-leaves unconstrained (#1043).
+the extension bit. For a type assignment that only renames UTCTime,
+GeneralizedTime or NumericString, asn1c drops the builtin's PER constraints
+and writes 8-bit time characters or unmapped digits; as a SEQUENCE member it
+writes the X.691 encoding, which the Java PER leg checks those types against.
+asn1c, like the C++ and Rust runtimes, applies SIZE to UTF8String and the
+other kinds that X.691 §30.6 leaves unconstrained (#1043).
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

@@ -47,12 +47,13 @@ class BuiltinAliasPerTest {
     }
 
     /**
-     * Types whose asn1c UPER is not X.691: asn1c writes UTCTime and
-     * GeneralizedTime with 8 bits a character, where §10.6.5 encodes them as
-     * VisibleString (7 bits), and writes an unconstrained NumericString's
-     * digits unmapped, '0' as 0 like the space, where §30.5.4 maps space to
-     * 0 and '0'..'9' to 1..10. {@link #asn1cDeviations} checks these
-     * against the standard instead.
+     * Types whose asn1c UPER is not X.691: for a type assignment that only
+     * renames a builtin, asn1c drops the builtin's PER constraints, so it
+     * writes UTCTime and GeneralizedTime with 8 bits a character (X.691
+     * §10.6.5: VisibleString, 7 bits) and an unconstrained NumericString's
+     * digits unmapped (§30.5.4: space 0, '0'..'9' 1..10). As a SEQUENCE
+     * member asn1c writes the X.691 encoding; {@link #asn1cDeviations}
+     * checks these types against those bytes.
      */
     private static final Set<String> ASN1C_DEVIATES = Set.of("Numeric", "Utc", "ImplicitUtc", "GenTime", "ExplicitGenTime");
 
@@ -84,6 +85,7 @@ class BuiltinAliasPerTest {
         assertArrayEquals(vec.der(), BerObject.encode(v));
     }
 
+    /** Expected bytes: asn1c's UPER of the same value as a SEQUENCE member, without the member's preamble. */
     @Test
     void asn1cDeviations() {
         String[][] cases = {
