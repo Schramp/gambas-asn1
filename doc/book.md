@@ -2179,6 +2179,13 @@ presence bit each and each present addition as an open-type field (§19.7 to
 SEQUENCE. The decoder skips additions it has no member for, so an earlier
 version reads a later version's encoding, and fills absent DEFAULT members.
 A mandatory member left unset fails the encode.
+A CHOICE is the extension bit of an extensible type, then a root
+alternative's index in the table's `rangeBits` and its value, or an extension
+alternative's index as a normally small number and its value as an open-type
+field (X.691 §23); the table lists the alternatives in the canonical order of
+their tags (§23.3). An extension alternative the table does not know is kept
+as an unknown extension (its open-type contents under a context tag numbered
+by its extension index), which PER cannot encode again.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

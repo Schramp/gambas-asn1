@@ -1,10 +1,13 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.ber.Tag;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
+import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
 import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
@@ -67,6 +70,7 @@ public final class PerObject {
             case MemberRef.Primitive(var p) -> PerPrimitive.encode(p, c, w);
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.encodeEnumerated(slot, spec, w);
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
+            case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
             default -> throw new EncodeException("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -91,6 +95,7 @@ public final class PerObject {
             case MemberRef.Primitive(var p) -> PerPrimitive.decode(p, c, r);
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.decodeEnumerated(slot, spec, r);
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
+            case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -288,5 +293,70 @@ public final class PerObject {
                 s.setDefault(i);
             }
         }
+    }
+
+    /** The alternatives before the extension marker. */
+    private static int rootCount(ChoiceSpec spec) {
+        return spec.extAt() >= 0 ? spec.extAt() : spec.alternatives().size();
+    }
+
+    /**
+     * A CHOICE (X.691 §23): the extension bit of an extensible type, then a
+     * root alternative's index in the table's {@code rangeBits} (§23.6) and
+     * its value, or an extension alternative's index as a normally small
+     * number and its value as an open-type field (§23.8). The alternatives
+     * are in the table in the canonical order of their tags (§23.3).
+     */
+    static void encodeChoice(Asn1Choice ch, PerWriter w) {
+        ChoiceSpec spec = ch.spec();
+        int i = ch.activeIndex();
+        if (i < 0) {
+            throw new EncodeException("CHOICE " + spec.name() + ": no alternative selected");
+        }
+        int root = rootCount(spec);
+        boolean inExt = spec.extAt() >= 0 && i >= root;
+        if (spec.extAt() >= 0) {
+            w.putBits(inExt ? 1 : 0, 1);
+        }
+        Constraints c = spec.alternatives().get(i).constraints();
+        if (!inExt) {
+            w.putBits(i, spec.rangeBits());
+            encodeValue(ch.getActive(), c, w);
+            return;
+        }
+        PerLength.putNormallySmall(w, i - root);
+        PerWriter field = new PerWriter().withContained(w.contained());
+        encodeValue(ch.getActive(), c, field);
+        PerLength.putOctets(w, field.toByteArray());
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeChoice}. An extension alternative
+     * this table does not know is kept as an unknown extension: its open-type
+     * contents under a context tag numbered by its extension index.
+     */
+    static void decodeChoice(Asn1Choice ch, PerReader r) {
+        ChoiceSpec spec = ch.spec();
+        int root = rootCount(spec);
+        boolean inExt = spec.extAt() >= 0 && r.getBits(1) == 1;
+        if (!inExt) {
+            long i = r.getBits(spec.rangeBits());
+            if (i >= root) {
+                throw r.error("PER: CHOICE " + spec.name() + " index " + i + " outside its " + root + " root alternatives");
+            }
+            decodeValue(ch.select((int) i), spec.alternatives().get((int) i).constraints(), r);
+            return;
+        }
+        long ext = PerLength.getNormallySmall(r);
+        byte[] field = PerLength.getOctets(r);
+        if (ext >= spec.alternatives().size() - root) {
+            if (ext > Integer.MAX_VALUE) {
+                throw r.error("PER: CHOICE " + spec.name() + " extension index " + ext + " beyond any table");
+            }
+            ch.setUnknownExtension(new Asn1Choice.UnknownExtension(Tag.context((int) ext, false), field));
+            return;
+        }
+        int i = root + (int) ext;
+        decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.sub(field));
     }
 }
