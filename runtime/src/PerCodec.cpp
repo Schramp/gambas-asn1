@@ -62,14 +62,26 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 }
 
 
-// X.691 §10.6 "Encoding of a normally small non-negative whole number"
-// Flag=0: value in [0..63], encode in kShortFormBits bits. Flag=1: delegate to put_length().
+/// @brief Writes a normally small non-negative whole number: the choice
+///        index of a CHOICE extension alternative or the ordinal of an
+///        ENUMERATED extension item.
+/// @param n  The number, 0 or more.
+/// @see X.691 §11.6 — bit 0 and n in 6 bits for n <= 63 (§11.6.1); otherwise
+///      bit 1 and n as a semi-constrained whole number with lb 0, preceded
+///      by its octet count as a length determinant (§11.6.2, §11.7, §11.9).
 static void put_nsnn(PerEncodeStream& stream, int n) {
-    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); }
-    else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
+    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); return; }
+    auto v = static_cast<uint64_t>(n);
+    int len = (std::bit_width(v) + 7) / 8;
+    stream.put_bits(1, 1);
+    per_detail::put_length(stream, static_cast<std::size_t>(len));
+    for (int i = len - 1; i >= 0; --i) stream.put_bits((v >> (8 * i)) & 0xFF, 8);
 }
 
-// X.691 §10.6 — see put_nsnn above.
+/// @brief Decode counterpart of put_nsnn().
+/// @return The number, or an error for a zero octet count or a number
+///         beyond int.
+/// @see X.691 §11.6.
 static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
@@ -80,7 +92,15 @@ static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     }
     auto len = per_detail::get_length(stream);
     if (!len) return make_unexpected<int, DecodeError>(len.error());
-    return static_cast<int>(*len);
+    if (*len == 0) return make_unexpected<int, DecodeError>(DecodeError("PER: normally small number with no octets"));
+    uint64_t v = 0;
+    for (std::size_t i = 0; i < *len; ++i) {
+        if (v >> 23) return make_unexpected<int, DecodeError>(DecodeError("PER: normally small number beyond int"));
+        auto o = stream.get_bits(8);
+        if (!o) return make_unexpected<int, DecodeError>(o.error());
+        v = (v << 8) | *o;
+    }
+    return static_cast<int>(v);
 }
 
 // X.691 §10.5.6 "In the case of the UNALIGNED variant the value ("n" - "lb") shall be

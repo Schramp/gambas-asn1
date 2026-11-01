@@ -1599,7 +1599,9 @@ UPER extension handling is complete:
 - Extension members: present-bitmap (normally-small number of extensions, then n bits),
   each present member wrapped as an open-type (length-prefixed octet string, X.691 §12).
 - CHOICE root alternatives encoded by canonical-tag-order index in ⌈log₂(n)⌉ bits.
-  Extension alternatives use the normally-small-non-negative-number encoding (X.691 §22.6).
+  Extension alternatives, and extension items of an ENUMERATED, use the normally small
+  non-negative whole number (X.691 2021 §23.8, §14.3, §11.6): 6 bits up to 63, above that
+  one bit, the octet count as a length determinant and the octets, as asn1c writes it.
 - Unknown extension members from newer senders are skipped by consuming the open-type
   length prefix. `PerDecodeStream::skipped_extensions()` reports the skip count.
 
