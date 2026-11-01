@@ -5,6 +5,7 @@ import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.jer.JerObject;
+import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.xer.XerObject;
 import java.io.ByteArrayOutputStream;
@@ -42,6 +43,12 @@ import java.util.function.Function;
  * are the JER counterparts, the output of the C++ leg's ber-to-jer: one
  * compact JER text per line, each non-blank line one record.
  * All four text modes exit 1 when any record failed.
+ *
+ * <p>{@code BerRoundtrip --b2p CLASS IN OUT} and {@code --p2b CLASS IN OUT}
+ * are the unaligned PER counterparts, the output of the C++ leg's
+ * ber-to-per: each record's complete encoding (X.691 §11.1) after its
+ * length as 4 octets, big-endian, since a PER encoding has no length of
+ * its own. They exit 1 when any record failed.
  */
 public final class BerRoundtrip {
     private BerRoundtrip() {
@@ -66,9 +73,17 @@ public final class BerRoundtrip {
             System.exit(textToBer("JER", JerObject::decode, splitLines(Files.readAllBytes(Path.of(args[2]))),
                     pduClass(args[1]), Path.of(args[3])));
         }
+        if (args.length == 4 && args[0].equals("--b2p")) {
+            System.exit(berToText("PER", BerRoundtrip::framedPer, pduClass(args[1]), Path.of(args[2]), Path.of(args[3]),
+                    false));
+        }
+        if (args.length == 4 && args[0].equals("--p2b")) {
+            System.exit(textToBer("PER", PerObject::decode, splitFramed(Files.readAllBytes(Path.of(args[2]))),
+                    pduClass(args[1]), Path.of(args[3])));
+        }
         if (args.length != 3) {
             System.err.println("usage: BerRoundtrip CLASS IN OUT | --fuzz CLASS FILE..."
-                    + " | --b2x|--x2b|--b2j|--j2b CLASS IN OUT");
+                    + " | --b2x|--x2b|--b2j|--j2b|--b2p|--p2b CLASS IN OUT");
             System.exit(2);
         }
         Class<? extends Asn1Pdu> type = pduClass(args[0]);
@@ -96,6 +111,41 @@ public final class BerRoundtrip {
 
     private static int berToText(String codec, Function<Asn1Pdu, byte[]> encode, Class<? extends Asn1Pdu> type,
             Path in, Path out) throws Exception {
+        return berToText(codec, encode, type, in, out, true);
+    }
+
+    /** One record's complete PER encoding after its length as 4 octets, big-endian. */
+    private static byte[] framedPer(Asn1Pdu v) {
+        byte[] per = PerObject.encode(v);
+        byte[] framed = new byte[4 + per.length];
+        framed[0] = (byte) (per.length >>> 24);
+        framed[1] = (byte) (per.length >>> 16);
+        framed[2] = (byte) (per.length >>> 8);
+        framed[3] = (byte) per.length;
+        System.arraycopy(per, 0, framed, 4, per.length);
+        return framed;
+    }
+
+    /** The records of a stream of 4-octet-length-framed PER encodings; a truncated tail is dropped. */
+    private static List<byte[]> splitFramed(byte[] data) {
+        List<byte[]> records = new ArrayList<>();
+        int pos = 0;
+        while (pos + 4 <= data.length) {
+            long n = ((data[pos] & 0xFFL) << 24) | ((data[pos + 1] & 0xFF) << 16) | ((data[pos + 2] & 0xFF) << 8)
+                    | (data[pos + 3] & 0xFF);
+            pos += 4;
+            if (n > data.length - pos) {
+                System.err.println("PER frame of " + n + " octets at offset " + (pos - 4) + " runs past the end");
+                break;
+            }
+            records.add(java.util.Arrays.copyOfRange(data, pos, pos + (int) n));
+            pos += (int) n;
+        }
+        return records;
+    }
+
+    private static int berToText(String codec, Function<Asn1Pdu, byte[]> encode, Class<? extends Asn1Pdu> type,
+            Path in, Path out, boolean newline) throws Exception {
         BerReader r = new BerReader(Files.readAllBytes(in));
         ByteArrayOutputStream text = new ByteArrayOutputStream();
         int n = 0;
@@ -112,7 +162,9 @@ public final class BerRoundtrip {
             }
             try {
                 text.writeBytes(encode.apply(v));
-                text.write('\n');
+                if (newline) {
+                    text.write('\n');
+                }
             } catch (RuntimeException e) {
                 System.err.println(codec + " encode failed record #" + n + " at offset " + offset + ": " + e);
                 errors++;

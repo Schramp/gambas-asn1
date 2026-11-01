@@ -20,3 +20,4 @@ tests/asn1/rust_seqof_base64_elem_test.asn1  Entries  -pdu=Entries
 tests/asn1/real_jer_base_test.asn1  Bases  -pdu=Bases -pdu=Base10 -pdu=Base2
 tests/asn1/real_constraint_test.asn1  Ranges  -pdu=Pct -pdu=Finite -pdu=Ranges
 tests/asn1/real_default_test.asn1  Defaults  -pdu=Temp -pdu=Defaults
+tests/asn1/rust_alphabet_test.asn1  Code  -pdu=Code

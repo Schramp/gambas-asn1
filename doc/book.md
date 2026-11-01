@@ -2036,6 +2036,12 @@ decode back to the original BER in Java and in C++, and C++'s XER in Java
 compact JER equals C++'s byte for byte (`cpp.B2J vs java.B2J`) and asn1c's
 as parsed JSON (`asn1c.B2J vs java.B2J`), and `orig vs java.J2B(java.JER)`,
 `orig vs java.J2B(cpp.JER)` and `orig vs cpp.J2B(java.JER)` round-trip.
+The PER rows run where the PER leg runs, with ber-to-per's framing (each
+record's complete encoding after a 4-octet big-endian length): Java's
+unaligned PER equals C++'s (`cpp.PER vs java.PER`) and, where asn1c
+round-trips its own encoding, asn1c's (`asn1c.PER vs java.PER`), and
+`orig vs java.P2B(java.PER)`, `orig vs java.P2B(cpp.PER)` and
+`orig vs cpp.P2B(java.PER)` round-trip.
 All of them gate. It needs a JDK 21 `javac`/`java` on `PATH`
 (no Gradle). A target with a construct the Java backend does not emit yet
 is skipped with the compiler's message; the summary counts the targets the

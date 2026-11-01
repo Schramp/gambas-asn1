@@ -137,14 +137,23 @@ static std::string java_real_constraints(const RealRangeSpec& r) {
 ///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS),
 ///        PER length width (X.691 §11.9) and bounds. An unbounded upper
 ///        SIZE is stored as `Long.MAX_VALUE`, as in the other runtimes.
+///        A permitted alphabet (X.680 §51.7) adds its sorted characters
+///        and their PER width (X.691 §30.5.2), from which the runtime
+///        builds the character-to-index table.
 template <class S>
 static std::string java_size_constraints(const S& spec) {
     int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
               | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
               | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
     int64_t upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
-    return std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
-                       kWire, flags, spec.size_range_bits, java_long(spec.size_lower), java_long(upper));
+    std::string c = std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
+                                kWire, flags, spec.size_range_bits, java_long(spec.size_lower), java_long(upper));
+    if (spec.alphabet.empty()) return c;
+    std::string chars;
+    for (std::size_t i = 0; i < spec.alphabet.size(); ++i)
+        chars += std::format("{}(byte) 0x{:02X}", i ? ", " : "", spec.alphabet[i]);
+    return std::format("{0}.spec.Constraints.withAlphabet({1}, {2}, new byte[] {{{3}}})", kWire, c,
+                       Backend::alphabet_bits_for(static_cast<int>(spec.alphabet.size())), chars);
 }
 
 /// @brief The `xerInstruction()` override for a type with an X.693 §21
@@ -770,7 +779,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///        beside the type's public one, named by member_descriptor_base_name
 ///        and holding `CONSTRAINTS`, which the member's row references.
 ///        INTEGER value ranges, SIZE constraints and REAL value ranges and
-///        base constraints are carried; a FROM alphabet is not yet.
+///        base constraints and a FROM alphabet are carried.
 /// @param spec    The member's resolved constraint (see MemberTypeDescriptorSpec).
 /// @param session Per-type output session.
 ///        A contained field (X.682 §11) also gets `CONTAINED`, its
