@@ -5,7 +5,9 @@ import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
+import io.github.schramp.gambasasn1.wire.ber.UniversalTag;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
@@ -38,6 +40,7 @@ public final class PerPrimitive {
             case Asn1UInteger u -> encodeUInteger(u.get(), c, w);
             case Asn1OctetString o -> encodeOctets(o.get(), c, w);
             case Asn1BitString b -> encodeBits(b, c, w);
+            case Asn1CharString s -> encodeChars(s.octets(), s.universalTagNumber(), c, w);
             default -> throw new EncodeException("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -56,6 +59,7 @@ public final class PerPrimitive {
             case Asn1UInteger u -> u.set(decodeUInteger(c, r));
             case Asn1OctetString o -> o.set(decodeOctets(c, r));
             case Asn1BitString b -> decodeBits(b, c, r);
+            case Asn1CharString s -> s.setOctets(decodeChars(s.universalTagNumber(), c, r));
             default -> throw r.error("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -321,5 +325,136 @@ public final class PerPrimitive {
             }
         });
         b.set(n == 0 ? new byte[0] : bits.toByteArray(), (8 - n % 8) % 8);
+    }
+
+    /**
+     * Bits per character and octets per character of a string kind without a
+     * PER-visible FROM (X.691 §30.5.2): NumericString 4, the 128-character
+     * kinds 7 (UTCTime and GeneralizedTime as VisibleString, §10.6.5),
+     * BMPString 16 and UniversalString 32 as their 2 or 4 octets; every other
+     * kind its octets, 8 bits each. The C++ and Rust runtimes use the same table.
+     */
+    private static int[] charLayout(int tag) {
+        return switch (tag) {
+            case UniversalTag.NUMERIC_STRING -> new int[] {4, 1};
+            case UniversalTag.PRINTABLE_STRING, UniversalTag.IA5_STRING, UniversalTag.VISIBLE_STRING,
+                    UniversalTag.UTC_TIME, UniversalTag.GENERALIZED_TIME -> new int[] {7, 1};
+            case UniversalTag.BMP_STRING -> new int[] {8, 2};
+            case UniversalTag.UNIVERSAL_STRING -> new int[] {8, 4};
+            default -> new int[] {8, 1};
+        };
+    }
+
+    /** The FROM table applies: the generated table carries a PER-visible permitted alphabet. */
+    private static boolean hasAlphabet(Constraints c) {
+        return c.alphabetBits() > 0 && c.encodeTable() != null;
+    }
+
+    /** Index of the character in octets {@code at..at+width} in the FROM table, or -1. */
+    private static int alphabetIndex(Constraints c, byte[] octets, int at, int width) {
+        for (int k = 0; k < width - 1; k++) {
+            if (octets[at + k] != 0) {
+                return -1;
+            }
+        }
+        char index = c.encodeTable()[octets[at + width - 1] & 0xFF];
+        return index == 0xFFFF ? -1 : index;
+    }
+
+    /**
+     * A restricted character string (X.691 §30). An extensible SIZE or FROM
+     * adds a bit, 1 and the string under no constraint when it lies outside
+     * the root (§30.4). Then the length in characters under the SIZE and each
+     * character: its FROM index in {@code alphabetBits} bits, or the
+     * {@link #charLayout} field of the kind (NumericString remapped, §30.5.4).
+     */
+    static void encodeChars(byte[] octets, int tag, Constraints c, PerWriter w) {
+        int bits = charLayout(tag)[0];
+        int width = charLayout(tag)[1];
+        int count = octets.length / width;
+        boolean alpha = hasAlphabet(c);
+        boolean sized = has(c, Constraints.SIZE_CONSTRAINED);
+        if (has(c, Constraints.EXTENSIBLE) && (sized || alpha)) {
+            boolean inRoot = !sized || (count >= c.sizeLower() && count <= c.sizeUpper());
+            for (int i = 0; inRoot && alpha && i < count; i++) {
+                inRoot = alphabetIndex(c, octets, i * width, width) >= 0;
+            }
+            w.putBits(inRoot ? 0 : 1, 1);
+            if (!inRoot) {
+                encodeChars(octets, tag, Constraints.UNCONSTRAINED, w);
+                return;
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            int at = i * width;
+            if (alpha) {
+                if (alphabetIndex(c, octets, at, width) < 0) {
+                    throw new EncodeException("PER: character " + (octets[at + width - 1] & 0xFF)
+                            + " is not in the permitted alphabet");
+                }
+            } else if (bits == 4) {
+                int ch = octets[at] & 0xFF;
+                if (ch != ' ' && (ch < '0' || ch > '9')) {
+                    throw new EncodeException("PER: character " + ch + " is not in the NumericString alphabet");
+                }
+            } else if (bits == 7 && (octets[at] & 0x80) != 0) {
+                throw new EncodeException("PER: character " + (octets[at] & 0xFF) + " is outside a 7-bit alphabet");
+            }
+        }
+        PerLength.putSize(w, c, count, (out, from, to) -> {
+            for (int i = from; i < to; i++) {
+                int at = i * width;
+                if (alpha) {
+                    out.putBits(alphabetIndex(c, octets, at, width), c.alphabetBits());
+                } else if (bits == 4) {
+                    int ch = octets[at] & 0xFF;
+                    out.putBits(ch == ' ' ? 0 : ch - '0' + 1, 4);
+                } else {
+                    for (int k = 0; k < width; k++) {
+                        out.putBits(octets[at + k] & 0xFF, bits);
+                    }
+                }
+            }
+        });
+    }
+
+    /** Decode counterpart of {@link #encodeChars}: the string's contents octets. */
+    static byte[] decodeChars(int tag, Constraints c, PerReader r) {
+        int bits = charLayout(tag)[0];
+        int width = charLayout(tag)[1];
+        boolean alpha = hasAlphabet(c);
+        if (has(c, Constraints.EXTENSIBLE) && (has(c, Constraints.SIZE_CONSTRAINED) || alpha) && r.getBits(1) == 1) {
+            return decodeChars(tag, Constraints.UNCONSTRAINED, r);
+        }
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        int perChar = alpha ? c.alphabetBits() : bits * width;
+        PerLength.getSize(r, c, (in, count) -> {
+            if ((long) count * perChar > in.remaining()) {
+                throw in.error("PER: unexpected end of data");
+            }
+            for (int i = 0; i < count; i++) {
+                if (alpha) {
+                    long index = in.getBits(c.alphabetBits());
+                    if (index >= c.alphabetSize()) {
+                        throw in.error("PER: alphabet index " + index + " beyond the permitted alphabet");
+                    }
+                    for (int k = 0; k < width - 1; k++) {
+                        out.write(0);
+                    }
+                    out.write(c.alphabet()[(int) index]);
+                } else if (bits == 4) {
+                    long v = in.getBits(4);
+                    if (v > 10) {
+                        throw in.error("PER: NumericString character index " + v + " beyond 10");
+                    }
+                    out.write(v == 0 ? ' ' : (int) ('0' + v - 1));
+                } else {
+                    for (int k = 0; k < width; k++) {
+                        out.write((int) in.getBits(bits));
+                    }
+                }
+            }
+        });
+        return out.toByteArray();
     }
 }

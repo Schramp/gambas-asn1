@@ -2156,6 +2156,16 @@ the extension bit of an extensible SIZE, then the octets or bits (X.691 §16,
 §17). A NamedBitList BIT STRING drops its trailing 0 bits down to the SIZE's
 lower bound (§16.2, §16.3). A count outside a non-extensible SIZE fails the
 encode and the decode.
+Restricted character strings follow X.691 §30 and the C++ and Rust table:
+NumericString in 4 bits (space 0, digits 1 to 10), PrintableString, IA5String,
+VisibleString, UTCTime and GeneralizedTime in 7 bits, BMPString in 16 and
+UniversalString in 32, each other kind as its octets; a PER-visible FROM
+alphabet writes each character's index, and an extensible SIZE or FROM adds
+the extension bit. asn1c differs on three points, so the Java PER leg checks
+those types against the standard instead: it writes the time types in 8 bits,
+an unconstrained NumericString's digits unmapped, and, like the C++ and Rust
+runtimes, it applies SIZE to UTF8String and the other kinds that X.691 §30.6
+leaves unconstrained (#1043).
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE
