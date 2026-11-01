@@ -30,6 +30,9 @@ import java.util.function.Function;
  * any other throwable is a crash, printed as {@code CRASH FILE: ...},
  * and makes the exit code 3.
  *
+ * <p>{@code BerRoundtrip --fuzz-per CLASS FILE...}: the same for unaligned
+ * PER, one complete encoding per file: decode, then re-encode.
+ *
  * <p>{@code BerRoundtrip --b2x CLASS IN OUT}: decodes the BER records of IN
  * and writes each one's XER document to OUT, followed by an empty line, the
  * output of the C++ leg's ber-to-xer. The first BER decode error stops the
@@ -58,6 +61,9 @@ public final class BerRoundtrip {
         if (args.length >= 2 && args[0].equals("--fuzz")) {
             System.exit(fuzz(args));
         }
+        if (args.length >= 2 && args[0].equals("--fuzz-per")) {
+            System.exit(fuzzPer(args));
+        }
         if (args.length == 4 && args[0].equals("--b2x")) {
             System.exit(berToText("XER", XerObject::encode, pduClass(args[1]), Path.of(args[2]), Path.of(args[3])));
         }
@@ -83,7 +89,7 @@ public final class BerRoundtrip {
         }
         if (args.length != 3) {
             System.err.println("usage: BerRoundtrip CLASS IN OUT | --fuzz CLASS FILE..."
-                    + " | --b2x|--x2b|--b2j|--j2b|--b2p|--p2b CLASS IN OUT");
+                    + " | --fuzz-per CLASS FILE... | --b2x|--x2b|--b2j|--j2b|--b2p|--p2b CLASS IN OUT");
             System.exit(2);
         }
         Class<? extends Asn1Pdu> type = pduClass(args[0]);
@@ -248,6 +254,26 @@ public final class BerRoundtrip {
                     BerObject.decode(v, r);
                     BerObject.encode(v);
                 }
+            } catch (DecodeException | EncodeException e) {
+                // malformed input rejected: the expected outcome
+            } catch (Throwable t) {
+                crashes++;
+                StackTraceElement[] st = t.getStackTrace();
+                System.out.println("CRASH " + args[i] + ": " + t + (st.length > 0 ? " at " + st[0] : ""));
+            }
+        }
+        return crashes > 0 ? 3 : 0;
+    }
+
+    private static int fuzzPer(String[] args) throws Exception {
+        Class<? extends Asn1Pdu> type = pduClass(args[1]);
+        int crashes = 0;
+        for (int i = 2; i < args.length; i++) {
+            byte[] data = Files.readAllBytes(Path.of(args[i]));
+            try {
+                Asn1Pdu v = type.getDeclaredConstructor().newInstance();
+                PerObject.decode(v, data);
+                PerObject.encode(v);
             } catch (DecodeException | EncodeException e) {
                 // malformed input rejected: the expected outcome
             } catch (Throwable t) {

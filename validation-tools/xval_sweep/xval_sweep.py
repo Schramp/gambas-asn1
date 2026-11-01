@@ -340,15 +340,16 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     return bytes(b)
 
 
-def java_fuzz(java_tools, pdu_type, inputs):
+def java_fuzz(java_tools, pdu_type, inputs, mode="--fuzz"):
     """--fuzz Java leg: one JVM decodes every input file (BerRoundtrip
-    --fuzz). Returns crash descriptions: an exception other than the
-    runtime's DecodeException/EncodeException, or the JVM itself failing.
+    --fuzz for BER, --fuzz-per for one PER encoding per file). Returns
+    crash descriptions: an exception other than the runtime's
+    DecodeException/EncodeException, or the JVM itself failing.
     The heap is capped so an allocation sized from a corrupted length
     shows up as OutOfMemoryError instead of swapping."""
     try:
         r = subprocess.run(["java", "-Xmx256m", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip",
-                            "--fuzz", java_tools["classes"][pdu_type], *inputs],
+                            mode, java_tools["classes"][pdu_type], *inputs],
                            capture_output=True, text=True, timeout=FUZZ_TIMEOUT * max(1, len(inputs)))
     except subprocess.TimeoutExpired:
         return [f"java: hang (> {FUZZ_TIMEOUT}s per input)"]
@@ -368,10 +369,12 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts, ja
     seeded mutations of one valid record each (C++ encoder output), one
     tool run per mutation (PER keeps its 4-byte record frame). With a Java
     leg, its BER decoder gets the corrupted BER files plus `--mutations`
-    mutated BER records, all in one JVM run (java_fuzz)."""
+    mutated BER records, all in one JVM run (java_fuzz), and its PER
+    decoder the mutated PER records in a second one."""
     crashes = []
     runs = 0
     java_inputs = []
+    java_per_inputs = []
 
     def probe(key, data, what):
         nonlocal runs
@@ -422,6 +425,10 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts, ja
         for m in range(opts.mutations):
             data = mutate(rng.choice(valid), rng)
             if fmt == "PER":
+                if java_tools:
+                    java_per_inputs.append(os.path.join(target_dir, f"fuzz_java_p{m}.per"))
+                    with open(java_per_inputs[-1], "wb") as f:
+                        f.write(data)
                 data = len(data).to_bytes(4, "big") + data
             probe(dec_key, data, f"mutated {fmt} #{m}")
 
@@ -434,6 +441,9 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts, ja
                 f.write(mutate(jrng.choice(records), jrng))
         runs += len(java_inputs)
         crashes += [f"java BER: {c}" for c in java_fuzz(java_tools, pdu_type, java_inputs)]
+        if java_per_inputs:
+            runs += len(java_per_inputs)
+            crashes += [f"java PER: {c}" for c in java_fuzz(java_tools, pdu_type, java_per_inputs, "--fuzz-per")]
 
     for c in crashes:
         print(f"  CRASH: {c}")
