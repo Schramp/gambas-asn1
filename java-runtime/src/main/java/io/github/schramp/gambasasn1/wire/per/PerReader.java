@@ -70,6 +70,17 @@ public final class PerReader {
         return v;
     }
 
+    /**
+     * A reader over {@code bytes}, an open-type field's contents (X.691
+     * §11.2), at this reader's nesting depth and with its settings.
+     */
+    public PerReader sub(byte[] bytes) {
+        PerReader r = new PerReader(bytes);
+        r.depth = depth;
+        r.contained = contained;
+        return r;
+    }
+
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */
     public void enterLevel() {
         if (++depth > Nesting.MAX_DECODE_DEPTH) {

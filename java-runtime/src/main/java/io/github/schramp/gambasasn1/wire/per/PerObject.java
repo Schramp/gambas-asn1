@@ -2,9 +2,14 @@ package io.github.schramp.gambasasn1.wire.per;
 
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
+import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The unaligned PER walker (X.691): one complete encoding per value,
@@ -61,17 +66,227 @@ public final class PerObject {
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
             case MemberRef.Primitive(var p) -> PerPrimitive.encode(p, c, w);
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.encodeEnumerated(slot, spec, w);
+            case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             default -> throw new EncodeException("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
 
-    /** Decode counterpart of {@link #encodeValue}. */
+    /** Decode counterpart of {@link #encodeValue}; a constructed value counts one nesting level. */
     static void decodeValue(MemberRef m, Constraints c, PerReader r) {
+        if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
+            decodeLevel(m, c, r);
+            return;
+        }
+        r.enterLevel();
+        try {
+            decodeLevel(m, c, r);
+        } finally {
+            r.leaveLevel();
+        }
+    }
+
+    private static void decodeLevel(MemberRef m, Constraints c, PerReader r) {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw r.error(reason);
             case MemberRef.Primitive(var p) -> PerPrimitive.decode(p, c, r);
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.decodeEnumerated(slot, spec, r);
+            case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
+        }
+    }
+
+    /** The members before the extension marker. */
+    private static int rootEnd(SequenceSpec spec) {
+        return spec.extAt() >= 0 ? spec.extAt() : spec.members().size();
+    }
+
+    /** Present and, for a DEFAULT member, not equal to its default: written on the wire (X.691 §19.5). */
+    private static boolean sent(Asn1Seq s, int i) {
+        return !(s.getMember(i) instanceof MemberRef.Absent) && !s.isDefaultEqual(i);
+    }
+
+    /** One extension addition (X.691 §19.9): its members {@code begin..end}, a group or one component. */
+    private record Addition(int begin, int end, boolean group) {
+    }
+
+    /** The extension additions from the table's precomputed units; without units, one per extension member. */
+    private static List<Addition> additions(SequenceSpec spec) {
+        int begin = rootEnd(spec);
+        List<Addition> out = new ArrayList<>();
+        if (spec.extUnits().isEmpty()) {
+            for (int i = begin; i < spec.members().size(); i++) {
+                out.add(new Addition(i, i + 1, false));
+            }
+            return out;
+        }
+        for (ExtUnit u : spec.extUnits()) {
+            out.add(new Addition(begin, u.end(), u.group()));
+            begin = u.end();
+        }
+        return out;
+    }
+
+    private static boolean anySent(Asn1Seq s, Addition a) {
+        for (int i = a.begin(); i < a.end(); i++) {
+            if (sent(s, i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A SEQUENCE, or a SET in the table's canonical member order (X.691 §21):
+     * the extension bit (§19.1), one presence bit per OPTIONAL or DEFAULT
+     * root member (§19.2; {@code romsCount} of them), the root members
+     * present (§19.4), then, with the extension bit set, the additions' count
+     * as a normally small length, their presence bits (§19.7, §19.8) and each
+     * present addition as an open-type field (§19.9).
+     */
+    static void encodeSequence(Asn1Seq s, PerWriter w) {
+        SequenceSpec spec = s.spec();
+        int end = rootEnd(spec);
+        List<Addition> additions = spec.extAt() >= 0 ? additions(spec) : List.of();
+        boolean extended = false;
+        for (Addition a : additions) {
+            extended |= anySent(s, a);
+        }
+        if (spec.extAt() >= 0) {
+            w.putBits(extended ? 1 : 0, 1);
+        }
+        if (spec.romsCount() >= 65536) {
+            throw new EncodeException("PER: " + spec.name() + " has 64K or more optional root members");
+        }
+        for (int i = 0; i < end; i++) {
+            if (spec.members().get(i).optional()) {
+                w.putBits(sent(s, i) ? 1 : 0, 1);
+            }
+        }
+        for (int i = 0; i < end; i++) {
+            if (spec.members().get(i).optional() ? sent(s, i) : true) {
+                encodeMember(s, i, w);
+            }
+        }
+        if (!extended) {
+            return;
+        }
+        PerLength.putNormallySmallLength(w, additions.size());
+        for (Addition a : additions) {
+            w.putBits(anySent(s, a) ? 1 : 0, 1);
+        }
+        for (Addition a : additions) {
+            if (!anySent(s, a)) {
+                continue;
+            }
+            PerWriter field = new PerWriter().withContained(w.contained());
+            if (a.group()) {
+                encodeGroup(s, a, field);
+            } else {
+                encodeMember(s, a.begin(), field);
+            }
+            PerLength.putOctets(w, field.toByteArray());
+        }
+    }
+
+    private static void encodeMember(Asn1Seq s, int i, PerWriter w) {
+        MemberRef m = s.getMember(i);
+        if (m instanceof MemberRef.Absent) {
+            throw new EncodeException("PER: " + s.spec().name() + "." + s.spec().members().get(i).name()
+                    + " is absent but not OPTIONAL");
+        }
+        encodeValue(m, s.spec().members().get(i).constraints(), w);
+    }
+
+    /**
+     * An extension addition group as the sequence of its members (X.691
+     * §19.9): a presence bit per member declared OPTIONAL or DEFAULT inside
+     * the group, then the members present. A present group carries all its
+     * mandatory members (X.680 §25.13).
+     */
+    private static void encodeGroup(Asn1Seq s, Addition a, PerWriter w) {
+        List<Boolean> optional = s.spec().groupMemberOptional();
+        for (int i = a.begin(); i < a.end(); i++) {
+            if (optional.get(i)) {
+                w.putBits(sent(s, i) ? 1 : 0, 1);
+            }
+        }
+        for (int i = a.begin(); i < a.end(); i++) {
+            if (sent(s, i)) {
+                encodeMember(s, i, w);
+            } else if (!optional.get(i)) {
+                throw new EncodeException("PER: extension group member " + s.spec().members().get(i).name() + " is absent");
+            }
+        }
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeSequence}. An absent OPTIONAL or
+     * DEFAULT member takes its DEFAULT; an addition this table does not know
+     * is skipped by its length (X.691 §19.9).
+     */
+    static void decodeSequence(Asn1Seq s, PerReader r) {
+        SequenceSpec spec = s.spec();
+        int end = rootEnd(spec);
+        boolean extended = spec.extAt() >= 0 && r.getBits(1) == 1;
+        boolean[] present = new boolean[spec.romsCount()];
+        for (int k = 0; k < present.length; k++) {
+            present[k] = r.getBits(1) == 1;
+        }
+        int k = 0;
+        for (int i = 0; i < end; i++) {
+            if (spec.members().get(i).optional() && !present[k++]) {
+                s.setDefault(i);
+                continue;
+            }
+            decodeValue(s.presentMember(i), spec.members().get(i).constraints(), r);
+        }
+        List<Addition> additions = spec.extAt() >= 0 ? additions(spec) : List.of();
+        boolean[] sent = new boolean[0];
+        if (extended) {
+            int n = PerLength.getNormallySmallLength(r);
+            sent = new boolean[n];
+            for (int j = 0; j < n; j++) {
+                sent[j] = r.getBits(1) == 1;
+            }
+            for (int j = 0; j < n; j++) {
+                if (!sent[j]) {
+                    continue;
+                }
+                byte[] field = PerLength.getOctets(r);
+                if (j >= additions.size()) {
+                    continue;
+                }
+                Addition a = additions.get(j);
+                PerReader in = r.sub(field);
+                if (a.group()) {
+                    decodeGroup(s, a, in);
+                } else {
+                    decodeValue(s.presentMember(a.begin()), spec.members().get(a.begin()).constraints(), in);
+                }
+            }
+        }
+        for (int j = 0; j < additions.size(); j++) {
+            if (j >= sent.length || !sent[j]) {
+                Addition a = additions.get(j);
+                for (int i = a.begin(); i < a.end(); i++) {
+                    s.setDefault(i);
+                }
+            }
+        }
+    }
+
+    private static void decodeGroup(Asn1Seq s, Addition a, PerReader r) {
+        List<Boolean> optional = s.spec().groupMemberOptional();
+        boolean[] present = new boolean[a.end() - a.begin()];
+        for (int i = a.begin(); i < a.end(); i++) {
+            present[i - a.begin()] = !optional.get(i) || r.getBits(1) == 1;
+        }
+        for (int i = a.begin(); i < a.end(); i++) {
+            if (present[i - a.begin()]) {
+                decodeValue(s.presentMember(i), s.spec().members().get(i).constraints(), r);
+            } else {
+                s.setDefault(i);
+            }
         }
     }
 }

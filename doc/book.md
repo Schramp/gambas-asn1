@@ -2170,6 +2170,15 @@ other kinds that X.691 §30.6 leaves unconstrained (#1043).
 OBJECT IDENTIFIER, RELATIVE-OID and REAL are their BER (for REAL, DER)
 contents octets after a general length (X.691 §24, §25, §15), and ANY its
 captured encoding as an open-type field (§11.2).
+SEQUENCE and SET follow X.691 §19 and §21: the extension bit of an extensible
+type, one presence bit per root OPTIONAL or DEFAULT member (a DEFAULT member
+equal to its default is left out, §19.5), the root members, then, when an
+extension addition is present, a normally small count of the additions, one
+presence bit each and each present addition as an open-type field (§19.7 to
+§19.9). An extension addition group is one addition holding its members as a
+SEQUENCE. The decoder skips additions it has no member for, so an earlier
+version reads a later version's encoding, and fills absent DEFAULT members.
+A mandatory member left unset fails the encode.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE
