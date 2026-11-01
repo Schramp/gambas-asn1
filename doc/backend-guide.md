@@ -344,14 +344,7 @@ The port found bugs in the reference runtimes, each fixed on the main branch fir
 - wide strings in JER carrying XML escapes (#1010);
 - JER `null` for an absent member not accepted (#1013).
 
-asn1c deviations were reported upstream, not patched. Budget for this: a fix branch on main, then main merged into the integration branch. Keep the fix out of the port's step.
-
-### Stacked steps
-
-- Branch each step from the previous step's tip and open its pull request against that step's branch, so the diff shows only its own changes. When the base merges, retarget to the integration branch. The host does this by itself only when the base branch is deleted.
-- Merging the integration branch into a step branch works but puts merge commits into each later step and inflates its listed diff (the SET, tagging and DEFAULT steps). Rebase onto the integration branch once the base has merged, and push only then.
-- A pull request into a branch other than the default one does not close its issue on merge. Close it by hand.
-- Locally, run only the step's own unit tests and legs. The full cross-validation runs in CI on every pull request. Building each schema once for all its PDU types made the extra language leg cheap enough for that.
+asn1c deviations were reported upstream, not patched. Budget for this, and keep each fix out of the port's own step.
 
 ### Check clause numbers against the text
 
