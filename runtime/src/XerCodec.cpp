@@ -15,19 +15,6 @@ namespace {
 // ---------------------------------------------------------------------------
 // Static helpers (not needed in header)
 
-// Build a spaced uppercase hex string (used for BIT STRING / [BASE64] text).
-static std::string format_hex_bytes(std::string_view sv) {
-    std::string out;
-    out.reserve(sv.size() * 3);
-    for (std::size_t i = 0; i < sv.size(); ++i) {
-        if (i) out += ' ';
-        uint16_t p = k_hex_pairs[static_cast<uint8_t>(sv[i])];
-        out += static_cast<char>(p & 0xFF);
-        out += static_cast<char>(p >> 8);
-    }
-    return out;
-}
-
 static std::string parse_hex_bytes(std::string_view sv) {
     std::string out;
     while (!sv.empty()) {
@@ -515,11 +502,22 @@ struct XerStringHandler final : IXerTypeHandler {
     }
 };
 
+/// @brief XER of T61String, VideotexString, GraphicString and
+///        GeneralString: their contents octets as unspaced uppercase hex,
+///        the form asn1c writes for these kinds (OCTET STRING-like,
+///        X.693 §12.2's hexadecimal form).
 struct HexStringXerHandler final : IXerTypeHandler {
+    /// @brief Write `<name>HEX</name>` for the string's contents octets.
+    /// @param s    Output stream.
+    /// @param def  The type's descriptor (element name).
+    /// @param src  An AsnStringBase.
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& sv = static_cast<const AsnStringBase*>(src)->str();
-        s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
+        auto& os = s.os();
+        os << '<' << def.name << '>';
+        write_hex_bytes(os, {reinterpret_cast<const uint8_t*>(sv.data()), sv.size()});
+        os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
@@ -579,13 +577,20 @@ struct UniversalStringXerHandler final : IXerTypeHandler {
     }
 };
 
+/// @brief XER of an ANY / open type value: its whole TLV encoding as
+///        unspaced uppercase hex, the form asn1c writes.
 struct AnyXerHandler final : IXerTypeHandler {
+    /// @brief Write `<name>HEX</name>` for the value's encoding.
+    /// @param s    Output stream.
+    /// @param def  The type's descriptor (element name).
+    /// @param src  An OctetString holding the encoding.
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
-        auto bytes = v.bytes();
-        std::string_view sv(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-        s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
+        auto& os = s.os();
+        os << '<' << def.name << '>';
+        write_hex_bytes(os, v.bytes());
+        os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {

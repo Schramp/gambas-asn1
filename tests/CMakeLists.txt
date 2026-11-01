@@ -443,10 +443,27 @@ target_include_directories(test_real_jer_base PRIVATE ${REAL_JER_BASE_GEN_DIR})
 target_link_libraries(test_real_jer_base PRIVATE asn1cpp_runtime)
 add_test(NAME real_jer_base COMMAND test_real_jer_base)
 
+# ---- JER null for an absent OPTIONAL/DEFAULT member (X.697 §27.3.4); Rust leg: rust/jer_null_absent
+set(JER_NULL_ABSENT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_jer_null_absent_test)
+add_custom_command(
+    OUTPUT  ${JER_NULL_ABSENT_GEN_DIR}/JnRec.cpp ${JER_NULL_ABSENT_GEN_DIR}/JnInner.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${JER_NULL_ABSENT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_null_absent_test.asn1
+            -o ${JER_NULL_ABSENT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_null_absent_test.asn1
+    COMMENT "Generating C++ from jer_null_absent_test.asn1"
+)
+add_executable(test_jer_null_absent jer/test_jer_null_absent.cpp
+               ${JER_NULL_ABSENT_GEN_DIR}/JnRec.cpp ${JER_NULL_ABSENT_GEN_DIR}/JnInner.cpp)
+target_include_directories(test_jer_null_absent PRIVATE ${JER_NULL_ABSENT_GEN_DIR})
+target_link_libraries(test_jer_null_absent PRIVATE asn1cpp_runtime)
+add_test(NAME jer_null_absent COMMAND test_jer_null_absent)
+set_tests_properties(jer_null_absent PROPERTIES LABELS "jer")
+
 # ---- JER string escapes (RFC 8259 §7, X.697 §23.4 NOTE); Rust leg: rust/jer_escape
 set(JER_ESCAPE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_jer_escape_test)
 add_custom_command(
-    OUTPUT  ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp
+    OUTPUT  ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp ${JER_ESCAPE_GEN_DIR}/JeWide.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${JER_ESCAPE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
             -o ${JER_ESCAPE_GEN_DIR}
@@ -454,7 +471,7 @@ add_custom_command(
     COMMENT "Generating C++ from jer_escape_test.asn1"
 )
 add_executable(test_jer_escape jer/test_jer_escape.cpp
-               ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp)
+               ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp ${JER_ESCAPE_GEN_DIR}/JeWide.cpp)
 target_include_directories(test_jer_escape PRIVATE ${JER_ESCAPE_GEN_DIR})
 target_link_libraries(test_jer_escape PRIVATE asn1cpp_runtime)
 add_test(NAME jer_escape COMMAND test_jer_escape)
@@ -1154,7 +1171,7 @@ set_tests_properties(xer_vectors_202 PROPERTIES TIMEOUT 30)
 #   root-only (ext flag=0), one extension present, both present, CHOICE ext alt.
 # Cross-validated against asn1c converter during development.
 set(PER_EXT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_ext_test)
-set(PER_EXT_TYPES SeqWithExt ChoiceWithExt InnerSeq SeqDeepExt SeqDeepExtRootOnly)
+set(PER_EXT_TYPES SeqWithExt ChoiceWithExt InnerSeq SeqDeepExt SeqDeepExtRootOnly BigExtEnum)
 set(_pe_outputs)
 foreach(t IN LISTS PER_EXT_TYPES)
     list(APPEND _pe_outputs ${PER_EXT_GEN_DIR}/${t}.hpp ${PER_EXT_GEN_DIR}/${t}.cpp)
@@ -2396,6 +2413,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_jer_escape PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_JER_ESCAPE_GEN_DIR}")
+endif()
+
+# Rust leg of the JER null-for-absent-member test — see
+# tests/rust/jer_null_absent/src/main.rs (C++ leg: test_jer_null_absent).
+set(RUST_JER_NULL_ABSENT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_jer_null_absent)
+add_custom_command(
+    OUTPUT  ${RUST_JER_NULL_ABSENT_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_JER_NULL_ABSENT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_null_absent_test.asn1
+            -o ${RUST_JER_NULL_ABSENT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_null_absent_test.asn1
+    COMMENT "Generating Rust from jer_null_absent_test.asn1"
+)
+add_custom_target(gen_rust_jer_null_absent ALL DEPENDS ${RUST_JER_NULL_ABSENT_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_jer_null_absent
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/jer_null_absent/Cargo.toml)
+    set_tests_properties(rust_jer_null_absent PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_JER_NULL_ABSENT_GEN_DIR}")
 endif()
 
 # Rust leg of the contained-values test — see tests/rust/containing/src/main.rs

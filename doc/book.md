@@ -750,6 +750,10 @@ SEQUENCE becomes a parent element whose child elements are the member values; CH
 becomes a single child element named after the chosen alternative; OCTET STRING becomes
 uppercase hex pairs; BIT STRING becomes a binary string of `0` and `1` characters
 (xmlbstring per X.680 §21); BOOLEAN becomes an empty element (`<true/>` or `<false/>`).
+T61String, VideotexString, GraphicString and GeneralString, whose character sets
+are not plain text, and ANY / open-type values (their whole TLV) are written as
+unspaced uppercase hex, as asn1c writes them (`<Teletex>74656C65</Teletex>`);
+decode also accepts whitespace between the pairs.
 
 **Non-standard extensions — lenient decode mode**
 
@@ -776,7 +780,11 @@ The default is `XerDecodeMode::Strict`, which rejects both non-standard forms.
 **OCTET STRING / Base64** is a separate mechanism: Base64 encoding is a compile-time
 annotation (`XerEncoding::Base64` on the `TypeDescriptor`, set via the `BASE64`
 encoding instruction in the schema). It is always active for annotated types and is
-independent of `XerDecodeMode`.
+independent of `XerDecodeMode`. The instruction applies wherever the annotated type
+is used: as a SEQUENCE/SET member, a CHOICE alternative or a SEQUENCE OF element, and
+whether it is declared on the member's own `OCTET STRING` or on a named type the member
+references. The same holds for the `utf8` instruction. The C++ and Rust runtimes write
+the same text.
 
 XER can be used wherever XML interoperability is required. Some ETSI standards mandate
 XER for management interfaces; NETCONF (RFC 6241) uses YANG but many legacy network
@@ -813,7 +821,17 @@ member and alternative names included (X.697 §23.4 NOTE): `\"`, `\\`, `\/`,
 a surrogate pair (`😀`) combines into one code point, stored as
 UTF-8. A lone surrogate, a `\u` with fewer than four hex digits, or any other
 character after a backslash is a decode error. The encoder escapes `"`, `\`
-and control characters below U+0020 (as `\u00XX`).
+and control characters below U+0020 (as `\u00XX`). A BMPString or
+UniversalString is the JSON string of its characters (X.697 §38.1), escaped the
+same way, so `a<b&c>` stays `"a<b&c>"`; asn1c's own JER leaves `"`, `\` and
+control characters in these strings unescaped.
+
+An OPTIONAL or DEFAULT SEQUENCE/SET member whose value is `null` decodes as
+absent (X.697 §27.3.4), as if its key were left out: `{"a":1,"b":null}`
+leaves `b` absent, and a DEFAULT member takes its default. A member whose own
+type is NULL or an open type keeps `null` as its value, so it is present. A
+`null` for a mandatory member is a decode error. The encoder leaves absent
+members out and never writes `null` for them.
 
 ### Encoding Rule Comparison
 
@@ -1588,7 +1606,9 @@ UPER extension handling is complete:
 - Extension members: present-bitmap (normally-small number of extensions, then n bits),
   each present member wrapped as an open-type (length-prefixed octet string, X.691 §12).
 - CHOICE root alternatives encoded by canonical-tag-order index in ⌈log₂(n)⌉ bits.
-  Extension alternatives use the normally-small-non-negative-number encoding (X.691 §22.6).
+  Extension alternatives, and extension items of an ENUMERATED, use the normally small
+  non-negative whole number (X.691 2021 §23.8, §14.3, §11.6): 6 bits up to 63, above that
+  one bit, the octet count as a length determinant and the octets, as asn1c writes it.
 - Unknown extension members from newer senders are skipped by consuming the open-type
   length prefix. `PerDecodeStream::skipped_extensions()` reports the skip count.
 

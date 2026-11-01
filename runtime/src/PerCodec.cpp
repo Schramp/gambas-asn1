@@ -62,14 +62,26 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 }
 
 
-// X.691 §10.6 "Encoding of a normally small non-negative whole number"
-// Flag=0: value in [0..63], encode in kShortFormBits bits. Flag=1: delegate to put_length().
+/// @brief Writes a normally small non-negative whole number: the choice
+///        index of a CHOICE extension alternative or the ordinal of an
+///        ENUMERATED extension item.
+/// @param n  The number, 0 or more.
+/// @see X.691 §11.6 — bit 0 and n in 6 bits for n <= 63 (§11.6.1); otherwise
+///      bit 1 and n as a semi-constrained whole number with lb 0, preceded
+///      by its octet count as a length determinant (§11.6.2, §11.7, §11.9).
 static void put_nsnn(PerEncodeStream& stream, int n) {
-    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); }
-    else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
+    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); return; }
+    auto v = static_cast<uint64_t>(n);
+    int len = (std::bit_width(v) + 7) / 8;
+    stream.put_bits(1, 1);
+    per_detail::put_length(stream, static_cast<std::size_t>(len));
+    for (int i = len - 1; i >= 0; --i) stream.put_bits((v >> (8 * i)) & 0xFF, 8);
 }
 
-// X.691 §10.6 — see put_nsnn above.
+/// @brief Decode counterpart of put_nsnn().
+/// @return The number, or an error for a zero octet count or a number
+///         beyond int.
+/// @see X.691 §11.6.
 static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
@@ -80,7 +92,15 @@ static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     }
     auto len = per_detail::get_length(stream);
     if (!len) return make_unexpected<int, DecodeError>(len.error());
-    return static_cast<int>(*len);
+    if (*len == 0) return make_unexpected<int, DecodeError>(DecodeError("PER: normally small number with no octets"));
+    uint64_t v = 0;
+    for (std::size_t i = 0; i < *len; ++i) {
+        if (v >> 23) return make_unexpected<int, DecodeError>(DecodeError("PER: normally small number beyond int"));
+        auto o = stream.get_bits(8);
+        if (!o) return make_unexpected<int, DecodeError>(o.error());
+        v = (v << 8) | *o;
+    }
+    return static_cast<int>(v);
 }
 
 // X.691 §10.5.6 "In the case of the UNALIGNED variant the value ("n" - "lb") shall be
@@ -1026,6 +1046,44 @@ static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStrea
                                            const SequenceSpec& spec, int begin, int end,
                                            Asn1Object* dest);
 
+/// @brief Presence bits of a SEQUENCE/SET preamble or extension bitmap,
+///        read from the wire one word at a time and kept in words, the
+///        first wire bit in a word's most significant bit: one word in
+///        place, more on the heap.
+/// @see X.691 §19.2 (root bitmap, roms_count bits), §19.7 (extension
+///      bitmap, a count from the wire).
+class PresenceBits {
+public:
+    /// @brief Reads @p n presence bits.
+    /// @return An error when the stream ends first.
+    DecodeResult read(PerDecodeStream& stream, int n) {
+        n_ = n;
+        int words = (n + kWordBits - 1) / kWordBits;
+        if (words > 1) heap_.assign(static_cast<std::size_t>(words), 0);
+        Word* w = words > 1 ? heap_.data() : &inline_;
+        for (int k = 0; k < words; ++k) {
+            int take = std::min(kWordBits, n - k * kWordBits);
+            auto bits = stream.get_bits(take);
+            if (!bits) return decode_err(bits.error());
+            w[k] = *bits << (kWordBits - take);
+        }
+        return decode_ok();
+    }
+    /// @brief Bit @p i, false past the bits read.
+    bool operator[](int i) const {
+        if (i < 0 || i >= n_) return false;
+        const Word* w = n_ > kWordBits ? heap_.data() : &inline_;
+        return (w[i / kWordBits] >> (kWordBits - 1 - i % kWordBits)) & 1;
+    }
+
+private:
+    using Word = uint64_t;
+    static constexpr int kWordBits = std::numeric_limits<Word>::digits;
+    Word inline_ = 0;
+    std::vector<Word> heap_;
+    int n_ = 0;
+};
+
 class SequencePerHandler final : public IPerTypeHandler {
 public:
     void encode(const PerCodec& codec, PerEncodeStream& stream,
@@ -1154,13 +1212,8 @@ public:
         // Precomputed at codegen time (Generator::emit_sequence_definition) —
         // the width of the root-level presence bitmap never depends on the
         // wire, only on the schema, so it's read here, not recounted.
-        int roms = spec.roms_count;
-        bool bitmap[64] = {};
-        for (int i = 0; i < roms && i < 64; ++i) {
-            auto bit = stream.get_bits(1);
-            if (!bit) return decode_err(bit.error());
-            bitmap[i] = (*bit != 0);
-        }
+        PresenceBits bitmap;
+        if (auto r = bitmap.read(stream, spec.roms_count); !r) return r;
         int opt_idx = 0;
         IDecodeStream& ds = stream;
         for (int i = 0; i < root_end; ++i) {
@@ -1187,12 +1240,8 @@ public:
                 auto n_ext_r = get_nslength(stream);
                 if (!n_ext_r) return decode_err(n_ext_r.error());
                 int n_ext = static_cast<int>(*n_ext_r);
-                bool ext_bitmap[64] = {};
-                for (int i = 0; i < n_ext && i < 64; ++i) {
-                    auto b = stream.get_bits(1);
-                    if (!b) return decode_err(b.error());
-                    ext_bitmap[i] = (*b != 0);
-                }
+                PresenceBits ext_bitmap;
+                if (auto r = ext_bitmap.read(stream, n_ext); !r) return r;
                 const ExtUnits units{spec, root_end};
                 for (int i = 0; i < n_ext; ++i) {
                     if (i >= units.count()) {

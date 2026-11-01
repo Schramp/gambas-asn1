@@ -162,9 +162,9 @@ int main() {
         orig.value = OctetString(any_bytes);
 
         auto xml = xer_enc_any(orig);
-        // XER output for ANY is hex: "02 01 2A"
+        // XER output for ANY is unspaced hex, as asn1c writes it: "02012A"
         check("HasAny XER output contains hex for ANY",
-              xml.find("02 01 2A") != std::string::npos);
+              xml.find("02012A") != std::string::npos);
 
         HasAny got{};
         check("HasAny XER decode ok", xer_dec_any(xml, got));

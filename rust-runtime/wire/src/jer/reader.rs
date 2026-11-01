@@ -57,6 +57,15 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// True when the next value is the JSON literal `null` (RFC 8259 §3),
+    /// without consuming it.
+    pub fn peek_null(&mut self) -> bool {
+        self.skip_ws();
+        let rest = &self.data[self.pos..];
+        rest.starts_with(b"null")
+            && rest.get(4).is_none_or(|&c| matches!(c, b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r'))
+    }
+
     /// Peek the next non-whitespace byte without consuming it. `\0` at end.
     pub fn peek_char(&mut self) -> u8 {
         self.skip_ws();

@@ -6,7 +6,7 @@ use crate::constraints::{Constraints, UNCONSTRAINED};
 use crate::encode_error::EncodeError;
 use crate::jer::reader::Reader;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
-use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
+use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive, PrimitiveRefMut};
 
 /// @brief Writes one value's JER form, dispatching on its reflective shape.
 /// @param c  The value's own constraints (a fixed-size BIT STRING has its
@@ -182,6 +182,20 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
                     continue;
                 };
                 let constraints = obj.spec().members[i].constraints;
+                // X.697 §27.3.4: an absent OPTIONAL or DEFAULT member may
+                // be sent as `null`, unless its type can itself be `null`.
+                if obj.spec().members[i].optional && r.peek_null() {
+                    let nullable = matches!(
+                        obj.get_member_mut(i),
+                        MemberRefMut::Primitive(PrimitiveRefMut::Null(_) | PrimitiveRefMut::Any(_))
+                    );
+                    if !nullable {
+                        r.read_json_token()?;
+                        obj.set_default(i);
+                        seen[i] = false;
+                        continue;
+                    }
+                }
                 decode_bare(obj.get_member_mut(i), constraints, r)?;
                 seen[i] = true;
             }

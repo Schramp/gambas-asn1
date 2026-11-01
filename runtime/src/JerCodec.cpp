@@ -461,6 +461,18 @@ static char peek_char(JerDecodeStream& s) {
     return s.at_end() ? '\0' : s.data()[0];
 }
 
+/// @brief True when the next value is the JSON literal `null` (RFC 8259
+///        §3), without consuming it.
+/// @param s Decode stream, positioned before a value.
+static bool peek_null(JerDecodeStream& s) {
+    skip_ws(s);
+    std::string_view rest = s.remaining();
+    if (rest.substr(0, 4) != "null") return false;
+    if (rest.size() == 4) return true;
+    char c = rest[4];
+    return c == ',' || c == '}' || c == ']' || is_ws(static_cast<unsigned char>(c));
+}
+
 } // namespace jer_detail
 
 // ---------------------------------------------------------------------------
@@ -803,59 +815,21 @@ struct StringJerHandler final : IJerTypeHandler {
     }
 };
 
-// BmpString — internal encoding is UTF-16BE; JER is UTF-8 quoted string
-struct BmpStringJerHandler final : IJerTypeHandler {
+/// @brief JER of BMPString (stride 2) and UniversalString (stride 4): a
+///        JSON string of the characters, stored as big-endian UCS-2 / UCS-4
+///        code units.
+/// @see X.697 §38.1 (restricted character strings as JSON strings), X.680 (07/2002) §37.15.
+template<int stride>
+struct WideStringJerHandler final : IJerTypeHandler {
+    /// @brief Writes the characters as one JSON-escaped UTF-8 string.
     void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor& def, const Asn1Object* src) const override {
-        // Re-use XER path: it already converts UTF-16BE → UTF-8 for output
-        std::ostringstream tmp;
-        XerEncodeStream xs{tmp};
-        XerCodec::instance().encode(xs, def, src);
-        // XER output: <Name>text</Name> — extract the text
-        std::string xer = tmp.str();
-        auto gt = xer.find('>');
-        auto lt2 = xer.rfind('<');
-        if (gt != std::string::npos && lt2 != std::string::npos && lt2 > gt) {
-            std::string_view content(xer.data() + gt + 1, lt2 - gt - 1);
-            s.os() << '"' << jer_detail::json_escape(content) << '"';
-        } else {
-            s.os() << "\"\"";
-        }
+                const TypeDescriptor&, const Asn1Object* src) const override {
+        const auto& sv = static_cast<const AsnStringBase*>(src)->str();
+        s.os() << '"' << jer_detail::json_escape(xer_detail::wide_to_utf8<stride>(sv)) << '"';
     }
-    DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        std::string utf8;
-        if (auto r = jer_detail::read_json_string(s, utf8); !r) return r;
-        // Convert UTF-8 → UTF-16BE (internal storage)
-        std::string out;
-        std::size_t i = 0;
-        while (i < utf8.size()) {
-            uint32_t cp = xer_detail::utf8_decode_cp(utf8.data(), utf8.size(), i);
-            out += (char)(uint8_t)(cp >> 8);
-            out += (char)(uint8_t)(cp & 0xFF);
-        }
-        static_cast<AsnStringBase*>(dest)->str().assign(out);
-        return decode_ok();
-    }
-};
-
-// UniversalString — internal encoding is UTF-32BE; JER is UTF-8 quoted string
-struct UniversalStringJerHandler final : IJerTypeHandler {
-    void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor& def, const Asn1Object* src) const override {
-        std::ostringstream tmp;
-        XerEncodeStream xs{tmp};
-        XerCodec::instance().encode(xs, def, src);
-        std::string xer = tmp.str();
-        auto gt = xer.find('>');
-        auto lt2 = xer.rfind('<');
-        if (gt != std::string::npos && lt2 != std::string::npos && lt2 > gt) {
-            std::string_view content(xer.data() + gt + 1, lt2 - gt - 1);
-            s.os() << '"' << jer_detail::json_escape(content) << '"';
-        } else {
-            s.os() << "\"\"";
-        }
-    }
+    /// @brief Reads a JSON string and stores each code point as one
+    ///        big-endian code unit of \p stride octets.
+    /// @return decode_ok, or the JSON string error.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor&, Asn1Object* dest) const override {
         std::string utf8;
@@ -864,10 +838,8 @@ struct UniversalStringJerHandler final : IJerTypeHandler {
         std::size_t i = 0;
         while (i < utf8.size()) {
             uint32_t cp = xer_detail::utf8_decode_cp(utf8.data(), utf8.size(), i);
-            out += (char)(uint8_t)(cp >> 24);
-            out += (char)(uint8_t)((cp >> 16) & 0xFF);
-            out += (char)(uint8_t)((cp >>  8) & 0xFF);
-            out += (char)(uint8_t)(cp & 0xFF);
+            for (int k = stride - 1; k >= 0; --k)
+                out += (char)(uint8_t)(cp >> (8 * k));
         }
         static_cast<AsnStringBase*>(dest)->str().assign(out);
         return decode_ok();
@@ -1111,6 +1083,14 @@ struct ContainedJer {
     }
 };
 
+/// @brief True for a type whose own JER value can be `null`: NULL
+///        (X.697 §26) and an open type, which carries any value.
+/// @param def The member's type descriptor.
+static bool jer_value_may_be_null(const TypeDescriptor& def) {
+    return def.kind == TypeKind::Any
+        || (def.kind == TypeKind::Primitive && builtin_tag(def).number == 5);
+}
+
 struct SequenceJerHandler final : IJerTypeHandler {
     void encode(const JerCodec& codec, JerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
@@ -1171,6 +1151,14 @@ struct SequenceJerHandler final : IJerTypeHandler {
             const auto& mbr = spec.members[found];
             if (!mbr.type_descriptor) {
                 if (auto r = jer_detail::skip_json_value(s); !r) return r;
+                continue;
+            }
+            // X.697 §27.3.4: an absent OPTIONAL or DEFAULT member may be
+            // sent as `null`, unless its type can itself be `null`.
+            if (mbr.optional && jer_detail::peek_null(s) && !jer_value_may_be_null(*mbr.type_descriptor)) {
+                s.advance(4);
+                mbr.optional_ops.set_present(dest, false);
+                seen[found] = false;
                 continue;
             }
             if (mbr.optional)
@@ -1275,8 +1263,8 @@ static const RelOidJerHandler             s_reloid;
 static const TimeJerHandler               s_time;
 static const StringJerHandler             s_string;
 static const HexStringJerHandler          s_hex_string;
-static const BmpStringJerHandler          s_bmp_string;
-static const UniversalStringJerHandler    s_universal_string;
+static const WideStringJerHandler<2>      s_bmp_string;
+static const WideStringJerHandler<4>      s_universal_string;
 static const AnyJerHandler                s_any;
 static const EnumeratedJerHandler         s_enumerated;
 static const SeqOfJerHandler              s_seqof;
