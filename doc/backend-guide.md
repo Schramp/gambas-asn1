@@ -345,7 +345,7 @@ All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693
 - [ ] **C11 Contained values: status model, registry and decoders**
   - Ref: contents constraints X.682 §11.
   - Against hand-written tables. Unit-test every status transition of the reference runtime: setting raw bytes drops the inner value and resets the status; a field already decoded from its inline text form is kept by the post-decode pass.
-  - ⚠ The third runtime copied only what BER showed. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
+  - ⚠ The third runtime copied only what BER showed and missed the skip of an inline-decoded field. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
 - [ ] **C12 Contained values: container-config codegen**
   - Ref: X.682 §11; the container config is a project extension for fields the schema leaves as plain OCTET STRING.
   - The rows from `--container-config` and their leg.
@@ -504,7 +504,7 @@ The third backend never emitted REAL constraints (range, open bounds, base-10-on
 
 ### Port shared state transitions, not observed behaviour (C11)
 
-A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: setting the raw bytes did not reset the status, and the post-decode pass did not skip a field already decoded from its inline text form. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
+A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: its post-decode pass did not skip a field already decoded from its inline text form, the C++ `decode_one`'s first check. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
 
 ### The new backend tests the existing ones
 
