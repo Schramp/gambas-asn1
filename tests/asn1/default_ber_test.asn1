@@ -1,0 +1,25 @@
+-- Java BER leg for DEFAULT (X.680 §25.6): a member equal to its default is
+-- left out of DER (X.690 §11.5), and decode fills an absent one with it.
+DefaultBerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Color ::= ENUMERATED { red, green, blue }
+Count ::= INTEGER
+
+Rec ::= SEQUENCE {
+    id     INTEGER,
+    flag   BOOLEAN DEFAULT TRUE,
+    num    INTEGER DEFAULT 5,
+    big    INTEGER (0..18446744073709551615) DEFAULT 300,
+    name   IA5String DEFAULT "anon",
+    color  Color DEFAULT green,
+    count  Count DEFAULT 7,
+    ratio  REAL DEFAULT 0.5
+}
+
+Unordered ::= SET {
+    a  [0] INTEGER DEFAULT 1,
+    b  [1] BOOLEAN DEFAULT FALSE,
+    c  [2] IA5String
+}
+
+END

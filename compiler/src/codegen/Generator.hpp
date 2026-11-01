@@ -63,6 +63,20 @@ inline std::string safe_name(std::string n,
 }
 
 // Builds the synthetic C++ name for an inline member type: parent + CapitalizedMember.
+/// @brief A generated file stem for type identifier `cname` that fits any
+///        POSIX file name (NAME_MAX 255, with room for the extension): over
+///        240 characters, the first 220 plus a deterministic FNV-1a 32-bit
+///        hash of the whole name. A backend whose language ties a type's
+///        name to its file name applies it to the type name itself.
+/// @param cname Type identifier.
+/// @return `cname` itself when short enough, else the shortened stem.
+inline std::string bounded_file_stem(const std::string& cname) {
+    if (cname.size() <= 240) return cname;
+    uint32_t h = 2166136261u;
+    for (unsigned char c : cname) { h ^= c; h *= 16777619u; }
+    return std::format("{}_{:08x}", cname.substr(0, 220), h);
+}
+
 inline std::string make_synthetic_name(const std::string& parent, const std::string& member_name) {
     return parent + capitalize_first(to_cpp_name(member_name));
 }

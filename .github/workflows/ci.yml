@@ -60,6 +60,23 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # JDK 21 for java-runtime: cmake's configure step detects it and turns
+      # on WITH_JAVA_RUNTIME_TEST, so ctest runs the Gradle build.
+      - name: Install JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            java-runtime/*.gradle.kts
+            java-runtime/gradle/libs.versions.toml
+            java-runtime/gradle/wrapper/gradle-wrapper.properties
+            tests/java/*.gradle.kts
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
       - name: Configure
         run: |
           SMOKE=${{ github.ref == 'refs/heads/main' && 'ON' || 'OFF' }}
@@ -196,6 +213,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # JDK 21 for the sweep's Java leg (--java): plain javac, no Gradle.
+      - name: Install JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Download xval inputs
         uses: actions/download-artifact@v8
         with:
@@ -210,14 +234,22 @@ jobs:
           key: asn1c-${{ needs.asn1c.outputs.sha }}-ubuntu-latest
           fail-on-cache-miss: true
 
-      - name: Cross-validate C++ vs Rust vs asn1c (xval_sweep, all targets)
+      - name: Cross-validate C++ vs Rust vs Java vs asn1c (xval_sweep, all targets)
         if: matrix.shard == 'full'
         run: |
           chmod +x build/compiler/asn1cpp
-          python3 validation-tools/xval_sweep/xval_sweep.py --asn1c-dir ~/.asn1c/bin -j 2
+          python3 validation-tools/xval_sweep/xval_sweep.py --java --asn1c-dir ~/.asn1c/bin -j 2
 
-      - name: Cross-validate C++ vs Rust (xval_sweep shard ${{ matrix.shard }}/4)
+      - name: Cross-validate C++ vs Rust vs Java (xval_sweep shard ${{ matrix.shard }}/4)
         if: matrix.shard != 'full'
         run: |
           chmod +x build/compiler/asn1cpp
-          python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
+          python3 validation-tools/xval_sweep/xval_sweep.py --java --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
+
+      # Fuzz smoke run over the builds above: malformed BER/PER/XER/JER into
+      # every C++, Rust and Java decoder; only a crash fails (xval_sweep --fuzz).
+      - name: Fuzz smoke (xval_sweep --fuzz, shard ${{ matrix.shard }}/4)
+        if: matrix.shard != 'full'
+        run: |
+          python3 validation-tools/xval_sweep/xval_sweep.py --java --fuzz --reuse cpp -j 2 \
+            --fuzz-seeds 3 --mutations 20 --shard ${{ matrix.shard }}/4

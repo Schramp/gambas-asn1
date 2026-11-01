@@ -826,6 +826,13 @@ UniversalString is the JSON string of its characters (X.697 §38.1), escaped the
 same way, so `a<b&c>` stays `"a<b&c>"`; asn1c's own JER leaves `"`, `\` and
 control characters in these strings unescaped.
 
+An OPTIONAL or DEFAULT SEQUENCE/SET member whose value is `null` decodes as
+absent (X.697 §27.3.4), as if its key were left out: `{"a":1,"b":null}`
+leaves `b` absent, and a DEFAULT member takes its default. A member whose own
+type is NULL or an open type keeps `null` as its value, so it is present. A
+`null` for a mandatory member is a decode error. The encoder leaves absent
+members out and never writes `null` for them.
+
 ### Encoding Rule Comparison
 
 | Property | BER/DER | UPER | XER |
@@ -1155,7 +1162,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
-| `--target=<lang>` | Output language: `cpp` (default) or `rust` (**WIP**, gambas-asn1#214). |
+| `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
+| `--package=<name>` | `--target=java` only: the Java package every generated class declares (e.g. `com.example.asn1`). Default: the unnamed package. Files are written flat into `-o <dir>`; point `-o` at the matching source directory. `-fprefix` is rejected with `--target=java`. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 
@@ -1854,6 +1862,367 @@ A new codegen backend plus runtime follows [`doc/backend-guide.md`](backend-guid
 the Backend contract, the shared descriptor-table model every backend renders,
 the runtime shape, language-mapping decisions, naming rules, the construct order,
 and the validation ladder (including the cross-language table dump format).
+
+The Java runtime (`java-runtime/`, in progress) is a Gradle build with the
+wrapper committed and a Java 21 toolchain:
+
+```bash
+./java-runtime/gradlew -p java-runtime test
+```
+
+`cmake` finds a JDK 21 or newer and turns on `WITH_JAVA_RUNTIME_TEST`, so the
+same run is the ctest `java_runtime_test`. The first run downloads Gradle and
+the test dependencies.
+
+The Java backend (`--target=java`) keeps ASN.1 names as the other backends
+do (hyphen to underscore, no recasing). A name that is a Java keyword,
+literal (`true`, `false`, `null`) or contextual keyword (`record`, `var`,
+`yield`, ...) gets a trailing underscore: `class` becomes `class_`.
+
+A builtin type assignment (`Flag ::= BOOLEAN`) becomes a class holding the
+runtime's builtin wrapper in its `value` field; `BerObject.encode`/`decode`
+encode any generated value with its type's own tagging:
+
+```java
+Flag f = new Flag();
+f.value.set(true);
+byte[] der = BerObject.encode(f);   // 01 01 FF
+BerObject.decode(f, der);
+```
+
+An INTEGER type assignment holds an `Asn1Integer` (signed 64-bit `long`)
+and gets one `long` constant per named number (`Named.minus_one`). An
+ENUMERATED type assignment is a class whose nested enum `Value` lists the
+items in declaration order; `get()`/`set(Value)` read and change the item,
+and decoding a value that is not one of the items is an error:
+
+```java
+Color c = new Color();
+c.set(Color.Value.blue);
+byte[] der = BerObject.encode(c);   // 0A 01 05
+```
+
+OCTET STRING and BIT STRING type assignments hold an `Asn1OctetString`
+(`byte[]`) or an `Asn1BitString` (packed `byte[]` plus the unused-bit
+count of the last octet), with their SIZE constraint in `CONSTRAINTS`.
+Like the C++ and Rust runtimes, BER decode accepts only the primitive form
+of these strings (gambas-asn1#929).
+
+Each restricted character string kind has its own wrapper (`Asn1Utf8String`,
+`Asn1Ia5String`, `Asn1BmpString`, ...; base class `Asn1CharString`). The
+value is stored as its contents octets, so octets a peer sends survive a
+decode and re-encode unchanged, as in the C++ runtime; `get()`/`set(String)`
+convert through the kind's encoding (UTF-8, UTF-16BE for BMPString,
+UTF-32BE for UniversalString, one octet per character otherwise).
+
+OBJECT IDENTIFIER and RELATIVE-OID hold an `Asn1ObjectIdentifier` or an
+`Asn1RelativeOid` (base class `Asn1Arcs`): the arcs as a `long[]`, each in
+0..2³²−1 like the C++ and Rust runtimes and asn1c (`set` rejects values
+outside that range, and BER decode rejects a wider subidentifier).
+
+UTCTime and GeneralizedTime (`Asn1UtcTime`, `Asn1GeneralizedTime`) are
+character string wrappers holding the time text as sent, as in the C++ and
+Rust runtimes; the text is not parsed or checked against the time format.
+
+REAL (`Asn1Real`) has the same three storage classes as the C++ and Rust
+runtimes: `DOUBLE` (an IEEE 754 double), `BINARY` (a base-2 value a double
+cannot hold exactly) and `DECIMAL` (base 10, from the BER decimal form).
+`value()` is the nearest double; `exact()` gives the mantissa and exponent
+of the other two. Equality follows the abstract value, so a base-2 and a
+base-10 value are never equal (X.680 §21.5 NOTE 1) and
+`numericallyEqual()` compares the doubles. BER decode accepts every form of
+X.690 §8.5; encode writes a `DOUBLE` in the binary form with the fewest
+octets and the other two in their DER form (X.690 §11.3).
+
+An INTEGER whose range needs unsigned 64-bit storage (`INTEGER (0..MAX)`, or
+an upper bound above 2⁶³−1) holds an `Asn1UInteger`: a `long` read as
+unsigned (`Long.toUnsignedString`, `Long.compareUnsigned`), encoded with a
+leading 00 octet when its top bit is set. A negative value is a decode error.
+
+ANY (`Asn1Any`) holds the complete encoding of whatever value was on the
+wire and replays it unchanged; an EXPLICIT tag wraps it, as for any other
+type.
+
+A CHOICE type is a class holding the selected alternative's index and
+value. Each alternative has a getter named after it (its value, or `null`
+when another alternative is selected) and a setter of the same name that
+selects it:
+
+```java
+Plain p = new Plain();
+p.num(new Asn1Integer(5));        // selects num
+BerObject.encode(p);               // 02 01 05
+p.flag();                          // null
+```
+
+`select(i)` selects alternative `i` (in the table's canonical order) with
+a default value. An extensible CHOICE keeps an alternative it does not
+know as raw bytes (`unknownExtension()`, `activeIndex()` -1) and writes it
+back unchanged. A tagged CHOICE type is always EXPLICIT (X.680 §31.2.7).
+
+A SEQUENCE becomes a class with one field per member. An OPTIONAL member's
+getter returns null when it is absent, and setting it to null makes it absent;
+a mandatory member always holds a value. A member with a DEFAULT value (X.680
+§25.6) starts out holding it, and setting it to null puts the default back; a
+package-private class `<Type>_<member>_DEFAULT` beside the type's class makes
+it. Decode fills a DEFAULT member that is absent with its default, and encode
+leaves out a member equal to it (X.690 §11.5). Generated equality compares
+member by member. On decode, an OPTIONAL member is present when the next tag is the one
+its row starts with: for an untagged CHOICE member, one of the CHOICE's
+alternative tags. A SET is the same class shape with its members in canonical
+tag order (X.680 §8.6): decode accepts its components in any order (X.690
+§8.11.2), and encode writes them in that order. Extension additions, including
+the members of an extension addition group, are OPTIONAL members encoded like
+root ones, since BER ignores the extension marker (X.690 §8.1.1.4). Decoding
+an extensible SEQUENCE or SET skips the TLVs left after its last known member:
+the extension additions of a later version of the type (X.680 §7.1). They
+are not kept, so re-encoding leaves them out. In a type without an extension
+marker, such TLVs are an error. A recursive type (X.680 §3.6.55) needs nothing
+special: a member is a reference, and a recursion ends at an OPTIONAL member,
+a CHOICE or a SEQUENCE OF. Decoding counts each SEQUENCE/SET, CHOICE and
+SEQUENCE OF/SET OF level and fails past 256 levels (`Nesting.MAX_DECODE_DEPTH`
+in the runtime package `io`), the limit the C++ and Rust runtimes use. The
+compiler rejects a SEQUENCE or SET with a DEFAULT value other than a BOOLEAN,
+INTEGER (up to 64 bits), character string, ENUMERATED or REAL one with
+`emit_sequence: ... not implemented for this backend`.
+
+A contained value (an OCTET STRING with `CONTAINING`, X.682 §11, or a
+`--container-config` field) is a `Containing<T>` (runtime package `spec`),
+the same model as the C++ `asn1::Containing<T>`. `bytes()` are the raw octets,
+which stay authoritative: a value decoded and not changed re-encodes byte for
+byte. Decode fills `value()` and `status()` (`DECODED`, `SKIPPED` when a
+`when` condition does not hold or contained decoding is off, `FAILED` with the
+reason in `error()`; `on_error: fail` makes it a decode error instead). `set(v)`
+or a change through `edit()` makes encode write the inner value's encoding.
+The contained members are decoded after the others, so a `when` condition sees
+the sibling member it names. Contained settings for one call go in
+`BerObject.decode(v, der, new ContainedOptions(registry, off))`; a
+`ContainedDecoders` registry adds custom decoders by name beside the built-in
+`plain`, `zero_padding`, `pkcs7` and `none`. An OPTIONAL contained member is
+made with its row: `new Containing<>(Inner::new, Outer.SPEC.members().get(i).contained())`.
+
+A member, alternative or collection element with an inline constraint
+(`INTEGER (0..255)`, `IA5String (SIZE (1..8))`) gets its own constraint table:
+a package-private class `<Type>_<member>` beside the type's class, holding
+`CONSTRAINTS`, which its row's `constraints()` returns. INTEGER value ranges
+and SIZE constraints are carried; a REAL range and a FROM alphabet are not
+yet. A collection member's SIZE is its collection type's `CONSTRAINTS`.
+
+A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
+`spec`). `items()` is the element list, which can be changed in place, and
+`add(v)` appends an element. A named SEQUENCE OF / SET OF type is a class that
+extends one of these. An inline collection member uses them directly; a
+nested one is a collection of collections. Decoding replaces the elements a
+collection held. A SET OF keeps the order its elements were added or decoded
+in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
+
+So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
+ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE, SEQUENCE and
+SEQUENCE OF / SET OF type assignments, INTEGER in both signed and unsigned
+64-bit storage, and contained values under BER. The Java
+legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
+generated code against asn1c's DER in `tests/vectors/`.
+
+A type assignment that only references another type (`A ::= B`) becomes
+`public class A extends B {}`: Java has no type alias, so the subclass keeps
+the ASN.1 name and shares B's tables, as the C++ alias does. Generated
+classes are therefore not `final`.
+
+The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
+-Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
+table diff covers it.
+
+`validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
+cross-validation sweep: for every target, the C++ randgen records are
+BER-decoded and re-encoded by the Java runtime and must come back byte for
+byte (`orig vs java.BER(orig)`). The XER rows mirror the Rust ones: Java's
+BASIC-XER of those records must equal C++'s (`cpp.B2X vs java.B2X`) and,
+when the asn1c leg runs, asn1c's (`asn1c.B2X vs java.B2X`); Java's XER must
+decode back to the original BER in Java and in C++, and C++'s XER in Java
+(`orig vs java.X2B(java.XER)`, `orig vs cpp.X2B(java.XER)`,
+`orig vs java.X2B(cpp.XER)`). The JER rows have the same shape: Java's
+compact JER equals C++'s byte for byte (`cpp.B2J vs java.B2J`) and asn1c's
+as parsed JSON (`asn1c.B2J vs java.B2J`), and `orig vs java.J2B(java.JER)`,
+`orig vs java.J2B(cpp.JER)` and `orig vs cpp.J2B(java.JER)` round-trip.
+The PER rows run where the PER leg runs, with ber-to-per's framing (each
+record's complete encoding after a 4-octet big-endian length): Java's
+unaligned PER equals C++'s (`cpp.PER vs java.PER`) and, where asn1c
+round-trips its own encoding, asn1c's (`asn1c.PER vs java.PER`), and
+`orig vs java.P2B(java.PER)`, `orig vs java.P2B(cpp.PER)` and
+`orig vs cpp.P2B(java.PER)` round-trip.
+All of them gate. It needs a JDK 21 `javac`/`java` on `PATH`
+(no Gradle). A target with a construct the Java backend does not emit yet
+is skipped with the compiler's message; the summary counts the targets the
+leg ran on and skipped. CI runs the sweep with `--java`.
+
+With `--fuzz --java`, the Java BER decoder gets the same corrupted BER files
+as the C++ and Rust tools, plus `--mutations` byte-mutated BER records, in
+one JVM run per target (heap capped at 256 MB), and its PER decoder the
+same `--mutations` mutated PER records as the C++ and Rust tools, one
+encoding per file, in a second run. A `DecodeException` or
+`EncodeException` is the expected outcome; any other throwable (an index or
+null-pointer error, `OutOfMemoryError`, `StackOverflowError`) is a crash and
+fails the target. CI runs a bounded smoke pass (`--fuzz-seeds 3 --mutations
+20`) after each pull-request shard.
+
+XER (`XerObject` in runtime package `xer`) writes any generated value as a
+BASIC-XER document in the C++ runtime's layout, which is asn1c's, and reads it
+back:
+
+```java
+byte[] xer = XerObject.encode(f);   // <Flag><true/></Flag>\n
+XerObject.decode(f, xer);
+```
+
+The text is handled as octets: a character string's octets are written as
+they are, with only `<`, `&` and `>` escaped, and BMPString and
+UniversalString as UTF-8. OCTET STRING, ANY and the TeletexString,
+VideotexString, GraphicString and GeneralString kinds are unspaced hex, BIT
+STRING is `0`/`1` digits 64 to a line, and a REAL is a C `%.15f` with the
+trailing zeros dropped (a base-10 REAL as its exact digits).
+A SEQUENCE or SET member, CHOICE alternative or SEQUENCE OF element is an
+element of its own, one level (four spaces) deeper; a SEQUENCE OF BOOLEAN,
+ENUMERATED or NULL lists bare values (X.680 §25.5). An OPTIONAL or DEFAULT
+member is present on decode when the next element names it, and otherwise
+gets its DEFAULT. An OCTET STRING under an X.693 §21 BASE64 or UTF8
+instruction (inline, on a named type, or in an ENCODING-CONTROL block) is
+written as Base64 or as UTF-8 text with the C0 controls as empty elements
+(`<dc3/>`), wherever it is used: SEQUENCE member, CHOICE alternative,
+SEQUENCE OF element or the document itself. A contained value is written as
+the hex of its bytes, or, when its row's `xer` form is `inline`, as the inner
+value's own element in place of the hex (X.680 §22.4); `inline_raw` adds the
+bytes in a `<!-- raw: … -->` comment. Decode accepts all three. An inline
+value without the comment gets its bytes by encoding it with the field's
+decoder, and the contained members are then decoded as after a BER decode. The
+form can be set for one call: `XerObject.encode(v, new ContainedOptions(null,
+false, ContainedText.INLINE_RAW, null))` writes every contained field that
+way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
+takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+(`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER,
+JER and unaligned PER output for each DER value after the DER column. The Java
+XER legs compare the XER byte for byte, the Java JER legs the JER as JSON values
+(asn1c indents its JER); the PER column is hex, or `-` where asn1c cannot encode
+the type in PER (SET, 64-bit constrained ranges).
+
+JER (`JerObject` in runtime package `jer`) writes builtin and ENUMERATED values
+as one compact JSON value in the C++ and Rust runtimes' text, and reads them
+back, and walks SEQUENCE/SET, CHOICE and SEQUENCE OF/SET OF values through
+the same tables as BER and XER. A value outside a PDU
+takes its type's constraints as an argument, which pick the BIT STRING and REAL
+forms:
+
+```java
+byte[] jer = JerObject.encode(bits, Bits.CONSTRAINTS);   // {"value":"B380","length":9}
+JerObject.decode(bits, jer, Bits.CONSTRAINTS);
+```
+
+Strings are their octets with `"`, `\` and the C0 controls escaped (RFC 8259
+§7), BMPString and UniversalString included; the decoder takes every JSON
+escape. OCTET STRING, ANY and the hex string kinds are uppercase hex strings,
+OBJECT IDENTIFIER and RELATIVE-OID dotted strings, ENUMERATED its identifier.
+A BIT STRING of a fixed, non-extensible SIZE is a bare hex string, any other
+`{"value":…,"length":…}`. A REAL is the shortest number that converts back to
+the same double (plain for decimal exponents -4 to 14, `d.dddE<exp>` beyond),
+`"NaN"`, `"INF"`, `"-INF"` or `"-0"`; a base-10 REAL is its exact digits, bare
+under a base-10-only constraint and in `{"base10Value":…}` otherwise
+(X.697 §23).
+
+A SEQUENCE or SET is an object of its present members, named by identifier
+(X.697 §27.3); members of an extension addition group sit flat in it. The
+decoder takes members in any order, skips a key it has no member for, and
+fills a missing OPTIONAL or DEFAULT member as absent or its DEFAULT. A CHOICE
+is a one-member object named by its alternative (§31.3), a SEQUENCE OF or
+SET OF an array (§28, §30). asn1c differs in two layouts: it nests
+extension-group members in an `extN` object and leaves out some absent
+DEFAULT members. The generated Java tables carry REAL constraints (range,
+open bounds, base-10-only) like the C++ and Rust tables.
+
+A contained field (X.682 §11) is in its row's `jer` form, in the C++ runtime's
+layout: its bytes as a hex string, `{"containing":<inner value>}` (X.697
+§25.4), or that object with `"raw":"<hex>"` after it. `JerObject.encode(v,
+opts)` and `JerObject.decode(v, jer, opts)` take a `ContainedOptions` whose
+`jer` form replaces every row's. The decoder takes every form; `raw`, when
+given, is kept as the field's bytes, otherwise the inner value is encoded to
+get them.
+
+Unaligned PER (`PerObject` in runtime package `per`, X.691 UNALIGNED) is being
+ported construct by construct. It writes BOOLEAN as one bit and NULL as no
+bits; a complete encoding is padded to whole octets, an empty one is a single
+zero octet (X.691 §11.1.3.1), and the decoder accepts only that padding after
+the value. Tags take no part (X.691 §10.6.3). A type whose PER field is not
+written yet fails the call with an `EncodeException` or `DecodeException`. A
+PER `DecodeException` gives the octet as its position and the bit offset in
+its message (`… (bit 13)`).
+`PerLength` holds the length determinants (X.691 §11.9: constrained SIZE
+counts, general lengths with 16K fragmentation, normally small lengths) and
+the length-prefixed whole numbers (semi-constrained, unconstrained, normally
+small), which the type fields build on.
+INTEGER takes its table's constraints (X.691 §13): a constrained whole number
+in the table's `rangeBits` (64-bit ranges included), semi-constrained,
+unconstrained, and the extension bit with the unconstrained form outside an
+extensible root. A value outside a non-extensible range fails the encode,
+and a field beyond the range fails the decode. With unsigned storage, a
+value from 2^63 up outside the root takes nine octets (§11.8.3).
+ENUMERATED is its item's index in the value-sorted table (X.691 §14): the root
+index in the table's `rootBits`, and with an extension marker a bit first and
+an extension item's index as a normally small number. A value that is no item
+fails the encode, an unknown index the decode.
+OCTET STRING and BIT STRING are a length determinant under their SIZE, with
+the extension bit of an extensible SIZE, then the octets or bits (X.691 §16,
+§17). A NamedBitList BIT STRING drops its trailing 0 bits down to the SIZE's
+lower bound (§16.2, §16.3). A count outside a non-extensible SIZE fails the
+encode and the decode.
+Restricted character strings follow X.691 §30 and the C++ and Rust table:
+NumericString in 4 bits (space 0, digits 1 to 10), PrintableString, IA5String,
+VisibleString, UTCTime and GeneralizedTime in 7 bits, BMPString in 16 and
+UniversalString in 32, each other kind as its octets; a PER-visible FROM
+alphabet writes each character's index, and an extensible SIZE or FROM adds
+the extension bit. For a type assignment that only renames UTCTime,
+GeneralizedTime or NumericString, asn1c drops the builtin's PER constraints
+and writes 8-bit time characters or unmapped digits; as a SEQUENCE member it
+writes the X.691 encoding, which the Java PER leg checks those types against.
+asn1c, like the C++ and Rust runtimes, applies SIZE to UTF8String and the
+other kinds that X.691 §30.6 leaves unconstrained (#1043).
+OBJECT IDENTIFIER, RELATIVE-OID and REAL are their BER (for REAL, DER)
+contents octets after a general length (X.691 §24, §25, §15), and ANY its
+captured encoding as an open-type field (§11.2).
+SEQUENCE and SET follow X.691 §19 and §21: the extension bit of an extensible
+type, one presence bit per root OPTIONAL or DEFAULT member (a DEFAULT member
+equal to its default is left out, §19.5), the root members, then, when an
+extension addition is present, a normally small count of the additions, one
+presence bit each and each present addition as an open-type field (§19.7 to
+§19.9). An extension addition group is one addition holding its members as a
+SEQUENCE. The decoder skips additions it has no member for, so an earlier
+version reads a later version's encoding, and fills absent DEFAULT members.
+A mandatory member left unset fails the encode.
+A CHOICE is the extension bit of an extensible type, then a root
+alternative's index in the table's `rangeBits` and its value, or an extension
+alternative's index as a normally small number and its value as an open-type
+field (X.691 §23); the table lists the alternatives in the canonical order of
+their tags (§23.3). An extension alternative the table does not know is kept
+as an unknown extension (its open-type contents under a context tag numbered
+by its extension index), which PER cannot encode again.
+A SEQUENCE OF or SET OF is its count under the SIZE, with the extension bit
+of an extensible SIZE, then its elements, each under the element's
+constraints: an inline element constraint or the referenced type's own
+(X.691 §20). A SET OF is written with its components sorted as X.691 §22.1
+orders them, as asn1c and the C++ and Rust runtimes do; the decoder takes
+them in any order.
+A contained field (X.682 §11) is an OCTET STRING under its SIZE (X.691 §17)
+holding the inner value's complete encoding. Without ENCODED BY the contents
+follow the outer rules (X.682 §11.4): contents read from BER are written as
+PER when the outer value is written as PER, and back; a `--container-config`
+field keeps its configured rules. The inner value is decoded after the
+enclosing value, through the same decoder registry as BER, and
+`PerObject.encode(v, opts)` / `PerObject.decode(v, data, opts)` take a
+`ContainedOptions`. asn1c, which has no contents constraints, writes a
+field's bytes as they are.
+
+```java
+byte[] uper = PerObject.encode(flag);   // 80 for TRUE
+PerObject.decode(flag, uper);
+```
 
 ### Commits
 

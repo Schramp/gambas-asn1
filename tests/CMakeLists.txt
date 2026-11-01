@@ -1889,7 +1889,8 @@ set_tests_properties(jer_bundle_roundtrip PROPERTIES
 add_executable(test_backend_naming
     codegen/test_backend_naming.cpp
     ${CMAKE_SOURCE_DIR}/compiler/src/codegen/CppBackend.cpp
-    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp)
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/JavaBackend.cpp)
 target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/compiler/src
     ${CMAKE_SOURCE_DIR}/runtime/include)
@@ -1928,6 +1929,119 @@ if(WITH_BER_RUNTIME_TEST OR WITH_PER_RUNTIME_TEST)
         COMMAND ${CARGO_EXECUTABLE} test --manifest-path
                 ${CMAKE_SOURCE_DIR}/rust-runtime/wire/Cargo.toml)
     set_tests_properties(wire_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
+endif()
+
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME java_runtime_test
+        COMMAND ${CMAKE_SOURCE_DIR}/java-runtime/gradlew -p ${CMAKE_SOURCE_DIR}/java-runtime
+                test --console=plain --quiet)
+    set_tests_properties(java_runtime_test PROPERTIES TIMEOUT 600 LABELS "java"
+        RESOURCE_LOCK java_runtime_build)
+endif()
+
+# Java legs of the codec tests — see tests/java/src/test/java/legs/. Each
+# leg's schema is generated into package gen.<leg> under one source root;
+# one Gradle run compiles and tests them all against java-runtime/. The
+# -pdu roots leave out the predefined EXTERNAL/TYPE-IDENTIFIER types, whose
+# constructs the Java backend does not emit yet.
+set(JAVA_LEGS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_java)
+set(java_leg_builtin_alias_ber_PDUS
+    Flag ImplicitFlag ExplicitFlag Hyphen-Flag Nothing ImplicitNothing ExplicitNothing
+    Num Byte Named ImplicitNum ExplicitNum
+    Color ExtColor NegColor ImplicitColor ExplicitColor
+    Octets SizedOctets FixedOctets ImplicitOctets ExplicitOctets
+    Bits SizedBits NamedBits ImplicitBits ExplicitBits
+    Utf8 Numeric Printable Teletex T61 Videotex Ia5 Graphic
+    Visible General Descriptor Bmp Universal ImplicitIa5 ExplicitUtf8
+    Oid ImplicitOid ExplicitOid RelOid ImplicitRelOid ExplicitRelOid
+    Utc ImplicitUtc GenTime ExplicitGenTime Real ImplicitReal ExplicitReal
+    Counter Big ImplicitCounter Anything ExplicitAny)
+set(java_leg_choice_ber_PDUS
+    Plain Tagged Inner Nested Own HoldsOwn Typed Ext ExtRoot Auto Pick)
+set(java_leg_sequence_ber_PDUS
+    Point Plain Opt Tagged Refs Outer)
+set(java_leg_seqof_ber_PDUS
+    Ints IntSet Points Colors Names TaggedInts Holder)
+set(java_leg_constraints_ber_PDUS
+    Limits Pick Digits)
+set(java_leg_set_ber_PDUS
+    Rec Mixed)
+set(java_leg_tagging_ber_PDUS
+    ExpRec ImpRec AutoRec AutoSet AutoChoice)
+set(java_leg_default_ber_PDUS
+    Rec Unordered)
+set(java_leg_ext_ber_PDUS
+    V1 V2 Outer1 Outer2 S1 S2)
+set(java_leg_recursion_ber_PDUS
+    List Tree A B)
+set(java_leg_recursion_choice_ber_PDUS
+    Expr)
+set(java_leg_containing_PDUS
+    Inner Holder Pick Envelope)
+set(java_leg_containing_FLAGS
+    --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
+set(java_leg_containing_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
+set(java_leg_xer_encoding_instr_PDUS
+    InlineTest Base64Payload PayloadWrapper LegacyBase64 StandardBase64 NoInstruction Utf8Field)
+set(java_leg_xer_alt_instruction_PDUS
+    Holder)
+set(java_leg_rust_seqof_base64_elem_PDUS
+    Entries)
+set(java_leg_xer_value_list_PDUS
+    VlRec VlTopBool VlTopNull)
+set(java_leg_real_jer_base_PDUS
+    Bases)
+set(java_leg_jer_escape_PDUS
+    JeRec)
+set(java_leg_jer_null_absent_PDUS
+    JnRec)
+set(java_leg_outputs)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
+        xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent)
+    set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
+    set(pdu_flags)
+    foreach(pdu ${java_leg_${leg}_PDUS})
+        list(APPEND pdu_flags -pdu=${pdu})
+    endforeach()
+    add_custom_command(
+        OUTPUT  ${gen_dir}/.stamp
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${gen_dir}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
+        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags} ${java_leg_${leg}_FLAGS}
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 -o ${gen_dir}
+        COMMAND ${CMAKE_COMMAND} -E touch ${gen_dir}/.stamp
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 ${java_leg_${leg}_DEPS}
+        COMMENT "Generating Java from ${leg}_test.asn1"
+    )
+    list(APPEND java_leg_outputs ${gen_dir}/.stamp)
+endforeach()
+# Real-schema build probe: the ETSI LI PS-PDU module set, generated whole
+# (no -pdu filtering beyond the two message roots) into gen.etsi, so the
+# java_legs Gradle run compiles it under -Xlint:all -Werror.
+set(JAVA_ETSI_DIR ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU)
+file(GLOB_RECURSE java_etsi_asn1 ${JAVA_ETSI_DIR}/asn1-files/*.asn ${JAVA_ETSI_DIR}/asn1-files/*.asn1)
+list(SORT java_etsi_asn1)
+set(java_etsi_gen ${JAVA_LEGS_GEN_DIR}/gen/etsi)
+add_custom_command(
+    OUTPUT  ${java_etsi_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_etsi_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_etsi_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.etsi -pdu=PS-PDU -pdu=EncryptedPayload
+            -fallow-newer-modules --container-config=${JAVA_ETSI_DIR}/container_fields.json
+            ${java_etsi_asn1} -o ${java_etsi_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_etsi_gen}/.stamp
+    DEPENDS asn1cpp ${java_etsi_asn1} ${JAVA_ETSI_DIR}/container_fields.json
+    COMMENT "Generating Java from the ETSI LI PS-PDU schemas"
+)
+list(APPEND java_leg_outputs ${java_etsi_gen}/.stamp)
+add_custom_target(gen_java_legs ALL DEPENDS ${java_leg_outputs})
+
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME java_legs
+        COMMAND ${CMAKE_SOURCE_DIR}/java-runtime/gradlew -p ${CMAKE_CURRENT_SOURCE_DIR}/java
+                test --console=plain --quiet -Pasn1cppJavaGenDir=${JAVA_LEGS_GEN_DIR})
+    set_tests_properties(java_legs PROPERTIES TIMEOUT 600 LABELS "java"
+        RESOURCE_LOCK java_runtime_build)
 endif()
 
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
@@ -2651,6 +2765,17 @@ if(WITH_BER_RUNTIME_TEST)
                 --lang cpp,rust -j 2)
     set_tests_properties(table_diff_cpp_rust PROPERTIES
         TIMEOUT 900 LABELS "rust")
+endif()
+
+# The same diff for the Java runtime, on the schemas the Java backend emits
+# so far (validation-tools/table_diff/java_targets.txt).
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME table_diff_cpp_java
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
+                --lang cpp,java -j 2)
+    set_tests_properties(table_diff_cpp_java PROPERTIES
+        TIMEOUT 900 LABELS "java" RESOURCE_LOCK java_runtime_build)
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------

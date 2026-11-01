@@ -1,0 +1,81 @@
+-- Builtin (BOOLEAN, NULL, OCTET STRING, BIT STRING, character strings, OBJECT IDENTIFIER,
+-- RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY),
+-- INTEGER and ENUMERATED type assignments, each with its own tagging: the natural tag,
+-- IMPLICIT and EXPLICIT (X.680 §31.2, X.690 §8.14). BER vectors in
+-- tests/vectors/builtin_alias_ber_test.vectors are asn1c DER output.
+
+BuiltinAliasBerTest DEFINITIONS ::= BEGIN
+
+    Flag             ::= BOOLEAN
+    ImplicitFlag     ::= [5] IMPLICIT BOOLEAN
+    ExplicitFlag     ::= [APPLICATION 3] EXPLICIT BOOLEAN
+    Hyphen-Flag      ::= BOOLEAN
+
+    Nothing          ::= NULL
+    ImplicitNothing  ::= [PRIVATE 7] IMPLICIT NULL
+    ExplicitNothing  ::= [2] NULL
+
+    Num              ::= INTEGER
+    Byte             ::= INTEGER (0..255)
+    Named            ::= INTEGER { zero(0), one(1), minus-one(-1) }
+    ImplicitNum      ::= [3] IMPLICIT INTEGER (-5..5)
+    ExplicitNum      ::= [APPLICATION 4] EXPLICIT INTEGER
+
+    Color            ::= ENUMERATED { red(0), green(1), blue(5) }
+    ExtColor         ::= ENUMERATED { a, b, ..., c(10) }
+    NegColor         ::= ENUMERATED { low(-3), mid(0), high(300) }
+    ImplicitColor    ::= [PRIVATE 2] IMPLICIT ENUMERATED { x, y }
+    ExplicitColor    ::= [APPLICATION 1] EXPLICIT ENUMERATED { x, y }
+
+    Octets           ::= OCTET STRING
+    SizedOctets      ::= OCTET STRING (SIZE (2..4))
+    FixedOctets      ::= OCTET STRING (SIZE (3))
+    ImplicitOctets   ::= [7] IMPLICIT OCTET STRING
+    ExplicitOctets   ::= [APPLICATION 8] EXPLICIT OCTET STRING
+
+    Bits             ::= BIT STRING
+    SizedBits        ::= BIT STRING (SIZE (8, ...))
+    NamedBits        ::= BIT STRING { a(0), b(3), c(9) }
+    ImplicitBits     ::= [PRIVATE 9] IMPLICIT BIT STRING
+    ExplicitBits     ::= [10] BIT STRING
+
+    Utf8             ::= UTF8String
+    Numeric          ::= NumericString
+    Printable        ::= PrintableString (SIZE (1..8))
+    Teletex          ::= TeletexString
+    T61              ::= T61String
+    Videotex         ::= VideotexString
+    Ia5              ::= IA5String
+    Graphic          ::= GraphicString
+    Visible          ::= VisibleString
+    General          ::= GeneralString
+    Descriptor       ::= ObjectDescriptor
+    Bmp              ::= BMPString
+    Universal        ::= UniversalString
+    ImplicitIa5      ::= [11] IMPLICIT IA5String
+    ExplicitUtf8     ::= [APPLICATION 12] EXPLICIT UTF8String
+
+    Oid              ::= OBJECT IDENTIFIER
+    ImplicitOid      ::= [13] IMPLICIT OBJECT IDENTIFIER
+    ExplicitOid      ::= [APPLICATION 14] EXPLICIT OBJECT IDENTIFIER
+    RelOid           ::= RELATIVE-OID
+    ImplicitRelOid   ::= [PRIVATE 15] IMPLICIT RELATIVE-OID
+    ExplicitRelOid   ::= [16] RELATIVE-OID
+
+    Utc              ::= UTCTime
+    ImplicitUtc      ::= [17] IMPLICIT UTCTime
+    GenTime          ::= GeneralizedTime
+    ExplicitGenTime  ::= [APPLICATION 18] EXPLICIT GeneralizedTime
+
+    Real             ::= REAL
+    ImplicitReal     ::= [19] IMPLICIT REAL
+    ExplicitReal     ::= [APPLICATION 20] EXPLICIT REAL
+
+    Counter          ::= INTEGER (0..MAX)
+    Big              ::= INTEGER (0..18446744073709551615)
+    ImplicitCounter  ::= [22] IMPLICIT INTEGER (0..MAX)
+
+    Anything         ::= ANY
+    ExplicitAny      ::= [21] EXPLICIT ANY
+
+END

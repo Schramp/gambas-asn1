@@ -453,6 +453,8 @@ struct MemberTypeDescriptorSpec {
 ///        backend-delegated) emit_member_type_descriptor call.
 struct SeqOfSpec : TaggedTypeSpec {
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
+    TypeDescriptorRefSpec elem_tdref; // the element type's descriptor decision, for a backend whose
+                                      // element constraints live on the referenced type (empty elem_ref)
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
     int         range_bits = 0;
     int64_t     size_lower = 0;
@@ -520,6 +522,8 @@ struct TaggedMemberSpec {
     // member_descriptor_base_name() of the field's own descriptor, which
     // also names its contained spec (set only with `contained`).
     std::string contained_base;
+    // The inner type's native type (set only with `contained`).
+    std::string contained_inner;
 
     // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
     // resolved target is itself ENUMERATED or a named INTEGER type —
@@ -621,6 +625,11 @@ struct TaggedMemberSpec {
     // calculation `type_descriptor_ref_spec_for`'s TypeRef branch already
     // does for the analogous C++-side problem).
     std::string ref_constraints_owner;
+    // Inline SEQUENCE OF/SET OF member or alternative (see
+    // SequenceMemberSpec's collection doc below): the collection kind, and
+    // the element's shape level by level. None for every other body.
+    SeqOfKind   seq_of_kind = SeqOfKind::None;
+    ElemShape   elem_shape;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
@@ -721,8 +730,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // tag 17, not SEQUENCE's 16) is the *wire tag* at whichever nesting
     // level is using its natural (non-override) tag — a backend's own
     // emission decision, not table data.
-    SeqOfKind   seq_of_kind = SeqOfKind::None;
-    ElemShape   elem_shape;
     bool        optional = false;
     bool        has_default = false;
     // `ops`/`offset_expr` are not carried as pre-formatted C++ expression

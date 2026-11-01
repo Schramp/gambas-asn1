@@ -1,0 +1,7 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+List	<List><v>1</v></List>
+List	<List><v>1</v><next><v>2</v><next><v>3</v></next></next></List>
+Tree	<Tree><label>r</label><kids></kids></Tree>
+Tree	<Tree><label>r</label><kids><Tree><label>a</label><kids></kids></Tree><Tree><label>b</label><kids><Tree><label>c</label><kids></kids></Tree></kids></Tree></kids></Tree>
+A	<A><b><n>1</n></b></A>
+A	<A><b><n>1</n><a><b><n>2</n></b></a></b></A>

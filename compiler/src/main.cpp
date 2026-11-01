@@ -1,4 +1,5 @@
 #include <iostream>
+#include <stdexcept>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "codegen/Generator.hpp"
 #include "codegen/CppBackend.hpp"
 #include "codegen/RustBackend.hpp"
+#include "codegen/JavaBackend.hpp"
 
 namespace fs = std::filesystem;
 
@@ -29,6 +31,7 @@ static const struct option long_opts[] = {
     {"stdlib-dir",           required_argument, nullptr, 'S'},
     {"container-config",     required_argument, nullptr, 'C'},
     {"list-contained",       no_argument,       nullptr, 'L'},
+    {"package",              required_argument, nullptr, 'J'},
     {nullptr, 0, nullptr, 0}
 };
 
@@ -70,7 +73,9 @@ static void print_help(const char* prog) {
         "                              -pdu=all is accepted as an alias for the default.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
-        "  --target=<lang>             Output language: cpp (default) or rust (WIP).\n"
+        "  --target=<lang>             Output language: cpp (default), rust or java (WIP).\n"
+        "  --package=<name>            (java) Package every generated class declares,\n"
+        "                              e.g. com.example.asn1. Default: the unnamed package.\n"
         "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
         "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
         "                              EXTERNAL, auto-included in every module).\n"
@@ -82,7 +87,7 @@ static void usage(const char* prog) {
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
-                 " [--target=cpp|rust] [--stdlib-dir=<dir>]"
+                 " [--target=cpp|rust|java] [--package=<name>] [--stdlib-dir=<dir>]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
@@ -128,6 +133,7 @@ int main(int argc, char** argv) {
     bool parse_only = false;
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::string target = "cpp";
+    std::string java_package;
     std::string stdlib_dir = ASN1CPP_STDLIB_DIR;
     std::vector<std::string> input_files;
     std::string container_config;
@@ -169,8 +175,8 @@ int main(int argc, char** argv) {
         }
         case 'T':
             target = optarg;
-            if (target != "cpp" && target != "rust") {
-                std::cerr << "error: unknown --target value '" << target << "' (expected cpp or rust)\n";
+            if (target != "cpp" && target != "rust" && target != "java") {
+                std::cerr << "error: unknown --target value '" << target << "' (expected cpp, rust or java)\n";
                 usage(argv[0]);
             }
             break;
@@ -179,6 +185,7 @@ int main(int argc, char** argv) {
             break;
         case 'C': container_config = optarg; break;
         case 'L': list_contained = true; break;
+        case 'J': java_package = optarg; break;
         default: usage(argv[0]);
         }
     }
@@ -198,6 +205,23 @@ int main(int argc, char** argv) {
             std::cerr << "error: -fprefix value '" << ns_prefix << "' is not a valid identifier\n";
             return 1;
         }
+    }
+
+    if (!java_package.empty()) {
+        if (target != "java") {
+            std::cerr << "error: --package applies to --target=java only\n";
+            return 1;
+        }
+        if (!asn1::codegen::JavaBackend::valid_package(java_package)) {
+            std::cerr << "error: --package value '" << java_package << "' is not a valid Java package name\n";
+            return 1;
+        }
+    }
+    // A Java compilation unit cannot nest its class in a namespace the way
+    // -fprefix wraps C++ and Rust output; --package is Java's equivalent.
+    if (!ns_prefix.empty() && target == "java") {
+        std::cerr << "error: -fprefix is not supported with --target=java (use --package)\n";
+        return 1;
     }
 
     asn1::ast::ParseResult pr;
@@ -302,18 +326,27 @@ int main(int argc, char** argv) {
 
     asn1::codegen::CppBackend cpp_backend;
     asn1::codegen::RustBackend rust_backend;
-    asn1::codegen::Backend& backend = (target == "rust")
-        ? static_cast<asn1::codegen::Backend&>(rust_backend)
-        : static_cast<asn1::codegen::Backend&>(cpp_backend);
+    asn1::codegen::JavaBackend java_backend(java_package);
+    asn1::codegen::Backend& backend = (target == "rust") ? static_cast<asn1::codegen::Backend&>(rust_backend)
+                                    : (target == "java") ? static_cast<asn1::codegen::Backend&>(java_backend)
+                                                         : static_cast<asn1::codegen::Backend&>(cpp_backend);
 
     asn1::codegen::Generator gen(out_dir, resolver, backend);
     gen.set_default_int_kind(default_int_kind);
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.set_contained_fields(&contained);
-    gen.generate(pr);
-    backend.finalize_output(out_dir);
+    // A construct the selected backend does not emit yet throws from its
+    // Backend::emit_* default; report it rather than abort.
+    try {
+        gen.generate(pr);
+        backend.finalize_output(out_dir);
+    } catch (const std::logic_error& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
 
-    std::cout << "Generated " << (target == "rust" ? "Rust" : "C++") << " code in: " << out_dir << "/\n";
+    std::cout << "Generated " << (target == "rust" ? "Rust" : target == "java" ? "Java" : "C++")
+              << " code in: " << out_dir << "/\n";
     return 0;
 }

@@ -40,7 +40,7 @@ of this script is always safe and cheap when nothing changed.
 Usage:
   python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--shard K/N] [--verbose]
                         [--asn1c-dir DIR] [--no-asn1c] [-j N] [--reuse asn1c,cpp]
-                        [--corpus {targets,asn1c-compiler}] [--with-asn1c]
+                        [--corpus {targets,asn1c-compiler}] [--with-asn1c] [--java]
 
   --target NAME    only run the target whose schema path or PDU type
                    matches NAME (substring match); default: all targets.
@@ -50,6 +50,11 @@ Usage:
                    built once) at index i with i mod N == K, after
                    --target/--limit, so N runners can split one sweep
                    without building any schema twice.
+  --java           add the Java leg (BER round trip and the XER, JER and
+                   PER matrices through the Java runtime, compiled with plain
+                   javac; asn1c.B2X vs java.B2X, asn1c.B2J vs java.B2J and
+                   asn1c.PER vs java.PER when asn1c runs); targets the Java
+                   backend cannot emit yet are skipped with a note.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
   --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
@@ -106,6 +111,13 @@ ASN1CPP_WIRE_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/wire")
 
 TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
+TEMPLATE_JAVA = os.path.join(HERE, "template_java")
+JAVA_RUNTIME_SRC = os.path.join(ASN1CPP_ROOT, "java-runtime/src/main/java")
+JAVA_PACKAGE = "xvalgen"
+# The compiled Java runtime (build_java_runtime), set by --java.
+java_runtime_classes = None
+# Targets whose Java leg ran / was skipped, for the summary.
+java_ran, java_skipped = [], []
 TESTBUILD = os.path.join(HERE, "testbuild")
 TARGETS_FILE = os.path.join(HERE, "targets.txt")
 ASN1C_COMPILER_CORPUS_DIR = os.path.join(ASN1CPP_ROOT, "tests/tests-asn1c-compiler")
@@ -328,16 +340,41 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     return bytes(b)
 
 
-def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) -> bool:
+def java_fuzz(java_tools, pdu_type, inputs, mode="--fuzz"):
+    """--fuzz Java leg: one JVM decodes every input file (BerRoundtrip
+    --fuzz for BER, --fuzz-per for one PER encoding per file). Returns
+    crash descriptions: an exception other than the runtime's
+    DecodeException/EncodeException, or the JVM itself failing.
+    The heap is capped so an allocation sized from a corrupted length
+    shows up as OutOfMemoryError instead of swapping."""
+    try:
+        r = subprocess.run(["java", "-Xmx256m", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip",
+                            mode, java_tools["classes"][pdu_type], *inputs],
+                           capture_output=True, text=True, timeout=FUZZ_TIMEOUT * max(1, len(inputs)))
+    except subprocess.TimeoutExpired:
+        return [f"java: hang (> {FUZZ_TIMEOUT}s per input)"]
+    crashes = [l[len("CRASH "):] for l in r.stdout.splitlines() if l.startswith("CRASH ")]
+    if r.returncode not in (0, 3) or (r.returncode == 3 and not crashes):
+        lines = r.stderr.strip().splitlines()
+        crashes.append(f"java: exit {r.returncode}: {lines[-1] if lines else ''}")
+    return crashes
+
+
+def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts, java_tools=None) -> bool:
     """--fuzz: feed malformed input to every decoder of both runtimes and
     fail the target only on a crash (see crash_of).
     BER: `--fuzz-seeds` randgen runs with BerCorruptor applied
     (--corrupt-percent/--corrupt-mode), a few records each — a decode error
     stops a tool at the first broken record. PER/XER/JER: `--mutations`
     seeded mutations of one valid record each (C++ encoder output), one
-    tool run per mutation (PER keeps its 4-byte record frame)."""
+    tool run per mutation (PER keeps its 4-byte record frame). With a Java
+    leg, its BER decoder gets the corrupted BER files plus `--mutations`
+    mutated BER records, all in one JVM run (java_fuzz), and its PER
+    decoder the mutated PER records in a second one."""
     crashes = []
     runs = 0
+    java_inputs = []
+    java_per_inputs = []
 
     def probe(key, data, what):
         nonlocal runs
@@ -368,6 +405,10 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) ->
             data = f.read()
         for key in ("b2x", "b2j", "b2p"):
             probe(key, data, f"corrupted BER, seed {seed}")
+        if java_tools:
+            java_inputs.append(os.path.join(target_dir, f"fuzz_java_{k}.ber"))
+            with open(java_inputs[-1], "wb") as f:
+                f.write(data)
 
     rng = random.Random(opts.seed)
     clean_records = split_ber_records(ber_clean)[:max(1, opts.mutations // 4)]
@@ -384,8 +425,25 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) ->
         for m in range(opts.mutations):
             data = mutate(rng.choice(valid), rng)
             if fmt == "PER":
+                if java_tools:
+                    java_per_inputs.append(os.path.join(target_dir, f"fuzz_java_p{m}.per"))
+                    with open(java_per_inputs[-1], "wb") as f:
+                        f.write(data)
                 data = len(data).to_bytes(4, "big") + data
             probe(dec_key, data, f"mutated {fmt} #{m}")
+
+    if java_tools:
+        jrng = random.Random(opts.seed)
+        records = split_ber_records(ber_clean) or [ber_clean]
+        for m in range(opts.mutations):
+            java_inputs.append(os.path.join(target_dir, f"fuzz_java_m{m}.ber"))
+            with open(java_inputs[-1], "wb") as f:
+                f.write(mutate(jrng.choice(records), jrng))
+        runs += len(java_inputs)
+        crashes += [f"java BER: {c}" for c in java_fuzz(java_tools, pdu_type, java_inputs)]
+        if java_per_inputs:
+            runs += len(java_per_inputs)
+            crashes += [f"java PER: {c}" for c in java_fuzz(java_tools, pdu_type, java_per_inputs, "--fuzz-per")]
 
     for c in crashes:
         print(f"  CRASH: {c}")
@@ -1229,6 +1287,169 @@ def finish_rust_build(rust_dir, per_covered, per_types, slot, jobs):
     return result
 
 
+def java_sources(root):
+    return sorted(os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith(".java"))
+
+
+def javac(out_dir, sources, classpath=None):
+    """Compiles `sources` into `out_dir` under the same lint gate as the
+    Gradle builds; returns the javac result."""
+    shutil.rmtree(out_dir, ignore_errors=True)
+    os.makedirs(out_dir)
+    cmd = ["javac", "--release", "21", "-Xlint:all", "-Werror", "-d", out_dir]
+    if classpath:
+        cmd += ["-cp", classpath]
+    return subprocess.run(cmd + sources, capture_output=True, text=True)
+
+
+def build_java_runtime():
+    """Compiles java-runtime/ once per sweep with plain javac, so the Java
+    leg needs a JDK but no Gradle. Returns the classes dir, or None."""
+    out = os.path.join(TESTBUILD, "java-runtime")
+    key_path = out + ".reuse-key"
+    srcs = java_sources(JAVA_RUNTIME_SRC)
+    key = reuse_key(srcs)
+    if key_matches(key_path, key) and os.path.isdir(out):
+        return out
+    r = javac(out, srcs)
+    if r.returncode != 0:
+        print(f"java runtime build failed:\n{r.stdout[-4000:]}{r.stderr[-4000:]}")
+        return None
+    write_if_changed(key_path, key)
+    return out
+
+
+def build_java(target_dir, asn1_files_abs, pdu_types, asncpp_flags=()):
+    """Generates and compiles the Java leg of a build group: the schema
+    under --target=java plus the BerRoundtrip harness. Returns
+    {"classpath", "classes": {pdu_type: class name}}, {"skipped": reason}
+    when the Java backend does not emit a construct of the schema yet, or
+    None when generation or compilation fails otherwise."""
+    java_dir = os.path.join(target_dir, "java")
+    gen_dir = os.path.join(java_dir, "gen")
+    shutil.rmtree(gen_dir, ignore_errors=True)
+    os.makedirs(gen_dir)
+    r = subprocess.run([ASNCPP_BIN, "--target=java", f"--package={JAVA_PACKAGE}",
+                        *[f"-pdu={t}" for t in pdu_types], *asncpp_flags, *asn1_files_abs, "-o", gen_dir],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        msg = (r.stderr.strip().splitlines() or ["?"])[-1]
+        if "not implemented for this backend" in r.stderr:
+            return {"skipped": msg}
+        print(f"  BUILD FAILED (Java codegen): {r.stderr[-4000:]}")
+        return None
+    classes = {}
+    for t in pdu_types:
+        idents = discover_ident(gen_dir, ".java", t)
+        if len(idents) != 1:
+            print(f"  expected exactly one Java class for {t!r}, found {idents}")
+            return None
+        classes[t] = f"{JAVA_PACKAGE}.{idents[0]}"
+    out = os.path.join(java_dir, "classes")
+    r = javac(out, java_sources(gen_dir) + [os.path.join(TEMPLATE_JAVA, "BerRoundtrip.java")],
+              java_runtime_classes)
+    if r.returncode != 0:
+        print(f"  BUILD FAILED (Java compile):\n{r.stdout[-4000:]}{r.stderr[-4000:]}")
+        return None
+    return {"classpath": out + os.pathsep + java_runtime_classes, "classes": classes}
+
+
+def java_roundtrip(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER-decodes every record of `ber_path` and re-encodes it."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
+def java_b2x(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> XER text, one document per record. Returns
+    (xer_text, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2x",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    text = ""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            text = f.read().decode(errors=_TEXT_ERRORS)
+    return text, r.stderr.strip()
+
+
+def java_x2b(java_tools, pdu_type, xer_text, in_path, out_path):
+    """Java leg: XER text -> BER bytes, one record per document. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(xer_text.encode(errors=_TEXT_ERRORS))
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--x2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
+def java_b2j(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> JER text, one compact record per line. Returns
+    (jer_text, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2j",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    text = ""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            text = f.read().decode(errors=_TEXT_ERRORS)
+    return text, r.stderr.strip()
+
+
+def java_j2b(java_tools, pdu_type, jer_text, in_path, out_path):
+    """Java leg: JER text -> BER bytes, one record per line. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(jer_text.encode(errors=_TEXT_ERRORS))
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--j2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
+def java_b2p(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> length-prefixed PER byte stream, ber-to-per's
+    framing. Returns (per_bytes, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2p",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
+def java_p2b(java_tools, pdu_type, per_bytes, in_path, out_path):
+    """Java leg: length-prefixed PER byte stream -> BER bytes. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(per_bytes)
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--p2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
 def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
@@ -1312,8 +1533,8 @@ def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slo
     build group: the targets that share a schema, extra files and compiler
     flags. Compiling the schema dominates a target's cost, so its PDU types
     share one build and each target only runs its own checks. Returns
-    {"dir", "cpp", "rust", "asn1c"}, or None when the C++ or Rust build
-    fails."""
+    {"dir", "cpp", "rust", "asn1c", "java"}, or None when the C++ or Rust
+    build fails; "java" is None without --java."""
     asn1_files_abs, slug_base = schema_files(schema_rel, extra_files)
     target_dir = os.path.join(TESTBUILD, slug_base + "_" + "_".join(pdu_types))
     if len(pdu_types) > 1:
@@ -1326,7 +1547,11 @@ def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slo
         return None
     asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, "asn1c" in reuse, cpp_jobs)
                    if asn1c_bin else None)
-    return {"dir": target_dir, "cpp": cpp_tools, "rust": rust_tools, "asn1c": asn1c_tools}
+    java_tools = (build_java(target_dir, asn1_files_abs, pdu_types, asncpp_flags)
+                  if java_runtime_classes else None)
+    if java_runtime_classes and java_tools is None:
+        java_tools = {"failed": True}
+    return {"dir": target_dir, "cpp": cpp_tools, "rust": rust_tools, "asn1c": asn1c_tools, "java": java_tools}
 
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_reason=None,
@@ -1367,7 +1592,16 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
     if expect_errors:
         return check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path)
     if fuzz is not None:
-        return fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_orig, fuzz)
+        java_fuzz_tools = built.get("java")
+        if java_fuzz_tools is not None:
+            label = f"{schema_rel} :: {pdu_type}"
+            if "classes" in java_fuzz_tools:
+                java_ran.append(label)
+            else:
+                print(f"  java leg: skipped ({java_fuzz_tools.get('skipped', 'build failed')})")
+                java_skipped.append(label)
+                java_fuzz_tools = None
+        return fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_orig, fuzz, java_fuzz_tools)
 
     xer_cpp, err_cpp = b2x_file(cpp_tools["b2x"], pdu_type, ber_path)
     if err_cpp:
@@ -1412,6 +1646,49 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         total_records += m + mm
 
     tally(run_comparison("cpp.B2X vs rust.B2X", xer_cpp, xer_rust, verbose))
+
+    # Java leg (--java): the BER round trip of the C++ records, then the
+    # same XER matrix as the Rust rows: Java's XER against C++'s, its own
+    # round trip, and both cross combinations.
+    java_tools = built.get("java")
+    xer_java = None
+    if java_tools is not None:
+        label = f"{schema_rel} :: {pdu_type}"
+        if "skipped" in java_tools:
+            print(f"  java leg: skipped ({java_tools['skipped']})")
+            java_skipped.append(label)
+        elif "failed" in java_tools:
+            print("  java leg: build failed (see the first target of this build group)")
+            tally((0, 1))
+        else:
+            ber_java, err_java = java_roundtrip(java_tools, pdu_type, ber_path,
+                                                os.path.join(target_dir, "java.ber"))
+            if err_java:
+                print(f"  java stderr: {err_java}")
+            tally(compare_ber("orig vs java.BER(orig)", ber_orig, ber_java, verbose))
+
+            xer_java, err_java_xer = java_b2x(java_tools, pdu_type, ber_path,
+                                              os.path.join(target_dir, "java.xer"))
+            if err_java_xer:
+                print(f"  java b2x stderr: {err_java_xer}")
+            xer_java = dedent_xer(xer_java)
+            tally(run_comparison("cpp.B2X vs java.B2X", xer_cpp, xer_java, verbose))
+
+            def java_x2b_check(label, xer_text, tool=None):
+                if tool is None:
+                    ber, err = java_x2b(java_tools, pdu_type, xer_text,
+                                        os.path.join(target_dir, "java.x2b.in.xer"),
+                                        os.path.join(target_dir, "java.x2b.ber"))
+                    if err:
+                        print(f"  java x2b stderr: {err}")
+                else:
+                    ber, _ = x2b(tool, pdu_type, xer_text)
+                tally(compare_ber(label, ber_orig, ber, verbose))
+
+            java_x2b_check("orig vs java.X2B(java.XER)", xer_java)
+            java_x2b_check("orig vs java.X2B(cpp.XER)", xer_cpp)
+            java_x2b_check("orig vs cpp.X2B(java.XER)", xer_java, cpp_tools["x2b"])
+            java_ran.append(label)
 
     ber_cpp2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_cpp)
     tally(compare_ber("orig vs cpp.X2B(cpp.XER)", ber_orig, ber_cpp2, verbose))
@@ -1459,6 +1736,29 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
     ber_jer_cross2, _ = j2b(cpp_tools["j2b"], pdu_type, jer_rust)
     jer_rt_check("orig vs cpp.J2B(rust.JER)", ber_orig, ber_jer_cross2)
 
+    # Java JER: byte-exact against the C++ text, plus the same round-trip
+    # and cross matrix as the Java XER leg.
+    jer_java = None
+    if java_tools and "skipped" not in java_tools and "failed" not in java_tools:
+        jer_java, err_java_jer = java_b2j(java_tools, pdu_type, ber_path,
+                                          os.path.join(target_dir, "java.jer"))
+        if err_java_jer:
+            print(f"  java b2j stderr: {err_java_jer}")
+        tally(run_comparison_jer("cpp.B2J vs java.B2J", jer_cpp, jer_java, verbose))
+
+        def java_j2b_check(label, jer_text):
+            ber, err = java_j2b(java_tools, pdu_type, jer_text,
+                                os.path.join(target_dir, "java.j2b.in.jer"),
+                                os.path.join(target_dir, "java.j2b.ber"))
+            if err:
+                print(f"  java j2b stderr: {err}")
+            jer_rt_check(label, ber_orig, ber)
+
+        java_j2b_check("orig vs java.J2B(java.JER)", jer_java)
+        java_j2b_check("orig vs java.J2B(cpp.JER)", jer_cpp)
+        ber_jer_cross3, _ = j2b(cpp_tools["j2b"], pdu_type, jer_java)
+        jer_rt_check("orig vs cpp.J2B(java.JER)", ber_orig, ber_jer_cross3)
+
     # PER leg — only when the Rust side actually generated the type
     # (build_rust's own per_covered detection; "b2p"/"p2b" keys are absent
     # from rust_tools otherwise). C++ always supports PER
@@ -1491,6 +1791,29 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
 
         ber_per_cross2, _ = p2b(cpp_tools["p2b"], pdu_type, per_rust)
         tally(compare_ber("orig vs cpp.P2B(rust.PER)", ber_orig, ber_per_cross2, verbose))
+
+        # Java PER: byte-exact against the C++ encoding, plus the same
+        # round-trip and cross matrix as the Java XER/JER legs.
+        per_java = None
+        if java_tools and "skipped" not in java_tools and "failed" not in java_tools:
+            per_java, err_java_per = java_b2p(java_tools, pdu_type, ber_path,
+                                              os.path.join(target_dir, "java.per"))
+            if err_java_per:
+                print(f"  java b2p stderr: {err_java_per}")
+            tally(compare_per("cpp.PER vs java.PER", per_cpp, per_java, verbose))
+
+            def java_p2b_check(label, per_bytes):
+                ber, err = java_p2b(java_tools, pdu_type, per_bytes,
+                                    os.path.join(target_dir, "java.p2b.in.per"),
+                                    os.path.join(target_dir, "java.p2b.ber"))
+                if err:
+                    print(f"  java p2b stderr: {err}")
+                tally(compare_ber(label, ber_orig, ber, verbose))
+
+            java_p2b_check("orig vs java.P2B(java.PER)", per_java)
+            java_p2b_check("orig vs java.P2B(cpp.PER)", per_cpp)
+            ber_per_cross3, _ = p2b(cpp_tools["p2b"], pdu_type, per_java)
+            tally(compare_ber("orig vs cpp.P2B(java.PER)", ber_orig, ber_per_cross3, verbose))
 
         if asn1c_tools:
             # Both directions below are informational only, same rationale as
@@ -1565,9 +1888,13 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             if self_m > 0 and self_mm == 0 and not asn1c_opaque_contents:
                 tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
                 tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
+                if per_java is not None:
+                    tally(compare_per("asn1c.PER vs java.PER", per_asn1c, per_java, verbose))
             else:
                 compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose, info=per_info)
                 compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose, info=per_info)
+                if per_java is not None:
+                    compare_per("asn1c.PER vs java.PER [informational]", per_asn1c, per_java, verbose, info=per_info)
         elif not skip_asn1c_reason:
             print("  asn1c PER leg: skipped (not found or unsupported for this target)")
     else:
@@ -1584,6 +1911,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         # pass/fail like every other check.
         tally(run_comparison("asn1c.B2X vs cpp.B2X", xer_asn1c, xer_cpp, verbose))
         tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
+        if xer_java is not None:
+            tally(run_comparison("asn1c.B2X vs java.B2X", xer_asn1c, xer_java, verbose))
 
         def asn1c_ber_check(label, ber_asn1c):
             if info:
@@ -1619,6 +1948,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
 
         jer_asn1c_check("asn1c.B2J vs cpp.B2J", jer_asn1c, jer_cpp, split_a=split_asn1c_jer_records)
         jer_asn1c_check("asn1c.B2J vs rust.B2J", jer_asn1c, jer_rust, split_a=split_asn1c_jer_records)
+        if jer_java is not None:
+            jer_asn1c_check("asn1c.B2J vs java.B2J", jer_asn1c, jer_java, split_a=split_asn1c_jer_records)
 
         # asn1c's own JER round trip ends in its DER encoder: gated the same
         # way as orig vs asn1c.X2B above.
@@ -1706,6 +2037,11 @@ def main():
     ap.add_argument("--reuse", default="",
                      help="comma list of legs to reuse without rebuilding when their "
                           "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
+    ap.add_argument("--java", action="store_true",
+                     help="add the Java leg: BER round trip and XER, JER and PER matrices of every target the Java "
+                          "backend emits (needs a JDK 21 javac/java on PATH); a target "
+                          "with a construct the backend does not emit yet is skipped "
+                          "with a note")
     ap.add_argument("--fuzz", action="store_true",
                      help="fuzz mode: feed malformed BER (randgen's BerCorruptor) and "
                           "mutated PER/XER/JER to every C++ and Rust decoder; a target "
@@ -1794,6 +2130,11 @@ def main():
             sys.exit(0)
 
     os.makedirs(TESTBUILD, exist_ok=True)
+    if opts.java:
+        global java_runtime_classes
+        java_runtime_classes = build_java_runtime()
+        if java_runtime_classes is None:
+            sys.exit(1)
 
     reuse = {x for x in opts.reuse.split(",") if x}
     unknown = reuse - {"asn1c", "cpp"}
@@ -1895,6 +2236,8 @@ def main():
             failed += 1
         print(f"  [{status}] {schema_rel} :: {pdu_type}")
     print(f"\n{len(results) - failed}/{len(results)} targets passed")
+    if opts.java:
+        print(f"java leg: ran on {len(java_ran)} target(s), skipped on {len(java_skipped)}")
     # --corpus=asn1c-compiler is a broad, unverified probe (--corpus help
     # text's own words) — a failure there is a finding to report, same as
     # validate_rust_codegen.py's own --corpus=asn1c-compiler treats a

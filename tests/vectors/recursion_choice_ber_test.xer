@@ -1,0 +1,3 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Expr	<Expr><num>5</num></Expr>
+Expr	<Expr><neg><sum><num>1</num><neg><num>2</num></neg></sum></neg></Expr>
