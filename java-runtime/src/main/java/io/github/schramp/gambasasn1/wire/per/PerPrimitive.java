@@ -2,6 +2,8 @@ package io.github.schramp.gambasasn1.wire.per;
 
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
+import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
+import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
@@ -201,5 +203,52 @@ public final class PerPrimitive {
             throw r.error("PER: INTEGER outside its unsigned 64-bit storage");
         }
         return PerWhole.fromNonNegative(octets);
+    }
+
+    /**
+     * An ENUMERATED value (X.691 §14): its index in the table's items, which
+     * are sorted by value (§14.1). A root item is a constrained whole number
+     * in {@code rootBits} (§14.2); with an extension marker a bit comes first,
+     * 1 for an extension item, whose index among the extension items is then
+     * a normally small non-negative whole number (§14.3).
+     */
+    static void encodeEnumerated(EnumSlot slot, EnumSpec spec, PerWriter w) {
+        long value = slot.enumGet();
+        int index = -1;
+        for (int i = 0; i < spec.entries().size(); i++) {
+            if (spec.entries().get(i).value() == value) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) {
+            throw new EncodeException("PER: " + value + " is not an item of " + spec.name());
+        }
+        boolean inRoot = index < spec.rootCount();
+        if (spec.extensible()) {
+            w.putBits(inRoot ? 0 : 1, 1);
+        }
+        if (inRoot) {
+            w.putBits(index, spec.rootBits());
+        } else {
+            PerLength.putNormallySmall(w, index - spec.rootCount());
+        }
+    }
+
+    /** Decode counterpart of {@link #encodeEnumerated}; an index past the known items fails. */
+    static void decodeEnumerated(EnumSlot slot, EnumSpec spec, PerReader r) {
+        long index;
+        if (spec.extensible() && r.getBits(1) == 1) {
+            index = spec.rootCount() + PerLength.getNormallySmall(r);
+            if (index >= spec.entries().size()) {
+                throw r.error("PER: unknown extension item of " + spec.name());
+            }
+        } else {
+            index = r.getBits(spec.rootBits());
+            if (index >= spec.rootCount()) {
+                throw r.error("PER: root index " + index + " beyond the items of " + spec.name());
+            }
+        }
+        slot.enumSet(spec.entries().get((int) index).value());
     }
 }
