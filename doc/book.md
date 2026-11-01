@@ -2129,6 +2129,20 @@ opts)` and `JerObject.decode(v, jer, opts)` take a `ContainedOptions` whose
 given, is kept as the field's bytes, otherwise the inner value is encoded to
 get them.
 
+Unaligned PER (`PerObject` in runtime package `per`, X.691 UNALIGNED) is being
+ported construct by construct. It writes BOOLEAN as one bit and NULL as no
+bits; a complete encoding is padded to whole octets, an empty one is a single
+zero octet (X.691 §11.1.3.1), and the decoder accepts only that padding after
+the value. Tags take no part (X.691 §10.6.3). A type whose PER field is not
+written yet fails the call with an `EncodeException` or `DecodeException`. A
+PER `DecodeException` gives the octet as its position and the bit offset in
+its message (`… (bit 13)`).
+
+```java
+byte[] uper = PerObject.encode(flag);   // 80 for TRUE
+PerObject.decode(flag, uper);
+```
+
 ### Commits
 
 - One logical change per commit.
