@@ -2151,6 +2151,11 @@ ENUMERATED is its item's index in the value-sorted table (X.691 §14): the root
 index in the table's `rootBits`, and with an extension marker a bit first and
 an extension item's index as a normally small number. A value that is no item
 fails the encode, an unknown index the decode.
+OCTET STRING and BIT STRING are a length determinant under their SIZE, with
+the extension bit of an extensible SIZE, then the octets or bits (X.691 §16,
+§17). A NamedBitList BIT STRING drops its trailing 0 bits down to the SIZE's
+lower bound (§16.2, §16.3). A count outside a non-extensible SIZE fails the
+encode and the decode.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

@@ -4,9 +4,11 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 
@@ -34,6 +36,8 @@ public final class PerPrimitive {
             }
             case Asn1Integer i -> encodeInteger(i.get(), c, w);
             case Asn1UInteger u -> encodeUInteger(u.get(), c, w);
+            case Asn1OctetString o -> encodeOctets(o.get(), c, w);
+            case Asn1BitString b -> encodeBits(b, c, w);
             default -> throw new EncodeException("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -50,6 +54,8 @@ public final class PerPrimitive {
             }
             case Asn1Integer i -> i.set(decodeInteger(c, r));
             case Asn1UInteger u -> u.set(decodeUInteger(c, r));
+            case Asn1OctetString o -> o.set(decodeOctets(c, r));
+            case Asn1BitString b -> decodeBits(b, c, r);
             default -> throw r.error("PER: " + p.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -250,5 +256,70 @@ public final class PerPrimitive {
             }
         }
         slot.enumSet(spec.entries().get((int) index).value());
+    }
+
+    /**
+     * An OCTET STRING (X.691 §17): the length determinant under its SIZE,
+     * with the extension bit of an extensible SIZE (§17.3), then the octets.
+     */
+    static void encodeOctets(byte[] octets, Constraints c, PerWriter w) {
+        PerLength.putExtSize(w, c, octets.length, (out, from, to) -> {
+            for (int i = from; i < to; i++) {
+                out.putBits(octets[i] & 0xFF, 8);
+            }
+        });
+    }
+
+    /** Decode counterpart of {@link #encodeOctets}. */
+    static byte[] decodeOctets(Constraints c, PerReader r) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        PerLength.getExtSize(r, c, (in, count) -> {
+            if (count * 8L > in.remaining()) {
+                throw in.error("PER: unexpected end of data");
+            }
+            for (int i = 0; i < count; i++) {
+                out.write((int) in.getBits(8));
+            }
+        });
+        return out.toByteArray();
+    }
+
+    /**
+     * A BIT STRING (X.691 §16): the length determinant under its SIZE, with
+     * the extension bit of an extensible SIZE (§16.6), then the bits. With a
+     * NamedBitList, trailing 0 bits are left out down to the SIZE's lower
+     * bound, and 0 bits are added up to it (§16.2, §16.3).
+     */
+    static void encodeBits(Asn1BitString b, Constraints c, PerWriter w) {
+        byte[] bytes = b.bytes();
+        int count = b.bitCount();
+        int n = count;
+        if (has(c, Constraints.NAMED_BITS)) {
+            while (n > 0 && ((bytes[(n - 1) / 8] >>> (7 - (n - 1) % 8)) & 1) == 0) {
+                n--;
+            }
+            if (has(c, Constraints.SIZE_CONSTRAINED)) {
+                n = (int) Math.max(n, c.sizeLower());
+            }
+        }
+        PerLength.putExtSize(w, c, n, (out, from, to) -> {
+            for (int i = from; i < to; i++) {
+                out.putBits(i < count ? (bytes[i / 8] >>> (7 - i % 8)) & 1 : 0, 1);
+            }
+        });
+    }
+
+    /** Decode counterpart of {@link #encodeBits}. */
+    static void decodeBits(Asn1BitString b, Constraints c, PerReader r) {
+        PerWriter bits = new PerWriter();
+        int n = PerLength.getExtSize(r, c, (in, count) -> {
+            if (count > in.remaining()) {
+                throw in.error("PER: unexpected end of data");
+            }
+            for (int i = 0; i < count; i++) {
+                bits.putBits(in.getBits(1), 1);
+            }
+        });
+        b.set(n == 0 ? new byte[0] : bits.toByteArray(), (8 - n % 8) % 8);
     }
 }
