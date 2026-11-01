@@ -93,6 +93,44 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
 // SEQUENCE / SET
 // ---------------------------------------------------------------------
 
+/// @brief Presence bits of a SEQUENCE/SET preamble or extension bitmap,
+///        read from the wire; up to 64 in place, more on the heap.
+/// @see X.691 §19.2 (root bitmap, `roms_count` bits), §19.7 (extension
+///      bitmap, a count from the wire).
+struct PresenceBits {
+    inline: u64,
+    heap: Vec<bool>,
+    n: usize,
+}
+
+impl PresenceBits {
+    /// @brief Reads `n` presence bits.
+    /// @return `Err` when the input ends first.
+    fn read(r: &mut Reader, n: usize) -> Result<Self, DecodeError> {
+        let mut bits = PresenceBits { inline: 0, heap: Vec::new(), n };
+        for i in 0..n {
+            let bit = r.get_bits(1)? != 0;
+            if n <= 64 {
+                bits.inline |= (bit as u64) << i;
+            } else {
+                bits.heap.push(bit);
+            }
+        }
+        Ok(bits)
+    }
+
+    /// @brief Bit `i`, false past the bits read.
+    fn get(&self, i: usize) -> bool {
+        if i >= self.n {
+            false
+        } else if self.n <= 64 {
+            self.inline >> i & 1 == 1
+        } else {
+            self.heap[i]
+        }
+    }
+}
+
 fn is_present(obj: &dyn Asn1Seq, i: usize) -> bool {
     !matches!(obj.get_member(i), MemberRef::Absent)
 }
@@ -258,16 +296,14 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
         ext_flag = r.get_bits(1)? != 0;
     }
 
+    // X.691 §19.2: one presence bit per OPTIONAL/DEFAULT root member.
     let roms = obj.spec().roms_count;
-    let mut bitmap = [false; 64];
-    for slot in bitmap.iter_mut().take(roms.min(64)) {
-        *slot = r.get_bits(1)? != 0;
-    }
+    let bitmap = PresenceBits::read(r, roms)?;
 
     let mut opt_idx = 0;
     for i in 0..end {
         if obj.spec().members[i].optional {
-            let present = bitmap[opt_idx];
+            let present = bitmap.get(opt_idx);
             opt_idx += 1;
             if !present {
                 obj.set_default(i);
@@ -280,12 +316,10 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
     if obj.spec().ext_at >= 0 && ext_flag {
         let units = ext_units(obj.spec(), end);
         let n_ext = get_nslength(r)?;
-        let mut ext_bitmap = [false; 64];
-        for slot in ext_bitmap.iter_mut().take(n_ext.min(64)) {
-            *slot = r.get_bits(1)? != 0;
-        }
+        // X.691 §19.7: one presence bit per addition the sender knows.
+        let ext_bitmap = PresenceBits::read(r, n_ext)?;
         for i in 0..n_ext {
-            if !ext_bitmap[i.min(63)] {
+            if !ext_bitmap.get(i) {
                 continue;
             }
             match units.get(i) {
@@ -548,6 +582,22 @@ pub fn decode_pdu_with<T: Asn1Pdu>(data: &[u8], opts: &crate::containing::Contai
 
 #[cfg(test)]
 mod tests {
+    /// X.691 §19.7: an extension bitmap as wide as the count on the wire,
+    /// past 64 bits too.
+    #[test]
+    fn presence_bits_wider_than_64() {
+        let mut bytes = vec![0u8; 25];
+        bytes[70 / 8] |= 0x80 >> (70 % 8);
+        let mut r = Reader::new(&bytes);
+        let bits = PresenceBits::read(&mut r, 200).unwrap();
+        assert_eq!(r.bit_pos(), 200);
+        assert!(bits.get(70));
+        assert_eq!((0..200).filter(|&i| bits.get(i)).count(), 1);
+        assert!(!bits.get(200));
+        let mut short = Reader::new(&bytes[..2]);
+        assert!(PresenceBits::read(&mut short, 17).is_err());
+    }
+
     use super::*;
     use crate::ber::sequence::{SeqOf, SetOf};
     use crate::constraints::UNCONSTRAINED;
