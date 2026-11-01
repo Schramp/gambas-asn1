@@ -34,6 +34,11 @@ pub const REAL_LOWER_OPEN: u32 = 64;
 pub const REAL_UPPER_OPEN: u32 = 128;
 /// The JER-visible base constraint admits only base 10 (X.697 §23.1.4).
 pub const REAL_BASE_10: u32 = 256;
+/// `SIZE(lb..MAX)`: `size_lower` is a lower bound, no upper bound (X.680
+/// §51.5). Read by `validate_size`/`validate_bit_string` only; PER encodes
+/// such a length as unconstrained (X.691 §11.9.4.2), so `SIZE_CONSTRAINED`
+/// stays clear. Mirrors `Constraints::SIZE_LOWER_BOUND` (`Constraints.hpp`).
+pub const SIZE_LOWER_BOUND: u32 = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Constraints {
@@ -95,6 +100,7 @@ impl Constraints {
     pub const REAL_LOWER_OPEN: u32 = REAL_LOWER_OPEN;
     pub const REAL_UPPER_OPEN: u32 = REAL_UPPER_OPEN;
     pub const REAL_BASE_10: u32 = REAL_BASE_10;
+    pub const SIZE_LOWER_BOUND: u32 = SIZE_LOWER_BOUND;
 
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0
@@ -203,7 +209,12 @@ pub fn validate_real(v: f64, c: &Constraints) -> i64 {
 /// `SeqOfSpec::validate` exactly: `0` valid; positive = too short;
 /// negative = too long; `EXTENSIBLE` always `0`; no `SIZE_CONSTRAINED` bit
 /// set at all (unconstrained or FROM-alphabet-only) also always `0`.
+/// `SIZE_LOWER_BOUND` (`SIZE(lb..MAX)`) checks the lower bound only.
 pub fn validate_size(n: usize, c: &Constraints) -> i64 {
+    if c.flags & SIZE_LOWER_BOUND != 0 && c.flags & EXTENSIBLE == 0 {
+        let n = n as i64;
+        return if n < c.size_lower { c.size_lower - n } else { 0 };
+    }
     if c.flags & Constraints::SIZE_CONSTRAINED == 0 || c.flags & Constraints::EXTENSIBLE != 0 {
         return 0;
     }

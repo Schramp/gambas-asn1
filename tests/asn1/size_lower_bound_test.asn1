@@ -1,0 +1,20 @@
+-- SIZE(lb..MAX) lower bounds (X.680 §51.5) and the 64K edge of the PER
+-- length determinant (X.691 §11.9.4.1 vs §11.9.4.2).
+SizeLowerBoundTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Os    ::= OCTET STRING (SIZE(4..MAX))
+    Ia5   ::= IA5String (SIZE(3..MAX))
+    Bits  ::= BIT STRING (SIZE(8..MAX))
+    Ints  ::= SEQUENCE (SIZE(2..MAX)) OF INTEGER (0..7)
+    Probe ::= SEQUENCE {
+        os   Os,
+        ia5  Ia5,
+        bits Bits,
+        ints Ints
+    }
+    -- ub < 64K: length is a constrained whole number of (n - lb).
+    Ub65535   ::= OCTET STRING (SIZE(0..65535))
+    -- ub >= 64K, or no ub: length is n itself (fragmented from 16K on).
+    Ub65536   ::= OCTET STRING (SIZE(0..65536))
+    Lb10Ub70k ::= OCTET STRING (SIZE(10..70000))
+    Lb10Max   ::= OCTET STRING (SIZE(10..MAX))
+END

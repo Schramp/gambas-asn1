@@ -15,6 +15,10 @@ struct Constraints {
     static constexpr int REAL_LOWER_OPEN  = 64;  // real_lower itself excluded ("lo<..")
     static constexpr int REAL_UPPER_OPEN  = 128; // real_upper itself excluded ("..<hi")
     static constexpr int REAL_BASE_10     = 256; // JER-visible base constraint admits only 10 (X.697 §23.1.4)
+    // SIZE(lb..MAX): size_lower is a lower bound, there is no upper bound
+    // (X.680 §51.5). Only validate() and RandomFiller read it; PER encodes such
+    // a length as unconstrained (X.691 §11.9.4.2), so SIZE_CONSTRAINED stays clear.
+    static constexpr int SIZE_LOWER_BOUND = 1024;
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.

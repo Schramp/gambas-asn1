@@ -426,6 +426,25 @@ target_include_directories(test_per_size_violation PRIVATE ${PER_SIZE_VIOL_GEN_D
 target_link_libraries(test_per_size_violation PRIVATE asn1cpp_runtime)
 add_test(NAME per_size_violation COMMAND test_per_size_violation)
 
+# ---- SIZE(lb..MAX) lower bound (X.680 §51.5) + 64K edge of the PER length
+# determinant (X.691 §11.9.4); Rust leg: rust/size_lower_bound
+set(SIZE_LB_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_size_lower_bound_test)
+set(SIZE_LB_SRCS Os Ia5 Bits Ints Probe Ub65535 Ub65536 Lb10Ub70k Lb10Max)
+list(TRANSFORM SIZE_LB_SRCS PREPEND ${SIZE_LB_GEN_DIR}/)
+list(TRANSFORM SIZE_LB_SRCS APPEND .cpp)
+add_custom_command(
+    OUTPUT  ${SIZE_LB_SRCS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SIZE_LB_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+            -o ${SIZE_LB_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+    COMMENT "Generating C++ from size_lower_bound_test.asn1"
+)
+add_executable(test_size_lower_bound per/test_size_lower_bound.cpp ${SIZE_LB_SRCS})
+target_include_directories(test_size_lower_bound PRIVATE ${SIZE_LB_GEN_DIR})
+target_link_libraries(test_size_lower_bound PRIVATE asn1cpp_runtime)
+add_test(NAME size_lower_bound COMMAND test_size_lower_bound)
+
 # ---- REAL JER base constraints (X.697 §23.1.4); Rust leg: rust/real_jer_base
 set(REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_jer_base_test)
 add_custom_command(
@@ -2345,6 +2364,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_per_size_violation PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_PER_SIZE_VIOL_GEN_DIR}")
+endif()
+
+# Rust leg of the SIZE(lb..MAX) / 64K-edge test — see tests/rust/size_lower_bound/src/main.rs
+# (C++ leg: test_size_lower_bound).
+set(RUST_SIZE_LB_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_size_lower_bound)
+add_custom_command(
+    OUTPUT  ${RUST_SIZE_LB_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SIZE_LB_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+            -o ${RUST_SIZE_LB_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+    COMMENT "Generating Rust from size_lower_bound_test.asn1"
+)
+add_custom_target(gen_rust_size_lower_bound ALL DEPENDS ${RUST_SIZE_LB_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_size_lower_bound
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/size_lower_bound/Cargo.toml)
+    set_tests_properties(rust_size_lower_bound PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIZE_LB_GEN_DIR}")
 endif()
 
 # Rust OPTIONAL untagged-CHOICE member test — see tests/rust/optional_untagged_choice/src/main.rs.
