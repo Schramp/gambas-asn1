@@ -2167,6 +2167,9 @@ and writes 8-bit time characters or unmapped digits; as a SEQUENCE member it
 writes the X.691 encoding, which the Java PER leg checks those types against.
 asn1c, like the C++ and Rust runtimes, applies SIZE to UTF8String and the
 other kinds that X.691 §30.6 leaves unconstrained (#1043).
+OBJECT IDENTIFIER, RELATIVE-OID and REAL are their BER (for REAL, DER)
+contents octets after a general length (X.691 §24, §25, §15), and ANY its
+captured encoding as an open-type field (§11.2).
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE
