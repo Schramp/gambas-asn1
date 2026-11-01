@@ -241,7 +241,7 @@ Build BER first, then XER, JER and PER. Each later codec is a new walker over th
 
 Work the list top to bottom. Every `- [ ]` item is one issue and one pull request of about 200–500 changed lines. Its bold title is the issue title; its sub-items are the issue body, starting with **Ref:**, the standard clauses the item implements. An item marked **⚠** exists because an earlier port missed it; the note says what went wrong. §11 has the evidence behind the order.
 
-All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693 in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/` (Word 97 files; `strings -n 4 X6901.doc` gives searchable text with each clause number at the start of its line), and X.697 as a separate copy. "DER" means X.690 §10–§11, "BASIC-XER" X.693 §8.
+All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693 in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/` (Word 97 files; `strings -n 1 X6901.doc` gives searchable text with each clause number at the start of its line; a larger `-n` drops short runs such as single clause lines), and X.697 as a separate copy. "DER" means X.690 §10–§11, "BASIC-XER" X.693 §8.
 
 **Every BER primitive and constructed item** delivers four parts, so they are not repeated below:
 - runtime codec plus a unit test using the shared vectors;
@@ -522,7 +522,7 @@ asn1c deviations were reported upstream, not patched. These are the standing ite
 
 ### Check clause numbers against the text
 
-First drafts cited wrong X.697 clauses for strings, bit strings and constructed types, and commit messages of the second port mix X.691 editions (1997 and 2021 numbering differ by one clause for most types). Cite one edition, preferably the 2021 set in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/`, and search its text before writing a clause number into a comment. Those are Word 97 files; `strings -n 4 X6911.doc` gives searchable text with each clause number at the start of its line.
+First drafts cited wrong X.697 clauses for strings, bit strings and constructed types, and commit messages of the second port mix X.691 editions (1997 and 2021 numbering differ by one clause for most types). Cite one edition, preferably the 2021 set in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/`, and search its text before writing a clause number into a comment. Those are Word 97 files; `strings -n 1 X6911.doc` gives searchable text with each clause number at the start of its line; a larger `-n` silently drops short runs, whole clauses among them.
 
 ---
 
