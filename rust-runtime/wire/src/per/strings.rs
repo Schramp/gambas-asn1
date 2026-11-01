@@ -107,7 +107,14 @@ fn has_alphabet(pc: &Constraints) -> bool {
     pc.alphabet_bits > 0 && pc.encode_table.is_some()
 }
 
+/// Encodes a restricted character string (X.691 §30) against its table
+/// constraints: SIZE and FROM when PER-visible, the type's own character
+/// width otherwise. A `PER_SIZE_INVISIBLE` table (non-known-multiplier
+/// type, X.691 §30.6) encodes as the unconstrained type.
 pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Result<(), EncodeError> {
+    if pc.flags & crate::constraints::PER_SIZE_INVISIBLE != 0 {
+        return encode_string(w, &crate::constraints::UNCONSTRAINED, tag_num, bytes);
+    }
     let (bits, bpc, natural) = string_params(tag_num);
     let char_count = bytes.len() / bpc as usize;
     let has_alpha = has_alphabet(pc);
@@ -205,7 +212,11 @@ pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8
     })
 }
 
+/// Decode counterpart of [`encode_string`] (X.691 §30).
 pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<Vec<u8>, DecodeError> {
+    if pc.flags & crate::constraints::PER_SIZE_INVISIBLE != 0 {
+        return decode_string(r, &crate::constraints::UNCONSTRAINED, tag_num);
+    }
     let (bits, bpc, _natural) = string_params(tag_num);
     let has_alpha = has_alphabet(pc);
 

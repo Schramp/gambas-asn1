@@ -58,7 +58,8 @@ struct ContainedField {
 ///        them. Codegen looks facts up by the member's own TypeDef.
 class ContainedFields {
 public:
-    /// @brief Read a sidecar configuration file (JSON).
+    /// @brief Read the `container_fields` of a sidecar configuration file
+    ///        (JSON). Its `per_nkm_size` key belongs to PerNkmSize.
     /// @param path    File to read.
     /// @param errors  Receives one message per problem.
     /// @return false when the file cannot be read or is malformed.

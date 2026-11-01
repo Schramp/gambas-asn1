@@ -15,6 +15,10 @@ struct Constraints {
     static constexpr int REAL_LOWER_OPEN  = 64;  // real_lower itself excluded ("lo<..")
     static constexpr int REAL_UPPER_OPEN  = 128; // real_upper itself excluded ("..<hi")
     static constexpr int REAL_BASE_10     = 256; // JER-visible base constraint admits only 10 (X.697 §23.1.4)
+    // SIZE (and FROM) of a non-known-multiplier character string is not
+    // PER-visible (X.691 §10.3.18, §30.6): PER encodes the length as
+    // unconstrained and adds no extension bit. validate() still applies SIZE.
+    static constexpr int PER_SIZE_INVISIBLE = 512;
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.

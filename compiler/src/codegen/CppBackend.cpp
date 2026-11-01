@@ -593,7 +593,8 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     if (needs_per) {
         int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                   | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-                  | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+                  | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+                  | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
         os << "    " << make_string_constraints_init(flags, spec.size_range_bits,
@@ -726,7 +727,8 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
             emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
         int all_flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                        | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-                       | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+                       | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+                       | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
         bool use_default = !spec.has_size_constraint && spec.alphabet.empty() && !spec.named_bits

@@ -1,0 +1,10 @@
+PerNkmSize DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+Name ::= UTF8String (SIZE(1..150, ...))
+Rec ::= SEQUENCE {
+    s     UTF8String (SIZE(0..32)),
+    ext   UTF8String (SIZE(1..150, ...)),
+    named Name,
+    g     GeneralString (SIZE(1..4)),
+    ia5   IA5String (SIZE(0..32))
+}
+END

@@ -34,6 +34,11 @@ pub const REAL_LOWER_OPEN: u32 = 64;
 pub const REAL_UPPER_OPEN: u32 = 128;
 /// The JER-visible base constraint admits only base 10 (X.697 §23.1.4).
 pub const REAL_BASE_10: u32 = 256;
+/// SIZE (and FROM) of a non-known-multiplier character string is not
+/// PER-visible (X.691 §10.3.18, §30.6): PER encodes the length as
+/// unconstrained and adds no extension bit; `validate_*` still applies SIZE.
+/// Mirrors `Constraints::PER_SIZE_INVISIBLE` (`Constraints.hpp`).
+pub const PER_SIZE_INVISIBLE: u32 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Constraints {
@@ -95,6 +100,7 @@ impl Constraints {
     pub const REAL_LOWER_OPEN: u32 = REAL_LOWER_OPEN;
     pub const REAL_UPPER_OPEN: u32 = REAL_UPPER_OPEN;
     pub const REAL_BASE_10: u32 = REAL_BASE_10;
+    pub const PER_SIZE_INVISIBLE: u32 = PER_SIZE_INVISIBLE;
 
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0
