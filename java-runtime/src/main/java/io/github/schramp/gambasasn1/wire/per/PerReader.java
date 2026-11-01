@@ -93,7 +93,7 @@ public final class PerReader {
     }
 
     /** The constructed levels this decode is inside. */
-    int depth() {
+    public int depth() {
         return depth;
     }
 }

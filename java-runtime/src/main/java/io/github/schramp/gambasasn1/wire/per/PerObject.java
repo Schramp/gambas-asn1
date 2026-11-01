@@ -1,17 +1,24 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.ber.Tag;
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
+import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
+import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
+import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -38,6 +45,13 @@ public final class PerObject {
         return w.toByteArray();
     }
 
+    /** {@link #encode(AsMemberRef)} with contained-value settings; {@code opts} may be null. */
+    public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
+        PerWriter w = new PerWriter().withContained(opts);
+        encodeValue(v.asMemberRef(), rootConstraints(v), w);
+        return w.toByteArray();
+    }
+
     /**
      * Decodes one complete encoding into {@code v}; only the padding of
      * X.691 §11.1.3.1 may follow it, or the one zero octet that stands for
@@ -57,6 +71,28 @@ public final class PerObject {
         }
     }
 
+    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; {@code opts} may be null. */
+    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        PerReader r = new PerReader(data).withContained(opts);
+        decodeValue(v.asMemberRef(), rootConstraints(v), r);
+        boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
+        if (r.remaining() >= 8 && !emptyEncoding) {
+            throw r.error("PER: trailing data after the value");
+        }
+    }
+
+    /**
+     * Decodes one complete encoding from the start of {@code r}'s data into
+     * {@code v}, for a contained value whose bytes may be followed by
+     * padding a decoder removes.
+     *
+     * @return the octets the encoding takes, its padding included (X.691 §11.1.3.1)
+     */
+    public static int decodePrefix(AsMemberRef v, PerReader r) {
+        decodeValue(v.asMemberRef(), rootConstraints(v), r);
+        return (int) Math.max(1, (r.bitPos() + 7) / 8);
+    }
+
     private static Constraints rootConstraints(AsMemberRef v) {
         return v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED;
     }
@@ -74,6 +110,8 @@ public final class PerObject {
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
             case MemberRef.SeqOf(Asn1SeqOf q) -> encodeSeqOf(q, c, w);
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> PerPrimitive.encode(
+                    new Asn1OctetString(ContainedValues.wireOctets(f, cs, ContainedEncoding.PER_UNALIGNED, w.contained())), c, w);
             default -> throw new EncodeException("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -100,6 +138,12 @@ public final class PerObject {
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
             case MemberRef.SeqOf(Asn1SeqOf q) -> decodeSeqOf(q, c, r);
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> {
+                // The inner value is decoded once the enclosing value is complete.
+                Asn1OctetString raw = new Asn1OctetString();
+                PerPrimitive.decode(raw, c, r);
+                f.setRawFromWire(raw.get(), ContainedEncoding.PER_UNALIGNED);
+            }
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -282,6 +326,21 @@ public final class PerObject {
                 }
             }
         }
+        if (!spec.containedMembers().isEmpty()) {
+            ContainedValues.decodeMembers(s, ContainedEncoding.PER_UNALIGNED, berAnchor(r));
+        }
+    }
+
+    /**
+     * The decode context a contained value's inner decode starts from: this
+     * decode's nesting depth and contained-value settings.
+     */
+    private static BerReader berAnchor(PerReader r) {
+        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        for (int i = 0; i < r.depth(); i++) {
+            b.enterLevel();
+        }
+        return b;
     }
 
     private static void decodeGroup(Asn1Seq s, Addition a, PerReader r) {
@@ -349,6 +408,7 @@ public final class PerObject {
                 throw r.error("PER: CHOICE " + spec.name() + " index " + i + " outside its " + root + " root alternatives");
             }
             decodeValue(ch.select((int) i), spec.alternatives().get((int) i).constraints(), r);
+            decodeContainedAlternative(ch, r);
             return;
         }
         long ext = PerLength.getNormallySmall(r);
@@ -362,6 +422,13 @@ public final class PerObject {
         }
         int i = root + (int) ext;
         decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.sub(field));
+        decodeContainedAlternative(ch, r);
+    }
+
+    private static void decodeContainedAlternative(Asn1Choice ch, PerReader r) {
+        if (ch.spec().hasContained()) {
+            ContainedValues.decodeAlternative(ch, ContainedEncoding.PER_UNALIGNED, berAnchor(r));
+        }
     }
 
     /** An element's encoding and its exact length in bits. */

@@ -2192,6 +2192,15 @@ constraints: an inline element constraint or the referenced type's own
 (X.691 §20). A SET OF is written with its components sorted as X.691 §22.1
 orders them, as asn1c and the C++ and Rust runtimes do; the decoder takes
 them in any order.
+A contained field (X.682 §11) is an OCTET STRING under its SIZE (X.691 §17)
+holding the inner value's complete encoding. Without ENCODED BY the contents
+follow the outer rules (X.682 §11.4): contents read from BER are written as
+PER when the outer value is written as PER, and back; a `--container-config`
+field keeps its configured rules. The inner value is decoded after the
+enclosing value, through the same decoder registry as BER, and
+`PerObject.encode(v, opts)` / `PerObject.decode(v, data, opts)` take a
+`ContainedOptions`. asn1c, which has no contents constraints, writes a
+field's bytes as they are.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE

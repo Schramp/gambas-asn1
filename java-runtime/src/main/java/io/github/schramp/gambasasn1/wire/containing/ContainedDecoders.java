@@ -5,6 +5,8 @@ import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
+import io.github.schramp.gambasasn1.wire.per.PerObject;
+import io.github.schramp.gambasasn1.wire.per.PerReader;
 import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedStatus;
@@ -99,6 +101,17 @@ public final class ContainedDecoders {
                 }
                 used = r.position();
             }
+            case PER_UNALIGNED -> {
+                PerReader r = new PerReader(bytes).withContained(args.parent().contained());
+                try {
+                    for (int i = 0; i < args.parent().depth(); i++) {
+                        r.enterLevel();
+                    }
+                    used = PerObject.decodePrefix(args.inner(), r);
+                } catch (DecodeException e) {
+                    return ContainedResult.failed(e.getMessage());
+                }
+            }
             default -> {
                 return ContainedResult.failed(args.encoding() + " contents are not supported");
             }
@@ -123,6 +136,9 @@ public final class ContainedDecoders {
                 ByteSink out = new ByteSink();
                 BerObject.encodeMemberRef(args.inner().asMemberRef(), args.inner().berFraming(), out, args.options());
                 return out.toByteArray();
+            }
+            case PER_UNALIGNED -> {
+                return PerObject.encode(args.inner(), args.options());
             }
             default -> throw new EncodeException(args.encoding() + " contents are not supported");
         }
