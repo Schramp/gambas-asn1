@@ -1571,6 +1571,23 @@ RealRangeSpec Generator::extract_real_range(const ast::TypeDef& def) const {
 ///        member or alternative, when the backend stores contained values.
 /// @param m  Member or alternative type definition.
 /// @return The fact, or nullptr.
+/// @brief PER mode for a SIZE on a non-known-multiplier string member,
+///        alternative or element (X.691 §30.6 vs the asn1c reading).
+/// @param m  The member's own TypeDef, as the sidecar resolved it.
+/// @return The sidecar override for \p m or its type assignment, else the
+///         --per-nkm-size default (strict when none was set).
+sema::NkmSizeMode Generator::nkm_size_mode_for(const ast::TypeDef& m) const {
+    return per_nkm_size_ ? per_nkm_size_->mode_for(&m) : sema::NkmSizeMode::Strict;
+}
+
+/// @brief PER mode for a SIZE on a non-known-multiplier string type assignment.
+/// @param module  Module of the type assignment.
+/// @param type    ASN.1 name of the type assignment.
+/// @return The sidecar override for the type, else the --per-nkm-size default.
+sema::NkmSizeMode Generator::nkm_size_mode_for(const std::string& module, const std::string& type) const {
+    return per_nkm_size_ ? per_nkm_size_->mode_for(module, type) : sema::NkmSizeMode::Strict;
+}
+
 const sema::ContainedField* Generator::contained_for(const ast::TypeDef& m) const {
     if (!contained_ || !backend_.supports_contained_values()) return nullptr;
     return contained_->find(&m);
@@ -1675,7 +1692,8 @@ std::string Generator::emit_member_type_descriptor(
 /// @return nullopt when the member has no inline constraint worth a dedicated
 ///         descriptor — caller falls back to type_descriptor_ref_for().
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap),
-///      §15.2/§15.3 (NamedBitList BIT STRING).
+///      §15.2/§15.3 (NamedBitList BIT STRING), §30.6 (non-known-multiplier
+///      strings: per_size_invisible under --per-nkm-size=strict).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
     const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
@@ -1767,6 +1785,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
         // UTF8String is not a known-multiplier character string (X.691 §26.6):
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
+        const bool nkm = sema::is_non_known_multiplier(*bt);
         if (sr || !alphabet.empty() || needs_xer || named_bits) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
@@ -1796,6 +1815,8 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             // type extensible for PER (X.691 §9.3.15 note 1); an extensible
             // FROM is not PER-visible at all (§9.3.9, per_visible_alphabet).
             spec.extensible = string_per_visibility(m).size_extensible;
+            spec.per_size_invisible = nkm && (sr || !alphabet.empty())
+                && nkm_size_mode_for(m) == sema::NkmSizeMode::Strict;
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
@@ -3123,6 +3144,7 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 /// @param type_name Final backend-resolved type identifier.
 /// @return The decision as plain data — see BuiltinAliasSpec.
 /// @see X.691 §26.5 (character string PER constraints), §15.2/§15.3 (NamedBitList BIT STRING);
+///      §30.6 (non-known-multiplier strings: per_size_invisible under --per-nkm-size=strict);
 ///      X.690 §8.7 (OCTET STRING BER encoding).
 BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
                                                        const std::string& type_name) const {
@@ -3153,6 +3175,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
         spec.natural_tag = underlying_natural_tag_spec_for(def);
 
+    const bool nkm = sema::is_non_known_multiplier(builtin);
     spec.alphabet = per_visible_alphabet(def);
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
@@ -3175,6 +3198,8 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     // X.691 §9.3.15 note 1: only a PER-visible constraint's extension
     // marker counts (string_per_visibility).
     spec.extensible = string_per_visibility(def).size_extensible;
+    spec.per_size_invisible = nkm && (size_range || !spec.alphabet.empty())
+        && nkm_size_mode_for(current_module_, def.name) == sema::NkmSizeMode::Strict;
     spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;
     if (builtin == ast::BuiltinType::Real) spec.real_range = extract_real_range(def);

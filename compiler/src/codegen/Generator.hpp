@@ -12,6 +12,7 @@
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
 #include "../sema/Resolver.hpp"
+#include "../sema/PerNkmSize.hpp"
 #include "Backend.hpp"
 #include "Casing.hpp"
 #include <optional>
@@ -89,6 +90,7 @@ class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
     const sema::ContainedFields* contained_ = nullptr;
+    const sema::PerNkmSize*      per_nkm_size_ = nullptr;
     // Member table order of the SEQUENCE/SET being emitted, for resolving
     // a contained field's `when` sibling to its table index.
     const std::vector<const ast::TypeDef*>* current_member_order_ = nullptr;
@@ -158,6 +160,9 @@ public:
     /// @brief Contained-field facts (X.682 §11 / --container-config) that
     ///        member and alternative specs carry to the backends.
     void set_contained_fields(const sema::ContainedFields* c) { contained_ = c; }
+    /// @brief PER mode for SIZE on non-known-multiplier strings
+    ///        (--per-nkm-size and sidecar overrides); null means strict.
+    void set_per_nkm_size(const sema::PerNkmSize* p) { per_nkm_size_ = p; }
 
     /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
     /// @param pr  Resolved parse result containing all input modules.
@@ -335,6 +340,8 @@ private:
     ///        Generator state (extract_size_range, resolver-backed
     ///        constraint walking), so a member like build_integer_spec.
     BuiltinAliasSpec build_builtin_alias_spec(const ast::TypeDef& def, const std::string& type_name) const;
+    sema::NkmSizeMode nkm_size_mode_for(const ast::TypeDef& m) const;
+    sema::NkmSizeMode nkm_size_mode_for(const std::string& module, const std::string& type) const;
 
     /// @brief SEQUENCE/SET: emit_sequence_declaration writes only the
     ///        declaration-side #include/forward-decl lines (no side content

@@ -1,0 +1,6 @@
+{
+  "per_nkm_size": [
+    { "module": "PerNkmSize", "type": "Name", "mode": "visible" },
+    { "module": "PerNkmSize", "type": "Rec", "field": "g", "mode": "visible" }
+  ]
+}

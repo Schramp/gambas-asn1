@@ -28,6 +28,12 @@
 # does not do, so the asn1c PER comparison is informational.
 # '@real-reencode' — REAL values that asn1c re-encodes in another valid
 # form (binary vs decimal), so its own round trips differ from the input.
+# '@asn1c-nkm-visible' — SIZE on a non-known-multiplier string (UTF8String,
+# GeneralString, ...) under the default --per-nkm-size=strict (X.691 §30.6:
+# not PER-visible). asn1c encodes that SIZE as PER-visible, so the asn1c PER
+# comparison is informational, status ASN1CNKMVISIBLE; BER/XER/JER still
+# gate. Each such target has a second line with --per-nkm-size=visible,
+# whose PER is gated against asn1c.
 # A mismatch on an informational asn1c leg never fails the target. Its
 # status names the cause: ASN1CINCOMPLETE (a PER leg where asn1c fails to
 # decode its own PER back, or @asn1c-opaque-contents), SEMANTICIDENTICAL
@@ -85,10 +91,15 @@ examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 
 # ETSI LI (multi-module directory schema; -fallow-newer-modules picks the
 # newest of the duplicated module versions, as the example's Makefile does).
-examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
-examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
+# ETSI LI is specified for BER only (TS 102 232-1). Its PER leg is a C++ vs
+# Rust self-consistency check on a large real schema, not a standard
+# encoding; @asn1c-nkm-visible keeps the asn1c PER rows informational (its
+# UTF8String SIZE members) and needs no --per-nkm-size=visible twin.
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             @asn1c-nkm-visible -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   @asn1c-nkm-visible -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
 
-tests/asn1/roundtrip_test.asn1        Container  @real-reencode
+tests/asn1/roundtrip_test.asn1        Container  @asn1c-nkm-visible @real-reencode
+tests/asn1/roundtrip_test.asn1        Container  @real-reencode  --per-nkm-size=visible
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
 tests/asn1/per_choice_order_test.asn1 Nested
@@ -114,13 +125,17 @@ tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfi
 tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record
 tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension
 tests/asn1/rust_range_test.asn1        Gauge
-tests/asn1/rust_size_test.asn1         Blob
+tests/asn1/rust_size_test.asn1         Blob  @asn1c-nkm-visible
+tests/asn1/rust_size_test.asn1         Blob  --per-nkm-size=visible
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
 tests/asn1/rust_seqof_int_per_test.asn1   Bag
 tests/asn1/rust_seqof_of_seqof_test.asn1   Matrix
 tests/asn1/rust_seqof_base64_elem_test.asn1   Entries
-tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope
+tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope  @asn1c-nkm-visible
+tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope  --per-nkm-size=visible
+tests/asn1/per_nkm_size_test.asn1       Rec  @asn1c-nkm-visible
+tests/asn1/per_nkm_size_test.asn1       Rec  --per-nkm-size=visible
 tests/asn1/rust_bool_alias_per_test.asn1   Attributes
 tests/asn1/per_ext_controls_test.asn1   Rec
 tests/asn1/per_setof_order_test.asn1   Rec

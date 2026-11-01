@@ -879,7 +879,12 @@ def parse_targets(path):
     PER, so the asn1c PER comparison is informational for it.
     '@real-reencode' marks a schema with REAL values that asn1c re-encodes
     in another valid form. See ASN1C_VERDICTS for how each one labels an
-    informational mismatch."""
+    informational mismatch. '@asn1c-nkm-visible' marks a schema with SIZE
+    on a non-known-multiplier string (UTF8String, ...) built with the
+    default --per-nkm-size=strict: asn1c encodes that SIZE as PER-visible,
+    so only the asn1c PER comparisons are informational (ASN1CNKMVISIBLE);
+    the same schema built with --per-nkm-size=visible is gated against
+    asn1c as usual."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -898,7 +903,7 @@ def parse_targets(path):
             rest = parts[2:]
             n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
             options = set(rest[:n_opts])
-            unknown = options - {"@expect-errors", *ASN1C_VERDICTS, *ERL_VERDICTS}
+            unknown = options - {"@expect-errors", "@asn1c-nkm-visible", *ASN1C_VERDICTS, *ERL_VERDICTS}
             if unknown:
                 print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
                 sys.exit(1)
@@ -1476,7 +1481,12 @@ def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slo
     runs its own checks. Returns {"dir", "cpp", "rust", "asn1c", "erlang"},
     or None when the C++ or Rust build fails."""
     asn1_files_abs, slug_base = schema_files(schema_rel, extra_files)
-    target_dir = os.path.join(TESTBUILD, slug_base + "_" + "_".join(pdu_types))
+    slug = slug_base + "_" + "_".join(pdu_types)
+    if asncpp_flags:
+        # Same schema and PDU types built with other compiler flags is
+        # another build group; give it its own directory.
+        slug += "_" + hashlib.sha1(" ".join(asncpp_flags).encode()).hexdigest()[:8]
+    target_dir = os.path.join(TESTBUILD, slug)
     if len(pdu_types) > 1:
         print(f"  one build for {len(pdu_types)} PDU types: {', '.join(pdu_types)}")
     cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_types, cpp_jobs, "cpp" in reuse, asncpp_flags)
@@ -1494,7 +1504,7 @@ def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_reason=None,
                extra_files=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False,
-               info=None, erl_info=None):
+               asn1c_nkm_visible=False, info=None, erl_info=None):
     """Runs one target's checks against its build group's tools
     (`build_group`); `built` is None when that build failed."""
     extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
@@ -1716,7 +1726,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             self_m, self_mm = compare_ber("orig vs asn1c.P2B(asn1c.PER) [informational]",
                                           ber_orig, ber_asn1c_per2, verbose,
                                           info=info or "ASN1CINCOMPLETE")
-            per_info = info or ("ASN1CINCOMPLETE" if self_mm else "INFORMATIONAL")
+            per_info = (("ASN1CNKMVISIBLE" if asn1c_nkm_visible else None)
+                        or info or ("ASN1CINCOMPLETE" if self_mm else "INFORMATIONAL"))
             compare_ber("orig vs asn1c.P2B(cpp.PER) [informational]", ber_orig, b"".join(der_from_cpp), verbose, info=per_info)
             compare_ber("orig vs asn1c.P2B(rust.PER) [informational]", ber_orig, b"".join(der_from_rust), verbose, info=per_info)
 
@@ -1725,8 +1736,10 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             # gated. Where asn1c's own round trip fails, its PER bytes aren't
             # trustworthy for this target and the comparison stays
             # informational. So it is for a target whose contained values
-            # asn1c carries as opaque bytes (@asn1c-opaque-contents).
-            if self_m > 0 and self_mm == 0 and not asn1c_opaque_contents:
+            # asn1c carries as opaque bytes (@asn1c-opaque-contents), and for
+            # one whose non-known-multiplier string SIZE asn1c encodes as
+            # PER-visible where this build does not (@asn1c-nkm-visible).
+            if self_m > 0 and self_mm == 0 and not asn1c_opaque_contents and not asn1c_nkm_visible:
                 tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
                 tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
             else:
@@ -2070,6 +2083,7 @@ def main():
                                         extra_files=extra_files,
                                         expect_errors="@expect-errors" in options,
                                         asn1c_opaque_contents="@asn1c-opaque-contents" in options,
+                                        asn1c_nkm_visible="@asn1c-nkm-visible" in options,
                                         info=asn1c_verdict(options),
                                         erl_info=erl_verdict(options),
                                         fuzz=opts if opts.fuzz else None)

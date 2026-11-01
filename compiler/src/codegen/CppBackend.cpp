@@ -594,6 +594,7 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
         int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                   | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
                   | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+                  | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
                   | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
                      ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
@@ -729,6 +730,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         int all_flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                        | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
                        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+                       | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
                        | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
                           ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()

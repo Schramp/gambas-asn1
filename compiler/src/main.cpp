@@ -12,6 +12,7 @@
 #include "ast/Module.hpp"
 #include "sema/Resolver.hpp"
 #include "sema/ContainedFields.hpp"
+#include "sema/PerNkmSize.hpp"
 #include "codegen/Generator.hpp"
 #include "codegen/CppBackend.hpp"
 #include "codegen/RustBackend.hpp"
@@ -29,6 +30,8 @@ static const struct option long_opts[] = {
     {"stdlib-dir",           required_argument, nullptr, 'S'},
     {"container-config",     required_argument, nullptr, 'C'},
     {"list-contained",       no_argument,       nullptr, 'L'},
+    {"per-nkm-size",         required_argument, nullptr, 'N'},
+    {"list-per-nkm-size",    no_argument,       nullptr, 'Z'},
     {nullptr, 0, nullptr, 0}
 };
 
@@ -61,13 +64,35 @@ static void print_help(const char* prog) {
         "                              instead, which is idiomatic and collision-safe.)\n"
         "  -pdu=<TypeName>             Generate only <TypeName> and its transitive dependencies.\n"
         "                              May be specified multiple times for multiple roots.\n"
+        "                              Without -pdu, all types in all modules are generated.\n"
+        "                              -pdu=all is accepted as an alias for the default.\n"
         "  --container-config=<file>   JSON sidecar naming OCTET STRING fields that hold the\n"
         "                              encoding of another type, and how to decode them\n"
         "                              (see doc/book.md, \"Contained values\").\n"
         "  --list-contained            Print every contained field (CONTAINING constraints\n"
         "                              and sidecar entries) with its settings.\n"
-        "                              Without -pdu, all types in all modules are generated.\n"
-        "                              -pdu=all is accepted as an alias for the default.\n"
+        "  --per-nkm-size=<mode>       PER handling of SIZE on the character string types\n"
+        "                              that are not known-multiplier types: UTF8String,\n"
+        "                              TeletexString/T61String, VideotexString,\n"
+        "                              GraphicString, GeneralString, ObjectDescriptor.\n"
+        "                                strict  (default) X.691 10.3.18 and 30.6: the SIZE\n"
+        "                                        is not PER-visible. Length is encoded as an\n"
+        "                                        unconstrained length determinant, no\n"
+        "                                        extension bit. Interworks with Erlang/OTP\n"
+        "                                        asn1, Wireshark, asn1tools.\n"
+        "                                visible Encode the SIZE as if PER-visible:\n"
+        "                                        constrained length, extension bit when\n"
+        "                                        the SIZE has '...'. Matches asn1c and\n"
+        "                                        gambas-asn1 before this option existed;\n"
+        "                                        NOT X.691-conformant. Common in NGAP\n"
+        "                                        (3GPP TS 38.413 RANNodeName, AMFName).\n"
+        "                              Only PER changes; BER/XER/JER and validate() are\n"
+        "                              the same in both modes. Override per type or\n"
+        "                              member with \"per_nkm_size\" entries in the\n"
+        "                              --container-config sidecar (see doc/book.md,\n"
+        "                              \"SIZE on non-known-multiplier strings\").\n"
+        "  --list-per-nkm-size         Print every SIZE-constrained non-known-multiplier\n"
+        "                              string with the mode that applies to it, then exit.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
         "  --target=<lang>             Output language: cpp (default) or rust (WIP).\n"
@@ -83,6 +108,7 @@ static void usage(const char* prog) {
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " [--target=cpp|rust] [--stdlib-dir=<dir>]"
+                 " [--container-config=<file>] [--per-nkm-size=strict|visible]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
@@ -132,6 +158,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> input_files;
     std::string container_config;
     bool list_contained = false;
+    asn1::sema::NkmSizeMode nkm_size_mode = asn1::sema::NkmSizeMode::Strict;
+    bool list_nkm_size = false;
 
     int opt;
     opterr = 0;  // suppress getopt's own diagnostics; usage() handles all errors
@@ -179,6 +207,14 @@ int main(int argc, char** argv) {
             break;
         case 'C': container_config = optarg; break;
         case 'L': list_contained = true; break;
+        case 'N':
+            if (!asn1::sema::parse_nkm_size_mode(optarg, nkm_size_mode)) {
+                std::cerr << "error: unknown --per-nkm-size value '" << optarg
+                          << "' (expected strict or visible)\n";
+                usage(argv[0]);
+            }
+            break;
+        case 'Z': list_nkm_size = true; break;
         default: usage(argv[0]);
         }
     }
@@ -281,6 +317,28 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    asn1::sema::PerNkmSize nkm_size;
+    nkm_size.set_default(nkm_size_mode);
+    {
+        std::vector<std::string> nw, ne;
+        if (!container_config.empty())
+            nkm_size.load_config(container_config, ne);
+        if (ne.empty())
+            nkm_size.build(pr, resolver, nw, ne);
+        for (const auto& w : nw) std::cerr << "warning: " << w << "\n";
+        if (!ne.empty()) {
+            for (const auto& e : ne) std::cerr << "error: " << e << "\n";
+            return 1;
+        }
+    }
+    if (list_nkm_size) {
+        for (const auto& s : nkm_size.sites())
+            std::cout << "per-nkm-size: " << s.module << "." << s.path << " " << s.builtin
+                      << " mode=" << asn1::sema::to_string(s.mode)
+                      << " source=" << (s.source == asn1::sema::PerNkmSize::Source::Config
+                                        ? "config" : "default") << "\n";
+        return 0;
+    }
     if (list_contained) {
         for (const auto& f : contained.all()) {
             std::cout << "contained: " << f.module << "." << f.type << "." << f.field
@@ -311,6 +369,7 @@ int main(int argc, char** argv) {
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.set_contained_fields(&contained);
+    gen.set_per_nkm_size(&nkm_size);
     gen.generate(pr);
     backend.finalize_output(out_dir);
 
