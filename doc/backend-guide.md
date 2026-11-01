@@ -332,32 +332,32 @@ Same items as XER, J1–J10, with these differences:
 
 ### PER (unaligned)
 
-The second port did PER after BER and XER, construct by construct (`6172168` … `0064728`). Most of its X.691 conformance came later, as fixes in both runtimes. The list below puts each of those clauses into the item that owns it. Clause numbers are those of X.691 (1997), `asn1-docs/X.691-199712.txt`. Ground truth is asn1c's `-ouper` output; trace PER problems on the RRC schema, which is PER-native, and use ETSI LI only as a smoke test.
+The second port did PER after BER and XER, construct by construct (`6172168` … `0064728`). Most of its X.691 conformance came later, as fixes in both runtimes. The list below puts each of those clauses into the item that owns it. Clause numbers are those of X.691 (02/2021), `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/X6911.doc`. Ground truth is asn1c's `-ouper` output; trace PER problems on the RRC schema, which is PER-native, and use ETSI LI only as a smoke test.
 
 - [ ] **P1 Bit-level reader/writer + BOOLEAN and NULL + first leg**
-  - Bit fields, octet-aligned fields, and the whole-number encodings of §10.3–§10.8, each unit-tested on its own before any type uses them.
-- [ ] **P2 Length determinants (§10.9)**
-  - Constrained, normally small, unconstrained, and fragments of 16K items or more (§10.9.3.8).
+  - Bit fields, octet-aligned fields, and the whole-number encodings of §11.3–§11.8, each unit-tested on its own before any type uses them.
+- [ ] **P2 Length determinants (§11.9)**
+  - Constrained, normally small, unconstrained, and fragments of 16K items or more (§11.9.3.8).
   - ⚠ Fragmentation was added a month after the rest, in both runtimes (`b90bb84`).
-- [ ] **P3 INTEGER (§12)**
-  - Single value, constrained, semi-constrained (§12.2.3, a non-negative-binary-integer), unconstrained, extensible range; ranges as wide as the 64-bit and unsigned storage.
+- [ ] **P3 INTEGER (§13)**
+  - Single value, constrained, semi-constrained (§13.2.3, a non-negative-binary-integer), unconstrained, extensible range; constrained ranges as wide as the 64-bit and unsigned storage (§11.5.6).
   - ⚠ Semi-constrained values were encoded as unconstrained (`571dcbe`), and full 64-bit ranges overflowed (`f5514a9`); both fixed late in both runtimes.
-- [ ] **P4 ENUMERATED (§13).** Root index, extension bit, extension values.
-- [ ] **P5 OCTET STRING and BIT STRING (§15, §16)**
-  - SIZE; the extension bit of an extensible SIZE (§15.5, §16.3); trailing 0 bits dropped for a NamedBitList BIT STRING (§15.2, §15.3); a length outside a non-extensible SIZE rejected on decode.
+- [ ] **P4 ENUMERATED (§14).** Root index, extension bit, extension values.
+- [ ] **P5 BIT STRING and OCTET STRING (§16, §17)**
+  - SIZE; the extension bit of an extensible SIZE (§16.6, §17.3); trailing 0 bits dropped for a NamedBitList BIT STRING (§16.2, §16.3); a length outside a non-extensible SIZE rejected on decode.
   - ⚠ All three came as late fixes (`3604074`, `d2f3150`, `45503f4`).
-- [ ] **P6 Restricted character strings (§26)**
-  - Known-multiplier strings: effective permitted alphabet and FROM remapping (§26.5), extensible types (§26.4). The other string types as a length plus octets.
+- [ ] **P6 Restricted character strings (§30)**
+  - Known-multiplier strings: effective permitted alphabet and FROM remapping (§30.5), extensible types (§30.4). The other string types as a length plus octets.
   - ⚠ FROM remapping (`3a44e3b`) and extensible strings (`7d5707c`) came late.
-- [ ] **P7 OBJECT IDENTIFIER, RELATIVE-OID, REAL, ANY/open type.** Open-type fields as in §10.2.
-- [ ] **P8 SEQUENCE and SET walker (§18, §20)**
-  - Preamble bitmap sized by the precomputed `roms_count`, extension bit, extension additions as open-type fields, an extension addition group as one addition (§18.9).
+- [ ] **P7 OBJECT IDENTIFIER, RELATIVE-OID, REAL, ANY/open type** (§24, §25, §15). Open-type fields as in §11.2.
+- [ ] **P8 SEQUENCE and SET walker (§19, §21)**
+  - Preamble bitmap sized by the precomputed `roms_count`, extension bit, extension additions as open-type fields, an extension addition group as one addition (§19.9).
   - ⚠ Groups were encoded member by member until `f9a1a85`; the optional count was recounted per value until `b1319a3`.
-- [ ] **P9 CHOICE (§22)**
-  - Index in the precomputed `range_bits`; canonical order with an untagged CHOICE alternative (§22.3); unknown extension alternatives (§22.8).
+- [ ] **P9 CHOICE (§23)**
+  - Index in the precomputed `range_bits`; canonical order with an untagged CHOICE alternative (§23.3); unknown extension alternatives (§23.8).
   - ⚠ An untagged CHOICE alternative was ordered last instead of by its smallest tag in both runtimes (#952). The third port's tests found it.
-- [ ] **P10 SEQUENCE OF and SET OF (§19, §21)**
-  - SIZE, the extension bit of an extensible SIZE (§19.4), SET OF components sorted (§21.1).
+- [ ] **P10 SEQUENCE OF and SET OF (§20, §22)**
+  - SIZE, the extension bit of an extensible SIZE (§20.4), SET OF components sorted (§22.1).
   - ⚠ SET OF sorting came late (`b86a134`).
 - [ ] **P11 Contained values in PER.** Inner decode through the registry, as for BER.
 - [ ] **P12 PER cross-validation leg.**
@@ -423,7 +423,7 @@ asn1c deviations were reported upstream, not patched. These are the standing ite
 
 ### Check clause numbers against the text
 
-First drafts cited wrong X.697 clauses for strings, bit strings and constructed types. Convert each standard to plain text once, and search it before writing a clause number into a comment.
+First drafts cited wrong X.697 clauses for strings, bit strings and constructed types, and commit messages of the second port mix X.691 editions (1997 and 2021 numbering differ by one clause for most types). Cite one edition, preferably the 2021 set in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/`, and search its text before writing a clause number into a comment. Those are Word 97 files; `strings -n 4 X6911.doc` gives searchable text with each clause number at the start of its line.
 
 ---
 
