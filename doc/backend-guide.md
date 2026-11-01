@@ -330,9 +330,39 @@ Same items as XER, J1–J10, with these differences:
 - [ ] **J5 REAL text** needs the shortest round-trip number format. The third port checked it against the reference runtime on 200,000 doubles; the host language's own float-to-text was not shortest.
 - [ ] **J7** is the REAL base-10 forms (bare number under base-10-only, `{"base10Value":…}` otherwise, X.697 §23), which rely on B8. No runtime implements JER encoding instructions yet.
 
-### PER
+### PER (unaligned)
 
-Not yet ported to a third language; to be refined when it is. Start with the bit-level reader/writer plus constrained INTEGER and BOOLEAN, then follow the XER shape: primitives by family, the walker (preamble bitmap, CHOICE index, extension bitmap), then the cross-validation leg.
+The second port did PER after BER and XER, construct by construct (`6172168` … `0064728`). Most of its X.691 conformance came later, as fixes in both runtimes. The list below puts each of those clauses into the item that owns it. Clause numbers are those of X.691 (1997), `asn1-docs/X.691-199712.txt`. Ground truth is asn1c's `-ouper` output; trace PER problems on the RRC schema, which is PER-native, and use ETSI LI only as a smoke test.
+
+- [ ] **P1 Bit-level reader/writer + BOOLEAN and NULL + first leg**
+  - Bit fields, octet-aligned fields, and the whole-number encodings of §10.3–§10.8, each unit-tested on its own before any type uses them.
+- [ ] **P2 Length determinants (§10.9)**
+  - Constrained, normally small, unconstrained, and fragments of 16K items or more (§10.9.3.8).
+  - ⚠ Fragmentation was added a month after the rest, in both runtimes (`b90bb84`).
+- [ ] **P3 INTEGER (§12)**
+  - Single value, constrained, semi-constrained (§12.2.3, a non-negative-binary-integer), unconstrained, extensible range; ranges as wide as the 64-bit and unsigned storage.
+  - ⚠ Semi-constrained values were encoded as unconstrained (`571dcbe`), and full 64-bit ranges overflowed (`f5514a9`); both fixed late in both runtimes.
+- [ ] **P4 ENUMERATED (§13).** Root index, extension bit, extension values.
+- [ ] **P5 OCTET STRING and BIT STRING (§15, §16)**
+  - SIZE; the extension bit of an extensible SIZE (§15.5, §16.3); trailing 0 bits dropped for a NamedBitList BIT STRING (§15.2, §15.3); a length outside a non-extensible SIZE rejected on decode.
+  - ⚠ All three came as late fixes (`3604074`, `d2f3150`, `45503f4`).
+- [ ] **P6 Restricted character strings (§26)**
+  - Known-multiplier strings: effective permitted alphabet and FROM remapping (§26.5), extensible types (§26.4). The other string types as a length plus octets.
+  - ⚠ FROM remapping (`3a44e3b`) and extensible strings (`7d5707c`) came late.
+- [ ] **P7 OBJECT IDENTIFIER, RELATIVE-OID, REAL, ANY/open type.** Open-type fields as in §10.2.
+- [ ] **P8 SEQUENCE and SET walker (§18, §20)**
+  - Preamble bitmap sized by the precomputed `roms_count`, extension bit, extension additions as open-type fields, an extension addition group as one addition (§18.9).
+  - ⚠ Groups were encoded member by member until `f9a1a85`; the optional count was recounted per value until `b1319a3`.
+- [ ] **P9 CHOICE (§22)**
+  - Index in the precomputed `range_bits`; canonical order with an untagged CHOICE alternative (§22.3); unknown extension alternatives (§22.8).
+  - ⚠ An untagged CHOICE alternative was ordered last instead of by its smallest tag in both runtimes (#952). The third port's tests found it.
+- [ ] **P10 SEQUENCE OF and SET OF (§19, §21)**
+  - SIZE, the extension bit of an extensible SIZE (§19.4), SET OF components sorted (§21.1).
+  - ⚠ SET OF sorting came late (`b86a134`).
+- [ ] **P11 Contained values in PER.** Inner decode through the registry, as for BER.
+- [ ] **P12 PER cross-validation leg.**
+  - PER has no record boundary of its own, so the harness frames each record with a 4-byte length. Rows against C++ and asn1c, plus the round-trip matrix.
+- [ ] **P13 PER fuzz smoke test.** Corrupted PER gives errors, never aborts.
 
 ---
 
@@ -386,6 +416,8 @@ The port found bugs in the reference runtimes, each fixed on the main branch fir
 - a CHOICE alternative ignoring its BASE64/UTF8 instruction (#1001);
 - wide strings in JER carrying XML escapes (#1010);
 - JER `null` for an absent member not accepted (#1013).
+
+The second port's PER showed the same from the other side: most X.691 corner clauses (fragmentation, semi-constrained INTEGER, extensible SIZE, extension groups, SET OF order) arrived as late fixes in both runtimes, each a month or more after the construct itself. §9 lists them inside the item that owns them.
 
 asn1c deviations were reported upstream, not patched. These are the standing items of §9: budget for them, and keep each fix out of the port's own step.
 
