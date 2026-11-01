@@ -57,6 +57,11 @@ public final class BerReader {
         depth++;
     }
 
+    /** The constructed levels this decode is inside. */
+    public int depth() {
+        return depth;
+    }
+
     /** Leaves the level the matching {@link #enterLevel()} entered. */
     public void leaveLevel() {
         depth--;

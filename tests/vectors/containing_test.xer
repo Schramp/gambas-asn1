@@ -11,3 +11,7 @@ Pick	<Pick><inner>3003800105</inner></Pick>
 Pick	<Pick><other>7</other></Pick>
 Envelope	<Envelope><depth>0</depth><nested>3003800101</nested></Envelope>
 Envelope	<Envelope><depth>2</depth></Envelope>
+# kind plain with PER contents (X.682 §11.4: contents follow the outer
+# encoding rules): viaConstraint and viaAlias hold asn1c's UPER of the
+# Inner rows above; the sidecar fields viaConfig and viaSized stay BER.
+Holder	<Holder><kind><plain/></kind><viaConstraint>008280</viaConstraint><viaAlias>817F6A01B0B13180</viaAlias><viaConfig>30038001050000</viaConfig><raw>DEADBEEF</raw><viaSized>3003800105</viaSized></Holder>
