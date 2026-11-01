@@ -196,8 +196,17 @@ struct SeqOfSpec {
     const char*           element_xer_tag = nullptr;  ///< X.693 §12: declared element tag name; nullptr = use element->name.
 
     /// @brief Return 0 if the collection satisfies SIZE(…), else signed delta to nearest valid bound.
-    /// Positive = too few elements; negative = too many.
+    /// Positive = too few elements; negative = too many. A \c SIZE(lb..MAX)
+    /// (SIZE_LOWER_BOUND) only has a lower bound.
+    /// @param seq  The collection.
+    /// @return 0 when valid, else the signed delta.
+    /// @see X.680 §51.5.
     int64_t validate(const SeqOfBase& seq) const {
+        if ((size_constraints.flags & Constraints::SIZE_LOWER_BOUND) &&
+            !(size_constraints.flags & Constraints::EXTENSIBLE)) {
+            auto n = static_cast<int64_t>(seq.count());
+            return n < size_constraints.size_lower ? size_constraints.size_lower - n : 0;
+        }
         if (!(size_constraints.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (size_constraints.flags & Constraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(seq.count());

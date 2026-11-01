@@ -37,6 +37,7 @@
 
 #include "type_registry.hpp"
 #include <asn1cpp/codec/BerCorruptor.hpp>
+#include <asn1cpp/codec/ValidateCounter.hpp>
 
 #include <cstdlib>
 #include <cstring>
@@ -127,6 +128,9 @@ int main(int argc, char** argv) {
               << " corrupt_percent=" << corrupt_percent
               << " xer_safe_magic=" << xer_safe_magic << "\n";
 
+    // Valid mode must only produce values that satisfy their constraints;
+    // BER encode validates each value and counts the violations.
+    asn1::reset_validate_fail_count();
     for (int i = 0; i < count; ++i) {
         auto obj = entry->make();
         asn1::Asn1Object* p = obj.get();
@@ -151,5 +155,11 @@ int main(int argc, char** argv) {
         }
     }   // obj destructs here — ~T() called through shared_ptr control block
 
+    if (invalid_percent == 0.0 && asn1::validate_fail_count() > 0) {
+        std::cerr << "randgen: " << asn1::validate_fail_count()
+                  << " constraint violation(s) in valid-mode records"
+                  << " (rerun with ASN1CPP_DEBUG=0x40 for details)\n";
+        return 2;
+    }
     return 0;
 }

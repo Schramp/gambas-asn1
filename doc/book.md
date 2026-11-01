@@ -711,6 +711,18 @@ For the same reason the `SIZE` check on such a type only looks at the bits up to
 1 bit. A `BIT STRING` without named bits is sent at its own length. BER keeps the value
 as given (X.690 §8.6.2.4 allows either).
 
+**Length determinants and the 64K edge.** A length or element count with a `SIZE`
+whose upper bound is below 64K (65536) is written as the constrained whole number
+n − lb in just enough bits for the range (X.691 §11.9.4.1): `OCTET STRING (SIZE (0..65535))`
+sends 10 as the 16 bits `000a`. With an upper bound of 64K or more, or with no upper bound
+at all (`SIZE (lb..MAX)`), the length is n itself in the general form (X.691 §11.9.4.2,
+§11.9.3.5–§11.9.3.8): one octet up to 127, two octets below 16K, and from 16K on the value
+is sent in fragments of 16K, 32K, 48K or 64K octets, each preceded by its own length octet.
+So `SIZE (10..MAX)` sends 10 as `0a`, not as 0, and `SIZE (0..65536)` sends 65535 octets as
+a 48K fragment (`c3`) followed by a 16383-octet tail (`bfff`). The lower bound of
+`SIZE (lb..MAX)` does not shape the encoding, but it is still a constraint: validation
+rejects a shorter value (X.680 §51.5) and `RandomFiller` never generates one.
+
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
 
@@ -999,7 +1011,8 @@ Output:
 ### Constraint Validation
 
 In Debug builds, constraint validation runs automatically on encode and decode.
-Violations increment a counter and (optionally) record a path:
+Every `SIZE` form is checked, including one with only a lower bound (`SIZE (4..MAX)`
+rejects a 3-octet value). Violations increment a counter and (optionally) record a path:
 
 ```cpp
 #include <asn1cpp/Validate.hpp>
@@ -1308,7 +1321,11 @@ A failure names the seed, record index, and check that failed — narrowing the 
 a specific type within seconds.
 
 `RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
-members, randomly includes optional members, and respects SIZE and value constraints.
+members, randomly includes optional members, and respects SIZE (including a lower bound
+alone, `SIZE (lb..MAX)`) and value constraints. The xval_sweep `randgen` checks this
+itself: when a record generated without `--invalid-percent` breaks a constraint, it exits
+with status 2 (rerun with `ASN1CPP_DEBUG=0x40` to see which value), so a filler gap fails
+the sweep instead of showing up as a decoder disagreement.
 A [contained field](#contained-values) gets a random inner value, encoded through the
 field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the nested
 decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or

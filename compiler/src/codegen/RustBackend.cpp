@@ -675,7 +675,9 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     if (sizeable) {
         int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
             | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+            | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+               ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
@@ -928,7 +930,9 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // unconstrained length determinant (X.691 §11.9.4.2).
     int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
         | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+        | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+           ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
@@ -1011,7 +1015,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = std::format("{}_CONSTRAINTS", spec.type_name);
     int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
-        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+        | (spec.has_size_constraint && !spec.size_upper && spec.size_lower > 0
+               ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     int64_t size_upper = spec.size_upper.value_or(std::numeric_limits<int64_t>::max());
     // `pub`, unlike the member-inline Constraints tables above — a
     // synthetic promoted type's own table is referenced cross-module by

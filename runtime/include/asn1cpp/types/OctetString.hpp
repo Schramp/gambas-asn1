@@ -56,8 +56,16 @@ public:
 
     /// @brief Return 0 when size satisfies the SIZE constraint, otherwise signed delta
     /// such that \c (size+delta) lands at the nearest valid bound.
-    /// Positive = too short; negative = too long.
+    /// Positive = too short; negative = too long. A \c SIZE(lb..MAX) (SIZE_LOWER_BOUND)
+    /// only has a lower bound.
+    /// @param c  The type's Constraints (SIZE_CONSTRAINED / SIZE_LOWER_BOUND / EXTENSIBLE).
+    /// @return 0 when valid, else the signed delta.
+    /// @see X.680 §51.5.
     int64_t validate(const Constraints& c) const {
+        if ((c.flags & Constraints::SIZE_LOWER_BOUND) && !(c.flags & Constraints::EXTENSIBLE)) {
+            auto n = static_cast<int64_t>(bytes_.size());
+            return n < c.size_lower ? c.size_lower - n : 0;
+        }
         if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & Constraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(bytes_.size());
