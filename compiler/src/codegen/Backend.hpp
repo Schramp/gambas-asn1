@@ -778,6 +778,12 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 
     std::string asn1_name;
     std::string tdref;
+    // The alternative's type reaches this CHOICE again (X.680 §3.6.55):
+    // the CHOICE itself, or a SEQUENCE/SET/CHOICE that refers back to it.
+    // Its value cannot be held inline in the CHOICE's own storage, where
+    // that type is still incomplete; CppBackend stores it behind a
+    // std::unique_ptr (BoxedChoiceOps).
+    bool boxed = false;
     // resolved_tag (inherited from TaggedMemberSpec) is
     // populated by Generator::emit_choice_definition, same as
     // SequenceMemberSpec::resolved_tag — nullopt means the alternative's own
@@ -1293,6 +1299,16 @@ public:
     ///       this override whenever that table wiring lands, don't assume
     ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
+
+    /// @brief Does this backend store an OPTIONAL/DEFAULT or extension
+    ///        SEQUENCE/SET member of class type behind a pointer? Then such
+    ///        a member already ends a type cycle (X.680 §3.6.55), and
+    ///        Generator::choice_alternative_in_cycle stops its by-value
+    ///        walk there instead of boxing a CHOICE alternative on top.
+    ///        CppBackend: yes (`std::unique_ptr` members). Default no, a
+    ///        backend whose optional storage is inline (Rust's `Option<T>`)
+    ///        or whose members are all references.
+    virtual bool optional_member_is_indirect() const { return false; }
 
     /// @brief Does this backend store contained fields (X.682 §11 /
     ///        --container-config) as a value holding the raw bytes and the

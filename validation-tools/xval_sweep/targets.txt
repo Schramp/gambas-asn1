@@ -93,6 +93,7 @@ tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
 tests/asn1/per_choice_order_test.asn1 Nested
 tests/asn1/self_ref_choice_test.asn1  RecChoice
+tests/asn1/choice_cycle_test.asn1    Expr
 
 # Regression target for a once-real asn1c divergence (CHOICE
 # to_canonical/from_canonical arrays swapped for a non-involutory

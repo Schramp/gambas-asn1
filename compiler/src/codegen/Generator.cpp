@@ -585,6 +585,74 @@ bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& e
     return type_reaches(*member_def, enclosing_name, visited);
 }
 
+/// @brief The class type a member is held as, and the name a cycle walk
+///        knows it by: its type reference, or for an inline SEQUENCE/SET/
+///        CHOICE the type it is promoted to (generate_inline_types).
+/// @return {nullptr, ""} when the member is not class-typed.
+std::pair<const ast::TypeDef*, std::string> Generator::class_member_target(const ast::TypeDef& m) const {
+    if (m.is_sequence() || m.is_choice() || m.is_set()) {
+        auto promoted = promoted_member_name_.find(&m);
+        return {&m, promoted != promoted_member_name_.end()
+                        ? promoted->second
+                        : std::format("$anon:{}", static_cast<const void*>(&m))};
+    }
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+        if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set()))
+            return {direct.get(), tr->type_name};
+    }
+    return {nullptr, {}};
+}
+
+/// @brief See Generator.hpp. Each member that the walk follows sits inside
+///        its parent's storage, so a path of them back to `target` makes
+///        `target`'s size depend on itself.
+/// @param from    Class type whose members are followed.
+/// @param target  ASN.1 type name looked for.
+/// @param visited Names already followed (cycle guard).
+/// @return True when a by-value path from `from` reaches `target`.
+/// @see X.680 §3.6.55 — recursive definitions.
+bool Generator::reaches_by_value(const ast::TypeDef& from, const std::string& target,
+                                 std::set<std::string>& visited) const {
+    const bool record = from.is_sequence() || from.is_set();
+    const bool optional_indirect = backend_.optional_member_is_indirect();
+    int markers = 0;
+    for (const auto& m : from.members) {
+        if (!m) continue;
+        if (m->is_extension_marker) { ++markers; continue; }
+        // Between the two markers: an extension addition, stored like an
+        // OPTIONAL member.
+        if (record && optional_indirect && (m->is_optional() || markers % 2 == 1)) continue;
+        if (m->is_seq_of() || m->is_set_of()) continue;
+        auto [member_def, key] = class_member_target(*m);
+        if (!member_def) continue;
+        if (!record && member_def == &from) continue;  // a CHOICE's own type: boxed
+        if (key == target) return true;
+        if (!visited.insert(key).second) continue;
+        if (reaches_by_value(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
+/// @brief See Generator.hpp. A self-referential alternative (`neg Expr`
+///        inside Expr) is the direct case; `sum Sum` with
+///        `Sum ::= SEQUENCE { l Expr }` the indirect one. A path through a
+///        member already behind a pointer or in a SEQUENCE OF leaves the
+///        alternative inline: `w Wrap` with
+///        `Wrap ::= SEQUENCE { e Expr OPTIONAL }` is not boxed when the
+///        backend stores OPTIONAL members indirectly.
+/// @param m           CHOICE alternative.
+/// @param choice_name The CHOICE's ASN.1 type name.
+/// @return True when the alternative must not be stored by value.
+/// @see X.680 §3.6.55 — recursive definitions.
+bool Generator::choice_alternative_in_cycle(const ast::TypeDef& m, const std::string& choice_name) const {
+    auto [member_def, key] = class_member_target(m);
+    if (!member_def) return false;
+    if (key == choice_name) return true;
+    std::set<std::string> visited{key};
+    return reaches_by_value(*member_def, choice_name, visited);
+}
+
 // Like type_reaches, but also follows SEQUENCE OF/SET OF element types
 // (direct, or through a further TypeRef) — the shape a container-mediated
 // cycle (X.680 §3.6.55's recursive-definition case) actually takes: e.g.
@@ -2519,12 +2587,22 @@ std::vector<const ast::TypeDef*> Generator::canonical_choice_members(
     return result;
 }
 
-/// @brief Emit the `.hpp` for a CHOICE type.
+/// @brief Emit the `.hpp` #includes for a CHOICE type.
 /// @param def  ASN.1 type definition (must satisfy is_choice()).
 /// @param os   Output stream for the generated header.
+/// @return Headers to #include after the class: those of alternatives whose
+///         type reaches this CHOICE again (X.680 §3.6.55). Before the class
+///         they would #include this header back while the CHOICE is still
+///         undefined; the class only needs them declared (a boxed
+///         alternative, ChoiceAlternativeSpec::boxed) or not at all (a
+///         SEQUENCE OF wrapper, whose element storage the class names
+///         directly).
 /// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
-void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
+std::vector<std::string> Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_type_name(def.name, current_module_);
+    std::vector<std::string> post_class_includes;
+    // Only a backend whose files #include each other needs the cycle broken.
+    const bool split_cycles = backend_.needs_forward_declare_for_cyclic_alias();
 
     auto [count, ext_at] = count_members(def);
 
@@ -2550,6 +2628,16 @@ void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& o
         auto emit_wrapper_inc = [&](const std::string& cn) {
             if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
         };
+        // A class-typed alternative in a cycle: declared before the class,
+        // its header included after it.
+        auto emit_cyclic_inc = [&](const std::string& cn) {
+            if (!split_cycles || !choice_alternative_in_cycle(*m, def.name)) return false;
+            if (cn != cname) {
+                write_forward_declaration(cn, os);
+                post_class_includes.push_back(cn);
+            }
+            return true;
+        };
         if (const auto* f = contained_for(*m)) {
             // Contained alternative: inner type declared here, included by
             // the definition file (see emit_sequence_declaration).
@@ -2560,24 +2648,31 @@ void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& o
             continue;
         }
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-            emit_inc(resolved_name_for_typeref(*tr));
+            auto cn = resolved_name_for_typeref(*tr);
+            if (!emit_cyclic_inc(cn)) emit_inc(cn);
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = resolved_name_for_ref(member_synth_name(*m, cname, m->name), current_module_);
-            emit_wrapper_inc(cn2);
+            const auto& seqof_elem = m->is_seq_of()
+                ? std::get<ast::SequenceOfType>(m->body).element
+                : std::get<ast::SetOfType>(m->body).element;
+            // An element type reaching this CHOICE makes the wrapper's
+            // header #include this one back: include it after the class.
+            if (split_cycles && backend_.needs_seqof_wrapper_reference()
+                && choice_alternative_in_cycle(*seqof_elem, def.name))
+                post_class_includes.push_back(cn2);
+            else
+                emit_wrapper_inc(cn2);
             // Also include the actual element type directly when it's a
             // plain TypeRef — see the matching rationale in
             // Generator::emit_type_files's emit_member_include lambda;
             // this is the CHOICE-alternative counterpart of that logic.
-            const auto& seqof_elem = m->is_seq_of()
-                ? std::get<ast::SequenceOfType>(m->body).element
-                : std::get<ast::SetOfType>(m->body).element;
             if (auto leaf = collection_leaf_import(*seqof_elem, member_synth_name(*m, cname, m->name));
                 !leaf.empty())
                 emit_inc(leaf);
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = member_synth_name(*m, cname, m->name);
-            emit_inc(synth);
+            if (!emit_cyclic_inc(synth)) emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
@@ -2587,6 +2682,7 @@ void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& o
         }
     }
     if (count > 0) os << "\n";
+    return post_class_includes;
 }
 
 ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
@@ -2639,6 +2735,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string ref_constraints_owner;
             const sema::ContainedField* contained = nullptr;
             std::string contained_base;
+            bool boxed = false;
             ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
             ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
         };
@@ -2749,7 +2846,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                              alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
                              alt_ref_builtin_alias, alt_ref_constraints_owner,
                              contained_for(*m),
-                             contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{} });
+                             contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{},
+                             choice_alternative_in_cycle(*m, def.name) });
             rows.back().xer_encoding = m->xer_encoding;
             rows.back().ref_xer_encoding = alt_ref_xer_encoding;
             ++auto_tag_num;
@@ -2775,6 +2873,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_constraints_owner = r.ref_constraints_owner;
             alt.contained = r.contained;
             alt.contained_base = r.contained_base;
+            alt.boxed = r.boxed;
             alt.xer_encoding = r.xer_encoding;
             alt.ref_xer_encoding = r.ref_xer_encoding;
             spec.alternatives.push_back(std::move(alt));
@@ -2847,9 +2946,19 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
 ///       #includes. Same one-Spec-reused-by-both-halves shape as
 ///       emit_sequence.
 void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session) {
-    emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
+    std::ostream& decl_os = session.buffer(backend_.declaration_extension());
+    auto post_class_includes = emit_choice_declaration(def, decl_os);
     auto spec = emit_choice_definition(def, session);
     backend_.emit_choice(spec, session);
+
+    // Alternatives in a cycle: included once the class is complete, as
+    // emit_sequence does for its deferred includes.
+    if (!post_class_includes.empty()) {
+        auto& inc_os = post_ns_os_ ? *post_ns_os_ : decl_os;
+        for (const auto& inc : post_class_includes)
+            write_type_reference(inc, inc_os);
+        inc_os << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------------

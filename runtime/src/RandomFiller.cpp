@@ -479,6 +479,15 @@ bool RandomFiller::fill_sequence(Asn1Object* obj, const SequenceSpec& spec, int 
 // CHOICE
 // ---------------------------------------------------------------------------
 
+/// @brief Select and fill one random alternative of a CHOICE. Near the soft
+///        depth limit an extensible CHOICE keeps to its root alternatives;
+///        past it a leaf (non-constructed) alternative is preferred, so a
+///        recursive CHOICE whose alternatives mostly recurse still ends.
+/// @param obj   The CHOICE value to fill.
+/// @param spec  Its ChoiceSpec table.
+/// @param depth Nesting depth of this value.
+/// @return False when the chosen alternative could not be filled.
+/// @see X.680 §28 (CHOICE), §3.6.55 (recursive definitions).
 bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int depth) {
     ChoiceInterface* ch = static_cast<ChoiceInterface*>(obj);
     if (spec.count == 0) return false;
@@ -489,6 +498,16 @@ bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int dept
     if (limit == 0) limit = spec.count;
 
     int alt_idx = rand_int(0, limit - 1);
+    // Past the soft depth limit, end a recursive CHOICE (X.680 §3.6.55):
+    // an alternative is always filled, so pick a leaf one when there is any.
+    if (depth >= cfg_.max_depth) {
+        std::vector<int> leaves;
+        for (int i = 0; i < limit; ++i) {
+            const auto* d = spec.alternatives[i].type_descriptor;
+            if (d && !d->sequence_spec && !d->choice_spec && !d->seq_of_spec) leaves.push_back(i);
+        }
+        if (!leaves.empty()) alt_idx = leaves[rand_int(0, (int)leaves.size() - 1)];
+    }
     const auto& alt = spec.alternatives[alt_idx];
     ch->emplace_alt(alt);
     ch->_present = alt_idx + 1;
