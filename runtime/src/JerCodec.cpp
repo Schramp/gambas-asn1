@@ -461,16 +461,21 @@ static char peek_char(JerDecodeStream& s) {
     return s.at_end() ? '\0' : s.data()[0];
 }
 
-/// @brief True when the next value is the JSON literal `null` (RFC 8259
-///        §3), without consuming it.
+/// @brief Detects the JSON literal `null` (RFC 8259 §3) as the next value,
+///        without consuming it.
 /// @param s Decode stream, positioned before a value.
-static bool peek_null(JerDecodeStream& s) {
-    skip_ws(s);
+/// @return The octets from the cursor through the end of `null`, leading
+///         whitespace included; 0 when the next value is not `null`.
+static std::size_t peek_null(const JerDecodeStream& s) {
     std::string_view rest = s.remaining();
-    if (rest.substr(0, 4) != "null") return false;
-    if (rest.size() == 4) return true;
-    char c = rest[4];
-    return c == ',' || c == '}' || c == ']' || is_ws(static_cast<unsigned char>(c));
+    std::size_t i = 0;
+    while (i < rest.size() && is_ws(static_cast<unsigned char>(rest[i]))) ++i;
+    if (i == rest.size() || rest[i] != 'n' || rest.substr(i, 4) != "null") return 0;
+    if (rest.size() > i + 4) {
+        char c = rest[i + 4];
+        if (c != ',' && c != '}' && c != ']' && !is_ws(static_cast<unsigned char>(c))) return 0;
+    }
+    return i + 4;
 }
 
 } // namespace jer_detail
@@ -1155,8 +1160,9 @@ struct SequenceJerHandler final : IJerTypeHandler {
             }
             // X.697 §27.3.4: an absent OPTIONAL or DEFAULT member may be
             // sent as `null`, unless its type can itself be `null`.
-            if (mbr.optional && jer_detail::peek_null(s) && !jer_value_may_be_null(*mbr.type_descriptor)) {
-                s.advance(4);
+            std::size_t null_len = mbr.optional ? jer_detail::peek_null(s) : 0;
+            if (null_len && !jer_value_may_be_null(*mbr.type_descriptor)) {
+                s.advance(null_len);
                 mbr.optional_ops.set_present(dest, false);
                 seen[found] = false;
                 continue;
