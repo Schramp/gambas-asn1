@@ -2920,6 +2920,19 @@ if(WITH_JAVA_RUNTIME_TEST)
         TIMEOUT 900 LABELS "java" RESOURCE_LOCK java_runtime_build)
 endif()
 
+# Java examples: build with plain javac and diff their output against the
+# C++ examples' committed expected output.
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME java_example_contact_book
+        COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/contact-book/java test
+                ASNCPP=$<TARGET_FILE:asn1cpp>)
+    set_tests_properties(java_example_contact_book PROPERTIES TIMEOUT 300 LABELS "java")
+    add_test(NAME java_example_nested_decoder
+        COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder test
+                ASNCPP=$<TARGET_FILE:asn1cpp>)
+    set_tests_properties(java_example_nested_decoder PROPERTIES TIMEOUT 600 LABELS "java")
+endif()
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
