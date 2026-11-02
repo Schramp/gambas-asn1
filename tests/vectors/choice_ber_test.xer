@@ -1,0 +1,27 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Plain	<Plain><num>5</num></Plain>
+Plain	<Plain><flag><true/></flag></Plain>
+Plain	<Plain><text>hi</text></Plain>
+Tagged	<Tagged><a>-1</a></Tagged>
+Tagged	<Tagged><b><false/></b></Tagged>
+Tagged	<Tagged><c>0A0B</c></Tagged>
+Inner	<Inner><s>x</s></Inner>
+Nested	<Nested><inner><i>7</i></inner></Nested>
+Nested	<Nested><inner><s>ab</s></inner></Nested>
+Nested	<Nested><o>FF</o></Nested>
+Nested	<Nested><wrapped><i>300</i></wrapped></Nested>
+Own	<Own><x>1</x></Own>
+Own	<Own><y><true/></y></Own>
+HoldsOwn	<HoldsOwn><own><x>2</x></own></HoldsOwn>
+HoldsOwn	<HoldsOwn><tagged><y><false/></y></tagged></HoldsOwn>
+HoldsOwn	<HoldsOwn><n/></HoldsOwn>
+Typed	<Typed><color><green/></color></Typed>
+Typed	<Typed><byte>255</byte></Typed>
+Typed	<Typed><str>abc</str></Typed>
+Ext	<Ext><a>3</a></Ext>
+Ext	<Ext><b><true/></b></Ext>
+ExtRoot	<ExtRoot><a>4</a></ExtRoot>
+Auto	<Auto><num>9</num></Auto>
+Auto	<Auto><flag><true/></flag></Auto>
+Auto	<Auto><pick><b><false/></b></pick></Auto>
+Pick	<Pick><a>1</a></Pick>

@@ -1,0 +1,10 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Ints	<Ints></Ints>
+Ints	<Ints><INTEGER>1</INTEGER><INTEGER>-2</INTEGER><INTEGER>300</INTEGER></Ints>
+IntSet	<IntSet><INTEGER>5</INTEGER><INTEGER>-1</INTEGER><INTEGER>300</INTEGER><INTEGER>2</INTEGER></IntSet>
+Points	<Points><Point><x>1</x><y>2</y></Point><Point><x>3</x><y>4</y></Point></Points>
+Colors	<Colors><blue/><red/></Colors>
+Names	<Names><name>ab</name><name></name></Names>
+TaggedInts	<TaggedInts><INTEGER>7</INTEGER></TaggedInts>
+Holder	<Holder><ints><INTEGER>1</INTEGER></ints><set><OCTET_STRING>FF</OCTET_STRING><OCTET_STRING>01</OCTET_STRING><OCTET_STRING>0100</OCTET_STRING></set><pts><Point><x>0</x><y>0</y></Point></pts><named></named><tagged><INTEGER>9</INTEGER><INTEGER>8</INTEGER></tagged><nested><SEQUENCE_OF><INTEGER>1</INTEGER></SEQUENCE_OF><SEQUENCE_OF></SEQUENCE_OF></nested></Holder>
+Holder	<Holder><ints></ints><set></set><pts></pts><opt><BOOLEAN><true/></BOOLEAN><BOOLEAN><false/></BOOLEAN></opt><named><INTEGER>4</INTEGER></named><tagged></tagged><nested></nested></Holder>

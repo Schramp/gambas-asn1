@@ -1,0 +1,7 @@
+-- Java BER leg for a recursive CHOICE (X.680 §3.6.55): an alternative of
+-- the CHOICE's own type, and one that is a SEQUENCE OF it.
+RecursionChoiceBerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Expr ::= CHOICE { num INTEGER, neg Expr, sum SEQUENCE OF Expr }
+
+END

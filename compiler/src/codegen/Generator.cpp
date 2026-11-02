@@ -54,16 +54,9 @@ static void write_if_changed(const fs::path& path, const std::string& content) {
 
 // ---------------------------------------------------------------------------
 
-// Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
-// 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
-// the filename fits on any POSIX filesystem.
+// See bounded_file_stem (Generator.hpp).
 static std::string filename_for(const std::string& cname) {
-    if (cname.size() <= 240) return cname;
-    uint32_t h = 2166136261u;
-    for (unsigned char c : cname) { h ^= c; h *= 16777619u; }
-    char suffix[10];
-    snprintf(suffix, sizeof(suffix), "_%08x", h);
-    return cname.substr(0, 220) + suffix;
+    return bounded_file_stem(cname);
 }
 
 /// @brief Whether a type is an ENUMERATED written inline with its own
@@ -2428,7 +2421,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
         row.contained = contained_for(m);
-        if (row.contained) row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
+        if (row.contained) {
+            row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
+            row.contained_inner = contained_inner_native(*row.contained);
+        }
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -2761,6 +2757,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             const sema::ContainedField* contained = nullptr;
             std::string contained_base;
             bool boxed = false;
+            SeqOfKind seq_of_kind = SeqOfKind::None;
+            ElemShape elem_shape;
             ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
             ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
         };
@@ -2873,6 +2871,17 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                              contained_for(*m),
                              contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{},
                              choice_alternative_in_cycle(*m, def.name) });
+            // An inline collection alternative: its kind and element shape,
+            // as a SEQUENCE member's row carries them.
+            if (m->is_seq_of()) {
+                rows.back().seq_of_kind = SeqOfKind::SeqOf;
+                rows.back().elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m->body).element,
+                                                          member_synth_name(*m, current_type_, m->name), true);
+            } else if (m->is_set_of()) {
+                rows.back().seq_of_kind = SeqOfKind::SetOf;
+                rows.back().elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m->body).element,
+                                                          member_synth_name(*m, current_type_, m->name), true);
+            }
             rows.back().xer_encoding = m->xer_encoding;
             rows.back().ref_xer_encoding = alt_ref_xer_encoding;
             ++auto_tag_num;
@@ -2898,7 +2907,10 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_constraints_owner = r.ref_constraints_owner;
             alt.contained = r.contained;
             alt.contained_base = r.contained_base;
+            if (r.contained) alt.contained_inner = contained_inner_native(*r.contained);
             alt.boxed = r.boxed;
+            alt.seq_of_kind = r.seq_of_kind;
+            alt.elem_shape = r.elem_shape;
             alt.xer_encoding = r.xer_encoding;
             alt.ref_xer_encoding = r.ref_xer_encoding;
             spec.alternatives.push_back(std::move(alt));
@@ -3421,6 +3433,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
+    spec.elem_tdref = type_descriptor_ref_spec_for(elem_node);
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.

@@ -1,0 +1,13 @@
+-- Java BER leg for recursive types (X.680 §3.6.55): self-reference
+-- through OPTIONAL, SEQUENCE OF and a mutual pair. A value's depth
+-- is the input's to choose, so decode stops past 256 nesting levels.
+RecursionBerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+List ::= SEQUENCE { v INTEGER, next List OPTIONAL }
+
+Tree ::= SEQUENCE { label IA5String, kids SEQUENCE OF Tree }
+
+A ::= SEQUENCE { b B }
+B ::= SEQUENCE { n INTEGER, a A OPTIONAL }
+
+END

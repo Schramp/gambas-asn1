@@ -1,0 +1,14 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Point	<Point><x>1</x><y>-2</y></Point>
+Plain	<Plain><num>5</num><flag><true/></flag><text>hi</text><data>0A0B</data><nul/></Plain>
+Opt	<Opt><b><false/></b></Opt>
+Opt	<Opt><a>7</a><b><true/></b></Opt>
+Opt	<Opt><b><true/></b><c>FF</c></Opt>
+Opt	<Opt><a>-300</a><b><false/></b><c></c></Opt>
+Tagged	<Tagged><imp>3</imp><exp><true/></exp></Tagged>
+Tagged	<Tagged><imp>-1</imp><exp><false/></exp><opt>01</opt><optx>256</optx></Tagged>
+Tagged	<Tagged><imp>0</imp><exp><true/></exp><optx>9</optx></Tagged>
+Refs	<Refs><color><green/></color><byte>255</byte><tbool><true/></tbool><texp>13</texp><point><x>0</x><y>0</y></point><pick><i>1</i></pick><own><x>2</x></own><tpick><s>ab</s></tpick></Refs>
+Refs	<Refs><color><blue/></color><byte>0</byte><tbool><false/></tbool><texp>-5</texp><point><x>3</x><y>4</y></point><pick><s>z</s></pick><own><y><true/></y></own><tpick><i>9</i></tpick><opick><s>q</s></opick><opoint><x>5</x><y>6</y></opoint></Refs>
+Refs	<Refs><color><red/></color><byte>1</byte><tbool><true/></tbool><texp>0</texp><point><x>1</x><y>1</y></point><pick><i>2</i></pick><own><x>3</x></own><tpick><i>4</i></tpick><opick><i>8</i></opick></Refs>
+Outer	<Outer><inner><num>1</num><flag><false/></flag><text></text><data></data><nul/></inner><tail>2</tail></Outer>

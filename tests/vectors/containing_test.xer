@@ -1,0 +1,17 @@
+# Contained values (X.682 §11): the outer XER carries each contained field
+# as hex, which is the DER of an Inner/Envelope row encoded by asn1c first.
+Inner	<Inner><id>5</id></Inner>
+Inner	<Inner><id>-300</id><name>abc</name></Inner>
+Envelope	<Envelope><depth>1</depth></Envelope>
+# kind plain: viaConfig is Inner + zero padding (decoder zero_padding).
+Holder	<Holder><kind><plain/></kind><viaConstraint>3003800105</viaConstraint><viaAlias>30098002FED48103616263</viaAlias><viaConfig>30038001050000</viaConfig><raw>DEADBEEF</raw><viaSized>3003800105</viaSized></Holder>
+# kind scrambled: viaConfig is not decoded; viaConstraint is not BER.
+Holder	<Holder><kind><scrambled/></kind><viaConstraint>FF</viaConstraint><viaAlias>3003800105</viaAlias><viaConfig>010203</viaConfig><raw></raw><viaSized>30098002FED48103616263</viaSized></Holder>
+Pick	<Pick><inner>3003800105</inner></Pick>
+Pick	<Pick><other>7</other></Pick>
+Envelope	<Envelope><depth>0</depth><nested>3003800101</nested></Envelope>
+Envelope	<Envelope><depth>2</depth></Envelope>
+# kind plain with PER contents (X.682 §11.4: contents follow the outer
+# encoding rules): viaConstraint and viaAlias hold asn1c's UPER of the
+# Inner rows above; the sidecar fields viaConfig and viaSized stay BER.
+Holder	<Holder><kind><plain/></kind><viaConstraint>008280</viaConstraint><viaAlias>817F6A01B0B13180</viaAlias><viaConfig>30038001050000</viaConfig><raw>DEADBEEF</raw><viaSized>3003800105</viaSized></Holder>

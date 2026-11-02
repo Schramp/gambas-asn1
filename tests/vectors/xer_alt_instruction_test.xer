@@ -1,0 +1,3 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Holder	<Holder><pick><blob>3q2+7w==</blob></pick><picks></picks></Holder>
+Holder	<Holder><pick><text>a&amp;b<nul/>c</text></pick><picks><inline>AQI=</inline><plain>0102</plain><num>5</num><blob>/w==</blob></picks></Holder>

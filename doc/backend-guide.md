@@ -2,7 +2,7 @@
 
 How to add a new target language to the compiler: a codegen backend plus its runtime.
 
-This guide is language-neutral. It is distilled from the history of the existing backends, mainly the second one, whose port went through several redesigns before reaching its current shape. Commit hashes in parentheses point at the change where a lesson was learned. `git show <hash>` gives the full reasoning.
+This guide is language-neutral. It is distilled from the history of the existing backends: the second one, whose port went through several redesigns before reaching its current shape, and the third, which followed this guide and fed back how to slice the work (§11). Commit hashes in parentheses point at the change where a lesson was learned. `git show <hash>` gives the full reasoning; `#N` is a pull request or issue of the project.
 
 The reference implementation is the C++ backend (`CppBackend`, `runtime/`). The second backend (`RustBackend`, `rust-runtime/wire/`) is the reference for a language without `offsetof` and without inheritance-based dispatch. Every rule below holds for both.
 
@@ -52,6 +52,8 @@ Rules for the boundary:
 - **File identity belongs to the backend.** It comes through `TypeOutputSession`, `declaration_extension()` and `definition_extension()`. A language without a header/body split returns the same extension for both, and both halves go to one file (`2c95318`).
 - **Cross-type references go through the backend** (`emit_type_reference`, `emit_forward_declaration`, `232cc23`). Use the language's import or include form. `finalize_output` writes any per-output manifest the language needs, such as a module list.
 
+**C++ text still in `Generator` is a leftover of the first port, not part of the contract.** A few decisions in `Generator` still build C++ syntax or assume C++ shapes (for example `cpp_type_descriptor_ref_for`, which formats `&asn1::asn_DEF_X` and is tracked in #239). They remain only because moving them needs state that `Backend` has no access to yet. A new backend never copies, calls or relies on one of them: it asks for the typed decision behind it, and where that decision does not exist yet, it is added to `Generator` as a backend-agnostic field. Where possible, each leftover moves into `CppBackend` with the two-step pattern below.
+
 How the first port moved the interface: it first extracted naming into `Backend` with C++ as the only implementation, and checked that by a byte-identical regeneration of the full test corpus (`eaec58f`). Then each construct moved in two steps, first into `CppBackend`, then implemented in the new backend: ENUMERATED, INTEGER, builtin alias, SEQUENCE OF, SEQUENCE/SET, CHOICE, top-level dispatch. If you need to move more C++ text out of `Generator`, follow the same two-step pattern and keep the C++ output byte-identical.
 
 ---
@@ -100,6 +102,15 @@ A flat record: `flags`, `range_bits`, `int_kind`, signed and unsigned bounds, SI
 - **Precompute every schema-derived fact in the tables** (`b1319a3`): counts, bit widths, sorted tag lists, alphabet maps. A codec that recounts at runtime is a missing table field.
 
 ### How the existing backends render a member row
+
+The row for member `text` of this type (`tests/asn1/jer_escape_test.asn1`, `AUTOMATIC TAGS`):
+
+```asn1
+JeRec ::= SEQUENCE {
+    text UTF8String,                          -- [0] IMPLICIT, mandatory
+    alt  CHOICE { name UTF8String, n INTEGER } -- [1], an inline CHOICE
+}
+```
 
 ```
 C++:   { "text", asn1::Tag{asn1::TagClass::Context, 0, false}, false, false,
@@ -171,12 +182,45 @@ Make each decision once, document it in the backend's header, and test it.
 | | value types (structs) | an optional wrapper. For large members, box them: a struct of inline optionals measured 22× the C++ size (`4ef2183`). |
 | Recursion | value types | box the members that close a real cycle, found by cycle detection in `Generator` (`8ca1ba0`, `a5aa19c`) |
 | | reference types only | nothing extra for storage, but the decode depth limit still applies |
-| INTEGER storage | 64-bit signed and unsigned types | `IntStorageKind::S64` / `U64` map to them |
-| | no unsigned 64-bit type | map `U64` to the arbitrary-precision type, or to signed storage with unsigned compare and convert helpers. Decide in `native_int_type` and nowhere else. |
+| INTEGER storage | — | one ASN.1 type, several storages: see [INTEGER storage kinds](#integer-storage-kinds) below |
 | Collections | reified generics | a typed list per SEQUENCE OF |
 | | type erasure | a typed list for the API, but the walker reaches elements through the SeqOf accessor, never through runtime element-type tests |
 | Decode target | — | decode **in place** into a default-constructed value. Grow collections in place and decode into the new slot; don't build a temporary and copy it in (`d167b3e`). |
+| Type alias (`A ::= B`) | type aliases | `A` names `B`'s type, and every table is `B`'s |
+| | no type aliases, but subclassing | an empty subclass of `B` named `A`; generated classes must not be sealed or final |
 | Default construction | — | every type needs a default value. For ENUMERATED and CHOICE, make the default explicit (`e8d1d72`). |
+
+### INTEGER storage kinds
+
+One ASN.1 type, INTEGER (X.680 §19), has several storage implementations. The value range picks one, so a schema value never silently overflows its storage.
+
+**The choice.** `Generator::classify_integer_storage` decides an `IntStorageKind` from the effective value range (X.680 §51.4), once per type, member or element:
+
+| Kind | Picked when | Runtime wrapper (C++ / second backend) |
+|------|-------------|---------------------------------------|
+| `S64` | a range inside the signed 64-bit range; unconstrained, unless `--integer-type` says otherwise | `Integer` |
+| `U64` | lower bound ≥ 0 and the upper bound is `MAX` or above 2^63 − 1 (for example `INTEGER (0..MAX)`, `INTEGER (0..18446744073709551615)`) | `UInteger` |
+| `I128` | reserved: `--integer-type=int128` warns and falls back to `S64` | `BigInteger` (stub) |
+| `ARBITRARY` | reserved for unconstrained big values (keys): `--integer-type=arbitrary` warns and falls back to `S64` | `ArbitraryInteger` (stub in C++) |
+
+The kind reaches a backend as a typed field (`IntegerSpec::storage_kind`, `BuiltinAliasSpec`, `MemberTypeDescriptorSpec`), never as text to match (§2). It reaches the tables as `Constraints::int_kind`: an unsigned kind stores its bounds in `lower_u64`/`upper_u64`, read as unsigned, a signed one in `lower_bound`/`upper_bound`. The canonical dump (Appendix A) prints the bounds of the kind in use, so two runtimes with different native types still dump alike, and the table diff checks that the kind and bounds agree.
+
+**Encoding and decoding per kind.** The wire never depends on the storage: a value has one encoding.
+- BER: the minimal two's-complement contents (X.690 §8.3.2). An unsigned value from 2^63 up takes nine octets, the first one 0x00. Decoding into `S64` fails for a value outside the signed 64-bit range; into `U64` for a negative value or one beyond 2^64 − 1.
+- PER: the range offset is computed in the kind's own arithmetic (X.691 §13, §11.5); a 64-bit range is a 64-bit field (§11.5.6). An unsigned value outside an extensible root uses the unconstrained form, nine octets from 2^63 up (§11.8.3).
+- XER and JER: the decimal value, printed unsigned for an unsigned kind.
+
+**Out of range.** A value outside a non-extensible range has no PER encoding, so the PER encode fails, and a PER field beyond the range fails the decode. Under the other codecs the value has an encoding; the C++ runtime records it as a constraint violation (`DBG_VALIDATE_TRACE` prints it). Follow the reference runtime's behaviour per codec rather than inventing a stricter one.
+
+**A language without an unsigned 64-bit type.** Decide once, in `native_int_type`, and nowhere else:
+
+| Option | API ergonomics | Performance | Table identity |
+|--------|---------------|-------------|----------------|
+| arbitrary-precision storage for `U64` | natural values, no sign surprises | an allocation per value, slower arithmetic | unchanged: the kind is still `U64` |
+| signed 64-bit storage read as unsigned, with unsigned compare, divide and convert helpers | users must call the helpers; a plain print shows negative numbers from 2^63 up | as fast as `S64` | unchanged |
+| a dedicated wrapper around signed storage | the wrapper's methods hide the helpers | as fast as `S64` | unchanged |
+
+Whichever is chosen, the dumped `int_kind` and the unsigned bounds must still match the reference runtime, and the codecs must use unsigned comparisons for range checks and offsets. The second option with a wrapper (the third row) keeps both speed and a safe API.
 
 Performance work comes after correctness, and it is driven by measurement:
 - Profile allocations first. In the second port, the C++ vs. other-language gap was dominated by allocation, not by dispatch (`1a3e858`, `9a625b5`).
@@ -209,7 +253,7 @@ Each item below was a real bug in an earlier port. Each needs a test in the new 
 Generated names are API. Two distinct ASN.1 names must never map to one generated name, and an API name should match the ASN.1 name wherever the language allows.
 
 - **Transliterate only.** Replace `-` with `_` and change nothing else. Never recase: `field-one` and `fieldOne` would both become `fieldOne`. Recasing was added in the second port and reverted (`9f8fd75` → `f87fe41`, `2b3a864`). Suppress the style lint instead.
-- **Escape keywords with a trailing `_`.** This covers reserved words, contextual keywords and the language's literal names. It cannot collide with another schema name: an ASN.1 identifier never ends in a hyphen and never contains `--` (X.680 §11.2, §11.3). So a name ending in `_` cannot come from the schema.
+- **Escape keywords with a trailing `_`.** This covers reserved words, contextual keywords and the language's literal names. It cannot collide with another schema name: an ASN.1 name never ends in a hyphen and never contains `--` (X.680 (02/2021) §12.2.1, §12.3). So a name ending in `_` cannot come from the schema.
   - Use a raw-identifier syntax only where it accepts every word. The second port hit words its raw syntax refuses (`e3a45cc`), and raw prefixes leaked into compound names (`e7e72cc`).
 - **Generated code fully qualifies every host standard-library name.** A schema type may be named `Option`, `Integer`, `String`, `Object` or `Error`, and it will shadow the host name inside the generated package (`b445ab7`, `cf8d2a3`, `86b2872`).
 - **Generated local variables use a prefix that ASN.1 cannot produce,** such as `__`. A local named like an enum item can capture or shadow it (`e3a45cc`).
@@ -233,52 +277,233 @@ Generated names are API. Two distinct ASN.1 names must never map to one generate
 
 ---
 
-## 9. Construct order and milestones
+## 9. Porting checklist
 
 Build BER first, then XER, JER and PER. Each later codec is a new walker over the same tables, with no codegen change.
 
-### BER primitives, in order
+Work the list top to bottom. Every `- [ ]` item is one issue and one pull request of about 200–500 changed lines. Its bold title is the issue title; its sub-items are the issue body, starting with **Ref:**, the standard clauses the item implements. An item marked **⚠** exists because an earlier port missed it; the note says what went wrong. §11 has the evidence behind the order.
 
-| Step | Construct | Why at this point |
-|------|-----------|-------------------|
-| 1 | BOOLEAN | smallest content codec; exercises tag and length end to end |
-| 2 | NULL | zero-length content |
-| 3 | INTEGER, 64-bit storage | two's-complement minimal encoding, sign extension |
-| 4 | ENUMERATED | reuses INTEGER content; adds the EnumSpec table |
-| 5 | OCTET STRING | raw content; constructed (segmented) form on decode |
-| 6 | BIT STRING | unused-bits byte; named bits |
-| 7 | 8-bit restricted strings: UTF8, IA5, Printable, Numeric, Visible, Teletex, Videotex, Graphic, General, ObjectDescriptor | one codec, one wrapper type per tag |
-| 8 | Wide strings: BMPString, UniversalString | 2- and 4-byte code units |
-| 9 | OBJECT IDENTIFIER | base-128 arcs, with the first two arcs combined |
-| 10 | RELATIVE-OID | reuses the arc codec |
-| 11 | UTCTime, GeneralizedTime | string content with a time-type tag |
-| 12 | REAL | X.690 §8.5 binary, decimal and special values. Share vectors with the existing runtimes. |
-| 13 | INTEGER with unsigned or arbitrary storage | the storage decision of §5 |
-| 14 | ANY / open type | raw TLV kept as bytes |
+All references are to the 02/2021 editions: X.680, X.682, X.690, X.691 and X.693 in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/` (Word 97 files; `strings -n 1 X6901.doc` gives searchable text with each clause number at the start of its line; a larger `-n` drops short runs such as single clause lines), and X.697 as a separate copy. "DER" means X.690 §10–§11, "BASIC-XER" X.693 §8.
 
-Each step has four parts:
-- a runtime unit test with shared vectors;
-- codegen for the type assignment (`emit_builtin_alias`, `emit_integer`, `emit_enumerated`);
-- a table-diff target;
+**Every BER primitive and constructed item** delivers four parts, so they are not repeated below:
+- runtime codec plus a unit test using the shared vectors;
+- codegen for the construct (`emit_builtin_alias`, `emit_integer`, `emit_enumerated`, `emit_sequence`, …);
+- a table-diff target whose schema carries every `Constraints` field the construct can have;
 - a test leg mirroring the C++ test.
 
-### Constructed types, in order
-1. CHOICE: alternative dispatch through the sorted `ber_tags`.
-2. SEQUENCE: member walk, OPTIONAL.
-3. SEQUENCE OF / SET OF.
-4. SET: its own tag, canonical order, any-order decode.
-5. The tagging matrix: IMPLICIT / EXPLICIT / AUTOMATIC, at type and member level.
-6. DEFAULT.
-7. Extensibility: extension members, groups, unknown alternatives.
-8. Recursive types.
-9. Contained values (X.682 §11).
+**Every text-codec item** (XER, JER) delivers the runtime walker code, unit tests, and a leg against the asn1c column of the shared vectors.
 
-### Milestone gates
-1. **First roundtrip:** a SEQUENCE of plain INTEGERs encodes and decodes (`3d86c2d`).
-2. **Table diff clean** against C++ on every target in `validation-tools/xval_sweep/targets.txt`.
-3. **xval leg:** the language joins `xval_sweep.py`. Random records cross-encode byte-identically against C++, the second backend, and asn1c.
-4. **Real-schema build probe:** the full ETSI LI PS-PDU schema compiles and round-trips. The second port's first probe showed 232 compile errors (`a4ed52c`). Expect the same kind of number and run the probe early.
-5. XER byte-identical to asn1c, including whitespace; then JER; then PER.
+**Standing items**, filed whenever they come up and not tied to a step:
+- [ ] **Fix in the reference runtime: <bug>.** A C++ or second-backend bug found while porting gets its own issue and is fixed on the main branch first. The port follows the reference behaviour until then. Expect several of these (§11).
+  - Ref: the clause the reference runtime gets wrong; the standard wins over every implementation.
+- [ ] **Report asn1c deviation: <shape>.** Upstream, low priority. asn1c is not patched; tests get an explicit allowance.
+  - Ref: the clause asn1c departs from.
+
+### Foundations
+
+- [ ] **F1 Ground-truth vectors for every planned codec**
+  - Ref: DER (X.690 §10, §11); BASIC-XER (X.693 §8); JER (X.697 §20–§41); UPER (X.691 §11–§32).
+  - Every shared `.vectors` file has the DER column plus asn1c's text for every codec the port will cover (§10). Add any missing column in this one mechanical change.
+  - Done when: the regenerated files differ only in the new columns.
+  - ⚠ The third port added the XER and JER columns inside the first XER and JER code steps: about 100 regenerated lines mixed into each code diff.
+- [ ] **F2 Runtime skeleton: I/O base, tags, primitive tables, member-reference type, table dump**
+  - Ref: tags and tag classes X.680 §8; identifier, length and contents octets X.690 §8.1.2–§8.1.4.
+  - Byte sink/source, decode and encode errors (§4); `Tag`/`Tagging`; `TypeDescriptor`, `MemberDescriptor`, `Constraints`; the member-reference sum type; the PDU marker; the dumper (Appendix A).
+  - Done when: the runtime's unit tests run under ctest and the dumper prints a hand-written table.
+  - ⚠ Leave `SequenceSpec`, `ChoiceSpec`, `SeqOfSpec` and `EnumSpec` to the items that use them. The third port's skeleton carried every spec record and came to ~1,980 lines.
+- [ ] **F3 Backend skeleton: target flag, naming, one file per type**
+  - Ref: type references and identifiers X.680 §12.2.1, §12.3; reserved words X.680 §12.38.
+  - Target and package flags, naming primitives (§7), cases added to `test_backend_naming`. `emit_*` keep the throwing default.
+- [ ] **F4 Test plumbing: legs, table diff, CI**
+  - Ref: none; project infrastructure (§10).
+  - Leg harness under `tests/<lang>/`, the language in `table_diff.py` with its own target list, a CI job with the language toolchain.
+  - Done when: an empty leg and an empty table-diff run pass in CI.
+
+### BER primitives
+
+- [ ] **B1 BOOLEAN and NULL**
+  - Ref: X.690 §8.2, §8.8; DER §11.1; X.680 §18, §24.
+  - Smallest content codec; zero-length content. The first leg and the first table-diff target.
+- [ ] **B2 INTEGER (64-bit storage) and ENUMERATED**
+  - Ref: X.690 §8.3, §8.4; X.680 §19, §20; value range X.680 §51.4.
+  - Minimal two's-complement content; `EnumSpec` arrives here. Storage: [INTEGER storage kinds](#integer-storage-kinds).
+- [ ] **B3 OCTET STRING and BIT STRING**
+  - Ref: X.690 §8.6, §8.7; DER §10.2, §11.2; X.680 §22, §23; size X.680 §51.5.
+  - Unused-bits byte (X.690 §8.6.2.2), named bits; constructed form on decode.
+- [ ] **B4 Restricted character strings: 8-bit and wide**
+  - Ref: X.690 §8.23; X.680 §39–§41; permitted alphabet X.680 §51.7.
+  - One codec and one wrapper per tag; 2- and 4-byte code units for BMPString/UniversalString.
+- [ ] **B5 OBJECT IDENTIFIER and RELATIVE-OID**
+  - Ref: X.690 §8.19, §8.20; X.680 §32, §33.
+  - Base-128 arcs, the first two arcs combined; RELATIVE-OID reuses the arc codec.
+- [ ] **B6 UTCTime and GeneralizedTime**
+  - Ref: X.690 §8.25; DER §11.7, §11.8; X.680 §46, §47.
+  - String content under a time-type tag.
+- [ ] **B7 REAL**
+  - Ref: X.690 §8.5; DER §11.3; X.680 §21.
+  - Binary, decimal and special values; vectors shared with the existing runtimes.
+- [ ] **B8 REAL constraints in the tables**
+  - Ref: the associated type X.680 §21.5; inner subtyping X.680 §51.8; value range X.680 §51.4.
+  - Range, open bounds and base-10-only (`WITH COMPONENTS { ..., base (10) }`) on type assignments and members; table-diff targets for REAL range, base and DEFAULT schemas.
+  - Done when: the table diff is clean on those targets.
+  - ⚠ BER and XER do not read these fields, so every BER and XER leg passed without them. The third backend emitted none, and the gap showed only in JER, where base-10-only picks the text form (X.697 §23). A table field no codec reads yet is checked only by the table diff.
+- [ ] **B9 INTEGER with unsigned or arbitrary storage, and ANY**
+  - Ref: X.690 §8.3, §8.15; X.680 §19.
+  - The storage decision of [INTEGER storage kinds](#integer-storage-kinds); an open type's TLV kept as bytes.
+
+### BER constructed types
+
+- [ ] **C1 CHOICE**
+  - Ref: X.690 §8.13; X.680 §29; distinct alternative tags X.680 §29.3, canonical tag order X.680 §8.6.
+  - `ChoiceSpec`; alternative dispatch through the sorted `ber_tags`.
+- [ ] **C2 SEQUENCE**
+  - Ref: X.690 §8.9; X.680 §25; OPTIONAL X.680 §25.11.
+  - `SequenceSpec`; member walk. First round trip of a SEQUENCE of INTEGERs (`3d86c2d`).
+- [ ] **C3 Real-schema compile probe**
+  - Ref: none; the full ETSI LI PS-PDU schema exercises X.680 broadly.
+  - Generate and compile the schema; constructs not done yet become `Unsupported` stubs. File each compile gap as its own issue.
+  - ⚠ The second port's first probe showed 232 compile errors (`a4ed52c`). The third ran it only after all BER constructs and still found three gaps: empty SEQUENCE, tagged contained types, over-long names (#991).
+- [ ] **C4 SEQUENCE OF / SET OF**
+  - Ref: X.690 §8.10, §8.12; DER §11.6 (SET OF order); X.680 §26, §28.
+  - `SeqOfSpec`; element constraints.
+- [ ] **C5 Inline member constraints**
+  - Ref: X.680 §49 (constrained types), §51.5 (size), §51.8 (inner subtyping).
+  - Constraints written on a member or an element rather than on a named type, in the tables and the table diff.
+- [ ] **C6 SET**
+  - Ref: X.690 §8.11; DER §10.3; X.680 §27; canonical tag order X.680 §8.6.
+  - Universal tag 17; canonical order on encode, any order on decode.
+- [ ] **C7 Tagging matrix**
+  - Ref: X.680 §31.2 (explicit when §31.2.7 holds; no IMPLICIT on an untagged CHOICE, §31.2.9); module tag default X.680 §13.2, §13.3; automatic tagging X.680 §25.3, §25.10, §29.2; X.690 §8.14.
+  - IMPLICIT / EXPLICIT / AUTOMATIC at type and member level (§6).
+- [ ] **C8 DEFAULT**
+  - Ref: X.680 §25.12; DER §11.5.
+  - Fill on decode, skip on DER encode.
+- [ ] **C9 Extensibility**
+  - Ref: the extension marker X.680 §52; extension additions and groups X.680 §25.13, §25.15; EXTENSIBILITY IMPLIED X.680 §13.4.
+  - Extension members, groups, unknown alternatives and enumerations.
+- [ ] **C10 Recursive types**
+  - Ref: X.680 §3.8.61 (recursive definition: finite values are the user's responsibility).
+  - Cycle handling (§5) and the 256-level decode limit.
+- [ ] **C11 Contained values: status model, registry and decoders**
+  - Ref: contents constraints X.682 §11.
+  - Against hand-written tables. Unit-test every status transition of the reference runtime: setting raw bytes drops the inner value and resets the status; a field already decoded from its inline text form is kept by the post-decode pass.
+  - ⚠ The third runtime copied only what BER showed and missed the skip of an inline-decoded field. The JER `raw` form then decoded such a value a second time from its bytes and lost it.
+- [ ] **C12 Contained values: container-config codegen**
+  - Ref: X.682 §11; the container config is a project extension for fields the schema leaves as plain OCTET STRING.
+  - The rows from `--container-config` and their leg.
+- [ ] **C13 Contained values: per-call options**
+  - Ref: X.682 §11.
+  - Decode off, registry override.
+- [ ] **C14 BER cross-validation leg**
+  - Ref: X.690 §8 (BER decode), §10–§11 (DER encode).
+  - The language joins `xval_sweep.py`: random records round-trip byte for byte against C++, the second backend and asn1c.
+- [ ] **C15 BER fuzz smoke test**
+  - Ref: X.690 §8.1 (structure every decoder must check).
+  - Corrupted BER gives errors, never aborts.
+- [ ] **C16 Real-schema round trip**
+  - Ref: none; ETSI TS 102 232-1 (`stds/`) defines the schema.
+  - The full ETSI LI PS-PDU schema compiles with no stubs and round-trips.
+
+### XER (the template for every text codec)
+
+BASIC-XER writes the XML value notation of X.680 (X.693 §8.3.1), so each item cites the X.693 clause and the X.680 clause of the type's `XML…Value` production.
+
+- [ ] **X1 I/O layer + BOOLEAN, NULL, INTEGER, ENUMERATED + first leg**
+  - Ref: X.693 §8.1–§8.3; X.680 §18, §19, §20, §24 (`XMLBooleanValue`, `XMLIntegerValue`, `XMLEnumeratedValue`, `XMLNullValue`).
+  - Settle the comparison rules here: byte-for-byte against asn1c's XER, and an explicit allowance for each known asn1c deviation. Later items only add rows.
+  - ⚠ An I/O layer has nothing to test on its own, so it pulls in every primitive unless the item stops at these four. The third port's XER and JER primitive steps came to ~1,150 and ~1,360 lines.
+- [ ] **X2 Strings and escaping, wide strings included**
+  - Ref: X.680 §41.9 (`XMLRestrictedCharacterStringValue`), §12.15 (XML character string item).
+- [ ] **X3 Hex kinds: OCTET STRING, ANY, the BIT STRING forms**
+  - Ref: X.680 §22.9 (`XMLBitStringValue`), §23.3 (`XMLOctetStringValue`); open type X.693 §8.5.
+- [ ] **X4 OBJECT IDENTIFIER, RELATIVE-OID, time types**
+  - Ref: X.680 §32, §33, §46, §47.
+- [ ] **X5 REAL text**
+  - Ref: X.680 §21.6 (`XMLRealValue`), §12.34, §12.35 (NaN and infinity items).
+- [ ] **X6 Constructed walker: SEQUENCE/SET, CHOICE, SEQUENCE OF**
+  - Ref: X.680 §25–§29 (`XMLSequenceValue` … `XMLChoiceValue`); decoding unknown extensions X.693 §8.6.
+  - One switch; its legs exercise every primitive already done.
+- [ ] **X7 Encoding instructions on rows**
+  - Ref: BASE64 X.693 §21; XML value lists for BOOLEAN and ENUMERATED elements X.680 §26.5–§26.7. The `utf8` instruction is a project extension, not in X.693.
+- [ ] **X8 Contained values, row form**
+  - Ref: X.682 §11; the inline form is the inner value's own XML value in place of the hex.
+  - Hex, inline, inline-raw (an extension).
+- [ ] **X9 Contained values, per-call override**
+  - Ref: X.682 §11.
+  - ⚠ The third port had to split X8 and X9 after the fact (#1003, #1004).
+- [ ] **X10 XER cross-validation leg**
+  - Ref: X.693 §8.
+  - Rows against C++ and asn1c, plus the round-trip and cross-decode matrix.
+
+### JER
+
+Same items as XER, J1–J10, with these references and differences:
+- [ ] **J1** I/O layer + BOOLEAN, NULL, INTEGER, ENUMERATED.
+  - Ref: X.697 §20, §21, §22, §26.
+  - Compare as parsed JSON, because asn1c indents its JER. Known asn1c deviations to allow for: extension-group members nested in an `extN` object (X.697 §27.3.1 keeps them flat); some absent DEFAULT members left out; wide strings not escaped (X.697 §38.1).
+- [ ] **J2** strings. Ref: X.697 §38; JSON string escapes RFC 8259 §7.
+- [ ] **J3** hex kinds. Ref: X.697 §24 (bare hex for a fixed non-extensible SIZE, §24.2, else `{"value","length"}`, §24.3), §25, §41.
+- [ ] **J4** OID, RELATIVE-OID, time types. Ref: X.697 §32, §33, §40.
+- [ ] **J5** REAL text.
+  - Ref: X.697 §23 (§23.1.2 number, §23.2 special values).
+  - Needs the shortest round-trip number format. The third port checked it against the reference runtime on 200,000 doubles; the host language's own float-to-text was not shortest.
+- [ ] **J6** constructed walker. Ref: X.697 §27 (any member order §27.3.3), §28, §29, §30, §31 (one-member object §31.3).
+- [ ] **J7** REAL base-10 forms.
+  - Ref: X.697 §23.1.4 (bare number under base-10-only), §23.4 (`{"base10Value":…}` otherwise); relies on B8.
+  - JER encoding instructions (X.697 §14–§19) are implemented by no runtime yet.
+- [ ] **J8–J9** contained values. Ref: X.682 §11; the inline form is `{"containing":…}` (X.697 §25.4).
+- [ ] **J10** JER cross-validation leg. Ref: X.697 §20–§41.
+- Open across all runtimes: decoding `null` for an absent OPTIONAL or DEFAULT member (X.697 §27.3.4, #1013).
+
+### PER (unaligned)
+
+The second port did PER after BER and XER, construct by construct (`6172168` … `0064728`). Most of its X.691 conformance came later, as fixes in both runtimes. The list puts each of those clauses into the item that owns it. Ground truth is asn1c's `-ouper` output; trace PER problems on the RRC schema, which is PER-native, and use ETSI LI only as a smoke test.
+
+- [ ] **P1 Bit-level reader/writer + BOOLEAN and NULL + first leg**
+  - Ref: X.691 §11.1, §11.3–§11.8 (whole-number encodings), §12, §18.
+  - Bit fields, octet-aligned fields, and each whole-number encoding unit-tested on its own before any type uses them.
+- [ ] **P2 Length determinants**
+  - Ref: X.691 §11.9; fragmentation §11.9.3.8.
+  - Constrained, normally small, unconstrained, and fragments of 16K items or more.
+  - ⚠ Fragmentation was added a month after the rest, in both runtimes (`b90bb84`).
+- [ ] **P3 INTEGER**
+  - Ref: X.691 §13; semi-constrained §13.2.3; constrained whole number §11.5, wide ranges §11.5.6.
+  - Single value, constrained, semi-constrained (a non-negative-binary-integer), unconstrained, extensible range; constrained ranges as wide as the 64-bit and unsigned storage.
+  - ⚠ Semi-constrained values were encoded as unconstrained (`571dcbe`), and full 64-bit ranges overflowed (`f5514a9`); both fixed late in both runtimes.
+- [ ] **P4 ENUMERATED**
+  - Ref: X.691 §14.
+  - Root index, extension bit, extension values.
+- [ ] **P5 BIT STRING and OCTET STRING**
+  - Ref: X.691 §16, §17; extensible SIZE §16.6, §17.3; NamedBitList trailing bits §16.2, §16.3.
+  - SIZE; the extension bit of an extensible SIZE; trailing 0 bits dropped for a NamedBitList BIT STRING; a length outside a non-extensible SIZE rejected on decode.
+  - ⚠ All three came as late fixes (`3604074`, `d2f3150`, `45503f4`).
+- [ ] **P6 Restricted character strings**
+  - Ref: X.691 §30; extensible types §30.4; known-multiplier strings and the effective permitted alphabet §30.5 (§30.5.1).
+  - Known-multiplier strings with FROM remapping; the other string types as a length plus octets.
+  - ⚠ FROM remapping (`3a44e3b`) and extensible strings (`7d5707c`) came late.
+- [ ] **P7 OBJECT IDENTIFIER, RELATIVE-OID, REAL, ANY/open type**
+  - Ref: X.691 §24, §25, §15; open-type fields §11.2.
+- [ ] **P8 SEQUENCE and SET walker**
+  - Ref: X.691 §19, §21; extension additions §19.9.
+  - Preamble bitmap sized by the precomputed `roms_count`, extension bit, extension additions as open-type fields, an extension addition group as one addition.
+  - ⚠ Groups were encoded member by member until `f9a1a85`; the optional count was recounted per value until `b1319a3`.
+- [ ] **P9 CHOICE**
+  - Ref: X.691 §23; canonical order with an untagged CHOICE §23.3; unknown extension alternatives §23.8.
+  - Index in the precomputed `range_bits`.
+  - ⚠ An untagged CHOICE alternative was ordered last instead of by its smallest tag in both runtimes (#952). The third port's tests found it.
+- [ ] **P10 SEQUENCE OF and SET OF**
+  - Ref: X.691 §20, §22; extensible SIZE §20.4; SET OF order §22.1.
+  - SIZE, the extension bit of an extensible SIZE, SET OF components sorted.
+  - ⚠ SET OF sorting came late (`b86a134`).
+- [ ] **P11 Contained values in PER**
+  - Ref: X.682 §11; the field itself is an OCTET STRING or BIT STRING holding the inner encoding (X.691 §16, §17).
+  - Inner decode through the registry, as for BER.
+- [ ] **P12 PER cross-validation leg**
+  - Ref: X.691 §11.1 (production of the complete encoding).
+  - A PER encoding carries no length of its own, so the harness frames each record with a 4-byte length. Rows against C++ and asn1c, plus the round-trip matrix.
+- [ ] **P13 PER fuzz smoke test**
+  - Ref: X.691 §11.9 (lengths every decoder must bound).
+  - Corrupted PER gives errors, never aborts.
 
 ---
 
@@ -286,7 +511,7 @@ Each step has four parts:
 
 From cheapest to most thorough. All of it runs under `ctest`.
 
-1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes.
+1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes. `tests/vectors/make_ber_vectors.py SCHEMA VALUES.xer OUT.vectors` makes such vectors: asn1c encodes each listed XER value to DER and writes its own text encodings of that DER. The committed `.vectors` file (`Type<TAB>XER<TAB>DER-hex<TAB>asn1c-XER<TAB>asn1c-JER<TAB>asn1c-UPER-hex` per line; `-` where asn1c has no PER encoding for the type) needs no asn1c to use, and gives every codec leg its ground truth from the same line.
 2. **Naming test:** `test_backend_naming` covers each backend's naming primitives (keywords, hyphens, collisions).
 3. **Generated-code test legs:** `tests/<lang>/<case>`, one per C++ test (`tests/<codec>/test_<case>.cpp`). They use the same schema under `tests/asn1/` and the same vectors, and print the same PASS/FAIL lines. The build compiles the generated code with warnings as errors.
 4. **Table diff:** `validation-tools/table_diff/table_diff.py` dumps every generated type's tables in each runtime (Appendix A) and diffs them against C++.
@@ -297,11 +522,66 @@ A divergence between asn1c and the compiler is presumed to be a compiler bug. A 
 
 ---
 
+## 11. Why the checklist looks like this (lessons from the third port)
+
+The third port took 35 pull requests into its integration branch, about 90 commits, against about 346 commits for the second port. The table-only design held: no codec after BER needed a codegen change, except where a table field had never been emitted (below). What still went wrong was step size and order.
+
+### Which steps were too big
+
+Most steps were 200–500 changed lines and passed review and CI on the first push. The outliers:
+
+| Step | Own diff | What made it big |
+|------|----------|------------------|
+| Runtime skeleton (I/O, spec tables, BER reader/writer, table dump) | ~1,980 lines, 47 files | spec records for every construct, before any construct used them |
+| JER I/O layer + all primitives | ~1,360 | I/O layer, every primitive, and a vectors column regenerated in every file |
+| XER I/O layer + all primitives | ~1,150 | the same shape |
+| BER contained values | ~1,000 | registry, decoders, container-config codegen and options in one step |
+| BER REAL | ~870 | binary, decimal and special forms plus their vectors |
+
+These produced the step boundaries of §9 (F1, F2, X1, B7/B8, C11–C13, X8/X9). Two patterns. **The first step of a new layer** carries the I/O layer and every primitive, because an I/O layer has nothing to test until a value goes through it. **A feature with several switches** (contained values: per-row form, per-call override, decoder registry) lands all switches at once. The XER contained step had to be split after the fact (#1003, #1004).
+
+### A table field that no codec reads yet is untested (B8)
+
+The third backend never emitted REAL constraints (range, open bounds, base-10-only). BER and XER do not read them, so every BER and XER leg passed. The gap showed only in the JER step, where base-10-only picks the text form, and table_diff had no REAL-constrained target. When a construct's table rows land, add a table_diff target that carries every `Constraints` field the construct can have, even fields no codec of the new runtime reads yet. The table diff is the only check that sees them.
+
+### Port shared state transitions, not observed behaviour (C11)
+
+A contained field keeps a status (not decoded, decoded, skipped, failed). The third runtime copied what BER showed: its post-decode pass did not skip a field already decoded from its inline text form, the C++ `decode_one`'s first check. BER never takes that path. JER's `raw` member did: a value whose raw bytes differed from its own encoding was decoded again from those bytes and lost. For state that several codecs share, port each setter of the reference runtime with what it resets, and test each transition in the runtime's unit tests, not through one codec.
+
+### The new backend tests the existing ones
+
+The port found bugs in the reference runtimes, each fixed on the main branch first, in its own change:
+- an EXPLICIT tag around a tagged CHOICE (#951);
+- untagged CHOICE alternative order in PER (#952);
+- CHOICE and inline-type cycles that did not compile (#975, #979);
+- a CHOICE alternative ignoring its BASE64/UTF8 instruction (#1001);
+- wide strings in JER carrying XML escapes (#1010);
+- JER `null` for an absent member not accepted (#1013).
+
+The second port's PER showed the same from the other side: most X.691 corner clauses (fragmentation, semi-constrained INTEGER, extensible SIZE, extension groups, SET OF order) arrived as late fixes in both runtimes, each a month or more after the construct itself. §9 lists them inside the item that owns them.
+
+asn1c deviations were reported upstream, not patched. These are the standing items of §9: budget for them, and keep each fix out of the port's own step.
+
+### Check clause numbers against the text
+
+First drafts cited wrong X.697 clauses for strings, bit strings and constructed types, and commit messages of the second port mix X.691 editions (1997 and 2021 numbering differ by one clause for most types). Cite one edition, preferably the 2021 set in `asn1-docs/T-REC-X.680-X.693-202102-I!!ZIP-E/`, and search its text before writing a clause number into a comment. Those are Word 97 files; `strings -n 1 X6911.doc` gives searchable text with each clause number at the start of its line; a larger `-n` silently drops short runs, whole clauses among them.
+
+---
+
 ## Appendix A — canonical table dump
 
-Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
+Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`; Java `TableDump.dump`, `java-runtime/.../spec/TableDump.java`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
 
-The dump is JSON Lines: one object per type, one line each.
+The dump is JSON Lines: one object per type, one line each. For the type of §3 (`tests/asn1/jer_escape_test.asn1`, `AUTOMATIC TAGS`):
+
+```asn1
+JeRec ::= SEQUENCE {
+    text UTF8String,
+    alt  CHOICE { name UTF8String, n INTEGER }
+}
+```
+
+its line starts like this (only the first member row is shown):
 
 ```json
 {"name":"JeRec","kind":"SEQUENCE","tag":{"class":"UNIVERSAL","number":16,"constructed":true},
@@ -335,8 +615,9 @@ Value sets and normalisation:
 
 A field a runtime's tables do not carry is left out of its dump and reported as "not carried" (`--not-carried` lists them), never as a mismatch. An already-filed divergence is listed in `validation-tools/table_diff/known_diffs.txt` (`<lang> <field-path glob> <issue>`) and reported as known.
 
-Usage: `table_diff.py [--lang cpp,rust] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
+Usage: `table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
 
 - The default target list, `validation-tools/table_diff/targets.txt`, holds the schemas every compared backend covers today, so a run takes minutes; ctest `table_diff_cpp_rust` runs it. While a backend is being built, keep this list at the few schemas it already covers and move schemas into it from `validation-tools/xval_sweep/targets.txt` as coverage grows. `--full` runs that whole list, including the large real-world schemas.
+- A run that includes a backend still being built uses that backend's own list instead (Java: `java_targets.txt`, ctest `table_diff_cpp_java`), whose `-pdu` roots leave out the types it cannot emit yet.
 - A dump is reused when its inputs (schema files, flags, compiler binary, runtime sources) are unchanged; `--rebuild` forces fresh builds.
 - The C++ harness is a unity build (one translation unit per core), since each generated file is a few lines of tables behind the same runtime headers.
