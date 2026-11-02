@@ -788,7 +788,7 @@ six types, when they carry a SIZE. Not affected:
 
 **Choosing per type or member.** The mode is decided at code generation: the generated
 `Constraints` table of each affected type carries the flag `PER_SIZE_INVISIBLE` (512)
-under `strict`. Both C++ and Rust runtimes read it. The command-line mode is the default;
+under `strict`. The C++, Rust and Java runtimes read it. The command-line mode is the default;
 a `per_nkm_size` array in the `--container-config` sidecar overrides it per type
 assignment or per member:
 
@@ -829,7 +829,8 @@ is not listed separately.
 PER bytes of an existing deployment, regenerate with `--per-nkm-size=visible`, or mark
 only the types your peer sends that way. Tests: `per_nkm_size_{strict,visible,mixed}`
 (C++) and `rust_per_nkm_size_*` (Rust) check all three setups against Erlang/OTP
-(strict) and asn1c (visible, mixed) bytes. xval_sweep runs each affected schema in both
+(strict) and asn1c (visible, mixed) bytes; the Java leg (`PerNkmSizeTest`) checks the
+strict setup. xval_sweep runs each affected schema in both
 modes, and its asn1c PER rows on strict builds are marked `ASN1CNKMVISIBLE`
 (informational).
 

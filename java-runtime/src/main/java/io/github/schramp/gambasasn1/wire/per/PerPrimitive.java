@@ -384,12 +384,32 @@ public final class PerPrimitive {
      * the root (§30.4). Then the length in characters under the SIZE and each
      * character: its FROM index in {@code alphabetBits} bits, or the
      * {@link #charLayout} field of the kind (NumericString remapped, §30.5.4).
+     * With PER_SIZE_INVISIBLE (a non-known-multiplier string, §30.6) the
+     * SIZE and FROM are checked but the string is sent unconstrained.
      */
     static void encodeChars(byte[] octets, int tag, Constraints c, PerWriter w) {
         int bits = charLayout(tag)[0];
         int width = charLayout(tag)[1];
         int count = octets.length / width;
         boolean alpha = hasAlphabet(c);
+        if (has(c, Constraints.PER_SIZE_INVISIBLE)) {
+            // Not PER-visible (X.691 §30.6), but still a constraint on the
+            // value (§10.3 note): reject a violating value, then send the
+            // octets after an unconstrained length.
+            if (has(c, Constraints.SIZE_CONSTRAINED) && !has(c, Constraints.EXTENSIBLE)
+                    && (count < c.sizeLower() || count > c.sizeUpper())) {
+                throw new EncodeException("PER: string length " + count + " violates SIZE("
+                        + c.sizeLower() + ".." + c.sizeUpper() + ")");
+            }
+            for (int i = 0; alpha && i < count; i++) {
+                if (alphabetIndex(c, octets, i * width, width) < 0) {
+                    throw new EncodeException("PER: character " + (octets[i * width + width - 1] & 0xFF)
+                            + " is not in the permitted alphabet");
+                }
+            }
+            encodeChars(octets, tag, Constraints.UNCONSTRAINED, w);
+            return;
+        }
         boolean sized = has(c, Constraints.SIZE_CONSTRAINED);
         if (has(c, Constraints.EXTENSIBLE) && (sized || alpha)) {
             boolean inRoot = !sized || (count >= c.sizeLower() && count <= c.sizeUpper());
@@ -440,6 +460,9 @@ public final class PerPrimitive {
         int bits = charLayout(tag)[0];
         int width = charLayout(tag)[1];
         boolean alpha = hasAlphabet(c);
+        if (has(c, Constraints.PER_SIZE_INVISIBLE)) {
+            return decodeChars(tag, Constraints.UNCONSTRAINED, r);
+        }
         if (has(c, Constraints.EXTENSIBLE) && (has(c, Constraints.SIZE_CONSTRAINED) || alpha) && r.getBits(1) == 1) {
             return decodeChars(tag, Constraints.UNCONSTRAINED, r);
         }
