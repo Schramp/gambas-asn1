@@ -37,6 +37,7 @@ add_executable(asn1cpp
     src/codegen/RustBackend.cpp
     src/config/Json.cpp
     src/sema/ContainedFields.cpp
+    src/sema/PerNkmSize.cpp
     src/main.cpp
 )
 

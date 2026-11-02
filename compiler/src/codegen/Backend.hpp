@@ -324,6 +324,8 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     int64_t  size_lower = 0, size_upper = 0;    // size_upper meaningful only when size_bounded
     bool     extensible = false;
     bool     named_bits = false;        // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
+    bool     per_size_invisible = false; // non-known-multiplier string whose SIZE PER ignores
+                                         // (X.691 §30.6, --per-nkm-size=strict) -> PER_SIZE_INVISIBLE
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
     RealRangeSpec real_range;           // REAL value range; present only for builtin_type Real
 };
@@ -416,6 +418,7 @@ struct MemberTypeDescriptorSpec {
     int      size_range_bits = 0;
     int64_t  size_lower = 0, size_upper = 0; // size_upper meaningful only when size_bounded
     bool     named_bits = false;          // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
+    bool     per_size_invisible = false;  // see BuiltinAliasSpec::per_size_invisible
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Kind::Real — the member's inline REAL value range.

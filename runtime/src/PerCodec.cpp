@@ -710,11 +710,35 @@ public:
     /// @param stream  Output bit stream; `encode_failed()` set on constraint violation.
     /// @param def     TypeDescriptor carrying SIZE/alphabet constraints (from generated table).
     /// @param src     `AsnStringBase*` holding the string value to encode.
-    /// @see X.691 §26.5 (known-multiplier character string encoding); §12 (size constraints).
+    /// @see X.691 §26.5 (known-multiplier character string encoding); §12 (size constraints);
+    ///      §30.6 (non-known-multiplier strings: PER_SIZE_INVISIBLE, no PER-visible SIZE).
     void encode(const PerCodec& codec, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const std::string& str = static_cast<const AsnStringBase*>(src)->str();
         const Constraints& pc = def.constraints;
+        if (pc.flags & Constraints::PER_SIZE_INVISIBLE) {
+            // X.691 §30.6: no PER-visible constraint on a non-known-multiplier
+            // string — encode as the unconstrained type. Its SIZE and FROM
+            // still bound the values of the type, and a conforming sender does
+            // not send a value that violates them (X.691 §10.3, note), so such
+            // a value is rejected rather than written in the general form.
+            if ((pc.flags & Constraints::SIZE_CONSTRAINED) && !(pc.flags & Constraints::EXTENSIBLE) &&
+                (str.size() < static_cast<std::size_t>(pc.size_lower) ||
+                 str.size() > static_cast<std::size_t>(pc.size_upper))) {
+                stream.set_encode_failed("string length violates SIZE constraint");
+                return;
+            }
+            if (pc.alphabet_bits > 0 && pc.encode_table)
+                for (unsigned char c : str)
+                    if (pc.encode_table[c] == 0xFFFFu) {
+                        stream.set_encode_failed("character not in FROM alphabet");
+                        return;
+                    }
+            TypeDescriptor plain = def;
+            plain.constraints = Constraints{};
+            encode(codec, stream, plain, src);
+            return;
+        }
         auto [bits, bpc] = string_params(builtin_tag(def).number);
         // alphabet_bits > 0 means FROM constraint — index != char value, must use encode_table.
         // Built-in types may also have encode_table (for validate) but alphabet_bits == 0;
@@ -831,10 +855,16 @@ public:
     /// @param stream  Input bit stream.
     /// @param def     TypeDescriptor carrying SIZE/alphabet constraints.
     /// @param dest    `AsnStringBase*` to receive the decoded string.
-    /// @see X.691 §26.5.
+    /// @return Success, or the first bit-stream / alphabet error.
+    /// @see X.691 §26.5; §30.6 (PER_SIZE_INVISIBLE decodes as unconstrained).
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
+        if (pc.flags & Constraints::PER_SIZE_INVISIBLE) {
+            TypeDescriptor plain = def;
+            plain.constraints = Constraints{};
+            return decode(codec, stream, plain, dest);
+        }
         if (pc.flags & Constraints::EXTENSIBLE) {
             auto ext = stream.get_bits(1);
             if (!ext) return decode_err(ext.error());

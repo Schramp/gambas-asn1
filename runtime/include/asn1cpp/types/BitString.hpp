@@ -90,9 +90,19 @@ public:
     /// otherwise signed delta such that \c (bit_count+delta) lands at the nearest bound.
     /// Positive = too short; negative = too long. A NamedBitList value satisfies
     /// the constraint when adding or removing trailing 0 bits can make it fit,
-    /// so only its significant bits are checked against the upper bound.
-    /// @see X.680 §22.7; X.691 §15.3.
+    /// so only its significant bits are checked against the upper bound, and a
+    /// \c SIZE(lb..MAX) (SIZE_LOWER_BOUND) lower bound only applies without one.
+    /// @param c  The type's Constraints.
+    /// @return 0 when valid, else the signed delta.
+    /// @see X.680 §22.7, §51.5; X.691 §15.3.
     int64_t validate(const Constraints& c) const {
+        // A NamedBitList value is padded up to the lower bound when sent
+        // (X.691 §15.3), so only a plain BIT STRING can be too short.
+        if ((c.flags & Constraints::SIZE_LOWER_BOUND) && !(c.flags & Constraints::EXTENSIBLE)
+            && !(c.flags & Constraints::NAMED_BITS)) {
+            auto n = static_cast<int64_t>(bit_count());
+            return n < c.size_lower ? c.size_lower - n : 0;
+        }
         if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & Constraints::EXTENSIBLE) return 0;
         if (c.flags & Constraints::NAMED_BITS) {
