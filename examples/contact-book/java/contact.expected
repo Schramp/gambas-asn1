@@ -1,0 +1,10 @@
+[encode] wrote 52 bytes to contact.ber
+<Contact>
+    <name>Alice Example</name>
+    <email>alice@example.com</email>
+    <phone>
+        <countryCode>31</countryCode>
+        <number>612345678</number>
+    </phone>
+</Contact>
+

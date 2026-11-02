@@ -2185,6 +2185,31 @@ The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
 -Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
 table diff covers it.
 
+**Java examples.** Two examples build with plain `javac` (no Gradle) against
+the `java-runtime` sources and the compiler in the tree:
+
+- `examples/contact-book/java/`: the contact-book tutorial of sections 7 and 8.
+  `Main.java` builds a `Contact`, BER-encodes it, decodes it back and prints
+  it as XER, the same steps and output as `examples/contact-book/main.cpp`.
+- `examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/`: the ETSI LI
+  nested PS-PDU decoder. It generates the PS-PDU modules with
+  `container_fields.json`, so one `BerObject.decode` of a `PS_PDU` also
+  decodes `EncryptionContainer.encryptedPayload` as an `EncryptedPayload`
+  (`Containing<EncryptedPayload>`: `status()`, `error()`, `value()`,
+  `bytes()`). `--xer-form hex|inline|inline_raw` sets the XER form of the
+  contained value through `ContainedOptions`, as in the C++ `nested-decoder`.
+
+```sh
+make -C examples/contact-book/java run
+make -C examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder run IN=file.etsi FORM=inline
+```
+
+`make test` in each directory diffs the output against the committed
+expected output of the C++ example (`nested-decoder/pdu-00000001.expected`
+and `.inline.expected` for the nested decoder); ctest runs both as
+`java_example_contact_book` and `java_example_nested_decoder` when a JDK is
+found.
+
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
 BER-decoded and re-encoded by the Java runtime and must come back byte for
