@@ -178,6 +178,9 @@ public:
                               const std::string& parent_name, const std::string& member_name,
                               TypeOutputSession& session) const override;
     bool supports_contained_values() const override { return true; }
+    /// @brief Yes: an OPTIONAL/DEFAULT or extension member is a
+    ///        `std::unique_ptr` (emit_sequence_declaration).
+    bool optional_member_is_indirect() const override { return true; }
     std::string contained_storage_type(const std::string& inner) const override {
         return "asn1::Containing<" + inner + ">";
     }
