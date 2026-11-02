@@ -60,6 +60,10 @@ impl<'a> Reader<'a> {
     /// True when the next value is the JSON literal `null` (RFC 8259 §3),
     /// without consuming it.
     pub fn peek_null(&mut self) -> bool {
+        match self.data.get(self.pos) {
+            Some(b'n' | b' ' | b'\t' | b'\n' | b'\r') => {}
+            _ => return false,
+        }
         self.skip_ws();
         let rest = &self.data[self.pos..];
         rest.starts_with(b"null")

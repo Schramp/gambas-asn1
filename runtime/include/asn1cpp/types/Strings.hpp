@@ -61,12 +61,20 @@ public:
     ///   FROM constraint (\c c.encode_table) takes precedence; otherwise the built-in
     ///   alphabet per tag (NumericString / PrintableString / IA5String / VisibleString).
     ///   Unrestricted types (UTF8String, BMPString, …) always return 0.
+    /// - A \c SIZE(lb..MAX) (SIZE_LOWER_BOUND) only has a lower bound.
+    /// @param c  The type's Constraints.
+    /// @return 0 when valid, else the SIZE delta or the alphabet sentinel.
+    /// @see X.680 §51.5 (SIZE), §51.7 (PermittedAlphabet).
     int64_t validate(const Constraints& c) const {
         if ((c.flags & Constraints::SIZE_CONSTRAINED) &&
             !(c.flags & Constraints::EXTENSIBLE)) {
             auto n = static_cast<int64_t>(str().size());
             if (n < c.size_lower) return c.size_lower - n;
             if (n > c.size_upper) return c.size_upper - n;
+        }
+        if ((c.flags & Constraints::SIZE_LOWER_BOUND) && !(c.flags & Constraints::EXTENSIBLE)) {
+            auto n = static_cast<int64_t>(str().size());
+            if (n < c.size_lower) return c.size_lower - n;
         }
         // encode_table is present for both FROM-constrained types (codegen-emitted) and
         // built-in restricted types (NumericString, PrintableString, IA5String, VisibleString).

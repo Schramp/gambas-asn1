@@ -72,6 +72,7 @@ static CONTAINER_MEMBERS: [MemberMeta; 1] = [MemberMeta {
     ber: BerTagging::Delegate,
     constraints: &UNCONSTRAINED,
     xer_instruction: XerInstruction::Default,
+    has_default: false,
     contained: None,
 }];
 

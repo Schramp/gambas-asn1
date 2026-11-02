@@ -62,6 +62,10 @@ pub struct MemberMeta {
     /// OctetString(..))` covers this member the same as any other OCTET
     /// STRING).
     pub xer_instruction: XerInstruction,
+    /// The member has a DEFAULT (X.680 §25.6) that `Asn1Seq::set_default`
+    /// fills in; BER/PER decode call `set_default` for an absent member
+    /// only when this is set.
+    pub has_default: bool,
     /// Set for an OCTET STRING holding the encoding of another type
     /// (X.682 §11 / --container-config), stored as `Containing<T>`.
     pub contained: Option<&'static crate::containing::ContainedSpec>,
@@ -179,8 +183,9 @@ pub trait Asn1Seq {
     fn get_member(&self, index: usize) -> MemberRef<'_>;
     fn get_member_mut(&mut self, index: usize) -> MemberRefMut<'_>;
     /// Fills in member `index`'s schema DEFAULT (X.680 §25.1) when the
-    /// wire omitted it; an OPTIONAL member with no DEFAULT becomes absent;
-    /// a no-op for a mandatory member.
+    /// wire omitted it; an OPTIONAL member with no DEFAULT becomes absent
+    /// (what JER decode needs for a `null` member, X.697 §27.3.4); a no-op
+    /// for a mandatory member.
     fn set_default(&mut self, index: usize);
     /// `true` when member `index`'s current value equals its schema
     /// DEFAULT (X.690 §11.5 — suppress encoding it); `false` for a

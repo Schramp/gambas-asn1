@@ -309,16 +309,18 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
 fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     let member_count = obj.spec().members.len();
     for i in 0..member_count {
-        let (name, tag, optional, ber) = {
+        let (name, tag, optional, ber, has_default) = {
             let m = &obj.spec().members[i];
-            (m.name, m.tag, m.optional, m.ber)
+            (m.name, m.tag, m.optional, m.ber, m.has_default)
         };
         let mut has_value = true;
         if optional {
             if r.peek_tag().is_some_and(|t| ber.starts_with(tag, t)) {
                 decode_member_ref(obj.get_member_mut(i), ber, r)?;
             } else {
-                obj.set_default(i);
+                if has_default {
+                    obj.set_default(i);
+                }
                 if matches!(obj.get_member(i), MemberRef::Absent) {
                     has_value = false;
                 }
@@ -614,6 +616,7 @@ mod tests {
         ber: BerTagging::Delegate,
         constraints: &UNCONSTRAINED,
         xer_instruction: crate::spec::object::XerInstruction::Default,
+        has_default: false,
         contained: None,
     }];
 
@@ -665,9 +668,9 @@ mod tests {
     }
 
     static OUTER_MEMBERS: [MemberMeta; 3] = [
-        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
-        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
-        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
+        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
+        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
     ];
 
     static OUTER_SPEC: SequenceSpec = SequenceSpec {
@@ -767,8 +770,8 @@ mod tests {
     }
 
     static BIG_MEMBERS: [MemberMeta; 2] = [
-        MemberMeta { name: "n", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
-        MemberMeta { name: "o", tag: crate::octet_string::OCTET_STRING_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "n", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
+        MemberMeta { name: "o", tag: crate::octet_string::OCTET_STRING_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
     ];
 
     static BIG_SPEC: SequenceSpec = SequenceSpec {
@@ -947,8 +950,8 @@ mod tests {
     const FRAME_UNSUPPORTED: &str = "member 'value' not supported: untagged ANY has no tag to detect presence";
 
     static FRAME_MEMBERS: [MemberMeta; 2] = [
-        MemberMeta { name: "ident", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
-        MemberMeta { name: "value", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Unsupported("untagged ANY has no tag to detect presence"), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "ident", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
+        MemberMeta { name: "value", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Unsupported("untagged ANY has no tag to detect presence"), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, has_default: false, contained: None },
     ];
 
     static FRAME_SPEC: SequenceSpec = SequenceSpec {

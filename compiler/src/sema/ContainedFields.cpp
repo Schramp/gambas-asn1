@@ -108,9 +108,11 @@ bool ContainedFields::load_config(const std::string& path, std::vector<std::stri
     }
     std::size_t before = errors.size();
     for (const auto& [k, v] : std::get<config::JsonValue::Object>(doc->v))
-        if (k != "container_fields")
+        if (k != "container_fields" && k != "per_nkm_size")
             errors.push_back(where(v.line) + "unknown top-level key \"" + k + "\"");
+    // "per_nkm_size" is read by PerNkmSize::load_config.
     const auto* list = doc->find("container_fields");
+    if (!list && doc->find("per_nkm_size")) return errors.size() == before;
     if (!list || !list->is_array()) {
         errors.push_back(where(doc->line) + "\"container_fields\" must be an array");
         return false;

@@ -426,6 +426,25 @@ target_include_directories(test_per_size_violation PRIVATE ${PER_SIZE_VIOL_GEN_D
 target_link_libraries(test_per_size_violation PRIVATE asn1cpp_runtime)
 add_test(NAME per_size_violation COMMAND test_per_size_violation)
 
+# ---- SIZE(lb..MAX) lower bound (X.680 §51.5) + 64K edge of the PER length
+# determinant (X.691 §11.9.4); Rust leg: rust/size_lower_bound
+set(SIZE_LB_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_size_lower_bound_test)
+set(SIZE_LB_SRCS Os Ia5 Bits Ints Probe Ub65535 Ub65536 Lb10Ub70k Lb10Max)
+list(TRANSFORM SIZE_LB_SRCS PREPEND ${SIZE_LB_GEN_DIR}/)
+list(TRANSFORM SIZE_LB_SRCS APPEND .cpp)
+add_custom_command(
+    OUTPUT  ${SIZE_LB_SRCS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SIZE_LB_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+            -o ${SIZE_LB_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+    COMMENT "Generating C++ from size_lower_bound_test.asn1"
+)
+add_executable(test_size_lower_bound per/test_size_lower_bound.cpp ${SIZE_LB_SRCS})
+target_include_directories(test_size_lower_bound PRIVATE ${SIZE_LB_GEN_DIR})
+target_link_libraries(test_size_lower_bound PRIVATE asn1cpp_runtime)
+add_test(NAME size_lower_bound COMMAND test_size_lower_bound)
+
 # ---- REAL JER base constraints (X.697 §23.1.4); Rust leg: rust/real_jer_base
 set(REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_jer_base_test)
 add_custom_command(
@@ -1291,6 +1310,35 @@ target_include_directories(test_per_named_bits PRIVATE ${NAMEDBITS_GEN_DIR})
 target_link_libraries(test_per_named_bits PRIVATE asn1cpp_runtime)
 add_test(NAME per_named_bits COMMAND test_per_named_bits)
 set_tests_properties(per_named_bits PROPERTIES TIMEOUT 30)
+
+# ---- SIZE on non-known-multiplier strings in PER (X.691 §10.3.18, §30.6) -----
+# per_nkm_size_test.asn1 generated once per --per-nkm-size mode: strict
+# (default), visible, and strict with per_nkm_size sidecar overrides (mixed).
+# See per/test_per_nkm_size.cpp; Rust leg: rust/per_nkm_size.
+set(_nkm_opts_strict "")
+set(_nkm_opts_visible "--per-nkm-size=visible")
+set(_nkm_opts_mixed "--container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_mixed.json")
+foreach(_nkm strict visible mixed)
+    set(_nkm_dir ${CMAKE_CURRENT_BINARY_DIR}/gen_per_nkm_size_${_nkm})
+    add_custom_command(
+        OUTPUT  ${_nkm_dir}/Rec.cpp ${_nkm_dir}/Name.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_nkm_dir}
+        COMMAND $<TARGET_FILE:asn1cpp> ${_nkm_opts_${_nkm}}
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_test.asn1
+                -o ${_nkm_dir}
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_test.asn1
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_mixed.json
+        COMMENT "Generating C++ from per_nkm_size_test.asn1 (${_nkm})"
+    )
+    string(TOUPPER ${_nkm} _nkm_up)
+    add_executable(test_per_nkm_size_${_nkm} per/test_per_nkm_size.cpp
+                   ${_nkm_dir}/Rec.cpp ${_nkm_dir}/Name.cpp)
+    target_compile_definitions(test_per_nkm_size_${_nkm} PRIVATE NKM_MODE_${_nkm_up})
+    target_include_directories(test_per_nkm_size_${_nkm} PRIVATE ${_nkm_dir})
+    target_link_libraries(test_per_nkm_size_${_nkm} PRIVATE asn1cpp_runtime)
+    add_test(NAME per_nkm_size_${_nkm} COMMAND test_per_nkm_size_${_nkm})
+    set_tests_properties(per_nkm_size_${_nkm} PROPERTIES TIMEOUT 30)
+endforeach()
 
 # ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
 set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
@@ -2345,6 +2393,55 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_per_size_violation PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_PER_SIZE_VIOL_GEN_DIR}")
+endif()
+
+# Rust leg of the PER SIZE-on-non-known-multiplier-strings test — see
+# tests/rust/per_nkm_size/src/main.rs (C++ leg: test_per_nkm_size_*). One
+# cargo target dir per mode, so the three runs don't rebuild each other.
+foreach(_nkm strict visible mixed)
+    set(_nkm_rdir ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_nkm_size_${_nkm})
+    add_custom_command(
+        OUTPUT  ${_nkm_rdir}/lib.rs
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_nkm_rdir}
+        COMMAND $<TARGET_FILE:asn1cpp> --target=rust ${_nkm_opts_${_nkm}}
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_test.asn1
+                -o ${_nkm_rdir}
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_test.asn1
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_nkm_size_mixed.json
+        COMMENT "Generating Rust from per_nkm_size_test.asn1 (${_nkm})"
+    )
+    add_custom_target(gen_rust_per_nkm_size_${_nkm} ALL DEPENDS ${_nkm_rdir}/lib.rs)
+    if(WITH_BER_RUNTIME_TEST)
+        add_test(NAME rust_per_nkm_size_${_nkm}
+            COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                    ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_nkm_size/Cargo.toml)
+        set_tests_properties(rust_per_nkm_size_${_nkm} PROPERTIES
+            TIMEOUT 120 LABELS "rust"
+            ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${_nkm_rdir};NKM_MODE=${_nkm};CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/cargo_per_nkm_size_${_nkm}")
+    endif()
+endforeach()
+
+# Rust leg of the SIZE(lb..MAX) / 64K-edge test — see tests/rust/size_lower_bound/src/main.rs
+# (C++ leg: test_size_lower_bound).
+set(RUST_SIZE_LB_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_size_lower_bound)
+add_custom_command(
+    OUTPUT  ${RUST_SIZE_LB_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SIZE_LB_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+            -o ${RUST_SIZE_LB_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_lower_bound_test.asn1
+    COMMENT "Generating Rust from size_lower_bound_test.asn1"
+)
+add_custom_target(gen_rust_size_lower_bound ALL DEPENDS ${RUST_SIZE_LB_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_size_lower_bound
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/size_lower_bound/Cargo.toml)
+    set_tests_properties(rust_size_lower_bound PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIZE_LB_GEN_DIR}")
 endif()
 
 # Rust OPTIONAL untagged-CHOICE member test — see tests/rust/optional_untagged_choice/src/main.rs.
