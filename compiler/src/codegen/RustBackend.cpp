@@ -675,7 +675,10 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     if (sizeable) {
         int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
             | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+            | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
+            | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+               ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
@@ -928,7 +931,10 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // unconstrained length determinant (X.691 §11.9.4.2).
     int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
         | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+        | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
+        | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+           ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
@@ -1011,7 +1017,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = std::format("{}_CONSTRAINTS", spec.type_name);
     int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
-        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+        | (spec.has_size_constraint && !spec.size_upper && spec.size_lower > 0
+               ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     int64_t size_upper = spec.size_upper.value_or(std::numeric_limits<int64_t>::max());
     // `pub`, unlike the member-inline Constraints tables above — a
     // synthetic promoted type's own table is referenced cross-module by
@@ -1631,6 +1639,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     std::string fname = escape(std::format("{}_{}_default", to_snake_case(spec.type_name), m.mname));
                     set_default_expr = std::format("Some(|v| v.{} = Some({}()))", m.mname, fname);
                     is_default_equal_expr = std::format("Some(|v| v.{} == Some({}()))", m.mname, fname);
+                } else if (m.optional && covered) {
+                    // An OPTIONAL member's value when the encoding leaves
+                    // it out is "absent" (X.680 §25.6). JER decode resets a
+                    // member it already reached when the value is `null`
+                    // (X.697 §27.3.4); BER/PER skip this entry, as the
+                    // row's has_default is false.
+                    set_default_expr = std::format("Some(|v| v.{} = None)", m.mname);
                 }
 
                 std::string get_expr, get_mut_expr;
@@ -1761,9 +1776,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
 
                 meta_lines.push_back(std::format(
-                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, contained: {} }},",
+                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, has_default: {}, contained: {} }},",
                     m.asn1_name, tag_text, m.optional ? "true" : "false", ber_framing_expr, constraints_ref,
                     covered ? rust_xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default",
+                    m.has_default && m.has_default_setter ? "true" : "false",
                     m.contained ? std::format("Some(&{})", contained_spec_ident(m.contained_base)) : "None"));
                 getter_lines.push_back(std::format("    {},", get_expr));
                 getter_mut_lines.push_back(std::format("    {},", get_mut_expr));

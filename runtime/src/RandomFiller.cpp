@@ -36,10 +36,17 @@ int RandomFiller::rand_int(int lo, int hi) {
     return std::uniform_int_distribution<int>{lo, hi}(rng_);
 }
 
-// Resolve effective [lo, hi] sampling range for a SIZE-constrained primitive.
-// Reads bounds straight from Constraints when SIZE_CONSTRAINED is set; caps
-// at 65536 so absurd schema-level bounds (e.g. SIZE(0..2^32-1)) don't drive
-// gigabyte allocations. Falls back to caller-supplied defaults otherwise.
+/// @brief Effective [lo, hi] sampling range for a SIZE-constrained primitive.
+///        Bounds come straight from Constraints when SIZE_CONSTRAINED is set;
+///        a SIZE(lb..MAX) (SIZE_LOWER_BOUND) keeps its lower bound and samples
+///        up to the default span above it. Capped at 65536 so absurd
+///        schema-level bounds (e.g. SIZE(0..2^32-1)) don't drive gigabyte
+///        allocations.
+/// @param c        The type's Constraints.
+/// @param dflt_lo  Lower length when the type has no SIZE.
+/// @param dflt_hi  Upper length when the type has no SIZE.
+/// @return The inclusive length range to sample from.
+/// @see X.680 §51.5.
 static std::pair<int,int> size_range(const Constraints& c,
                                      int dflt_lo, int dflt_hi) {
     constexpr int64_t CAP = 65536;
@@ -49,8 +56,35 @@ static std::pair<int,int> size_range(const Constraints& c,
         if (clo >= 0) lo = static_cast<int>(std::min(clo, CAP));
         if (chi >= 0) hi = static_cast<int>(std::min(chi, CAP));
         if (lo > hi)  hi = lo;
+    } else if ((c.flags & Constraints::SIZE_LOWER_BOUND) && c.size_lower > 0) {
+        lo = static_cast<int>(std::min(c.size_lower, CAP));
+        hi = static_cast<int>(std::min<int64_t>(CAP, int64_t{lo} + (dflt_hi - dflt_lo)));
     }
     return {lo, hi};
+}
+
+/// @brief Widened length range for the out-of-spec sampling path: the SIZE
+///        bounds plus a constraint-relative margin, so samples fall on both
+///        sides of each bound. For SIZE(lb..MAX) only the lower bound has a
+///        side to miss.
+/// @param c    The type's Constraints.
+/// @param cap  Largest length to draw.
+/// @return The range, or false when the type has no SIZE to widen.
+static bool loose_size_range(const Constraints& c, int64_t cap, int64_t& lo, int64_t& hi) {
+    if (c.flags & Constraints::SIZE_CONSTRAINED) {
+        int64_t span = c.size_upper - c.size_lower;
+        int64_t margin = std::max<int64_t>(2, span / 4 + 2);
+        lo = std::max<int64_t>(0, c.size_lower - margin);
+        hi = std::min<int64_t>(cap, c.size_upper + margin);
+    } else if (c.flags & Constraints::SIZE_LOWER_BOUND) {
+        int64_t margin = std::max<int64_t>(2, std::min<int64_t>(c.size_lower, 64) / 4 + 2);
+        lo = std::max<int64_t>(0, c.size_lower - margin);
+        hi = std::min<int64_t>(std::max(cap, c.size_lower), c.size_lower + margin);
+    } else {
+        return false;
+    }
+    if (lo > hi) lo = hi;
+    return true;
 }
 
 std::string RandomFiller::random_printable(int len) {
@@ -232,12 +266,8 @@ static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
         return true;
     }
     case UniversalTag::OctetString: {
-        if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return false;
-        int64_t span = c.size_upper - c.size_lower;
-        int64_t margin = std::max<int64_t>(2, span / 4 + 2);
-        int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
-        int64_t hi = std::min<int64_t>(256, c.size_upper + margin);
-        if (lo > hi) lo = hi;
+        int64_t lo, hi;
+        if (!loose_size_range(c, 256, lo, hi)) return false;
         int64_t len = std::uniform_int_distribution<int64_t>{lo, hi}(rng);
         std::vector<uint8_t> buf(len);
         for (auto& b : buf) b = rand_byte();
@@ -245,12 +275,8 @@ static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
         return true;
     }
     case UniversalTag::BitString: {
-        if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return false;
-        int64_t span = c.size_upper - c.size_lower;
-        int64_t margin = std::max<int64_t>(2, span / 4 + 2);
-        int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
-        int64_t hi = std::min<int64_t>(256, c.size_upper + margin);
-        if (lo > hi) lo = hi;
+        int64_t lo, hi;
+        if (!loose_size_range(c, 256, lo, hi)) return false;
         int64_t bits = std::uniform_int_distribution<int64_t>{lo, hi}(rng);
         std::size_t bytes = (bits + 7) / 8;
         std::vector<uint8_t> buf(bytes);
@@ -274,19 +300,15 @@ static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
     case UniversalTag::UniversalString:
     case UniversalTag::BmpString:
     case UniversalTag::ObjectDescriptor: {
-        bool size_constrained  = (c.flags & Constraints::SIZE_CONSTRAINED) != 0;
         bool alpha_constrained = c.alphabet_bits > 0 && c.alphabet != nullptr;
-        if (!size_constrained && !alpha_constrained) return false;
-
         int lo, hi;
-        if (size_constrained) {
-            int64_t span = c.size_upper - c.size_lower;
-            int64_t margin = std::max<int64_t>(2, span / 4 + 2);
-            lo = static_cast<int>(std::max<int64_t>(0, c.size_lower - margin));
-            hi = static_cast<int>(std::min<int64_t>(64, c.size_upper + margin));
-            if (lo > hi) lo = hi;
-        } else {
+        if (int64_t llo, lhi; loose_size_range(c, 64, llo, lhi)) {
+            lo = static_cast<int>(llo);
+            hi = static_cast<int>(lhi);
+        } else if (alpha_constrained) {
             lo = 1; hi = 16;
+        } else {
+            return false;
         }
         int len = std::uniform_int_distribution<int>{lo, hi}(rng);
 
@@ -376,8 +398,10 @@ bool RandomFiller::try_fill_primitive(Asn1Object* obj, const TypeDescriptor& def
 
     int64_t target = (dist > 0) ? def.constraints.size_lower
                                 : def.constraints.size_upper;
+    // A lower bound is kept whatever its size (up to 64K); a too-long value
+    // only needs to drop to 256 or below its upper bound.
     if (target < 0)   target = 0;
-    if (target > 256) target = 256;
+    if (target > (dist > 0 ? 65536 : 256)) target = (dist > 0 ? 65536 : 256);
     return resize_in_place(obj, def, static_cast<std::size_t>(target), rng_);
 }
 
@@ -522,6 +546,9 @@ bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth
         if (clo >= 0 && clo <= 65536) lo = std::max(lo, static_cast<int>(clo));
         if (chi >= lo && chi <= 65536) hi = std::min(hi, static_cast<int>(chi));
         if (lo > hi) hi = lo;  // the SIZE lower bound outranks max_seq_of
+    } else if (sc.flags & Constraints::SIZE_LOWER_BOUND) {
+        if (sc.size_lower > 0 && sc.size_lower <= 65536) lo = std::max(lo, static_cast<int>(sc.size_lower));
+        if (lo > hi) hi = lo;
     }
 
     // Exponential backoff: halve effective max every 2 depth levels so that

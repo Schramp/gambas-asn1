@@ -38,6 +38,7 @@ add_executable(asn1cpp
     src/codegen/JavaBackend.cpp
     src/config/Json.cpp
     src/sema/ContainedFields.cpp
+    src/sema/PerNkmSize.cpp
     src/main.cpp
 )
 

@@ -23,6 +23,7 @@
 #include "InnerSeq.hpp"
 #include "SeqDeepExt.hpp"
 #include "SeqDeepExtRootOnly.hpp"
+#include "BigExtEnum.hpp"
 
 using namespace asn1;
 
@@ -204,6 +205,52 @@ static void test_roundtrip_idempotent() {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
+// ── Extension bitmap wider than 64 additions ─────────────────────────────────
+
+/// @brief A sender with 200 extension additions, of which only the 71st is
+///        present, decodes on a receiver that knows two: the presence bitmap
+///        is as wide as the count on the wire and the one unknown addition is
+///        skipped by its length.
+/// @see X.691 §19.7, §19.9.
+static void test_wide_ext_bitmap() {
+    // ext bit 1, id 42, flag TRUE, normally small length 200 (bit 1 + 80C8),
+    // 200 presence bits with bit 70 set, open type: length 1, octet 00.
+    const std::vector<uint8_t> wire = {
+        0x95, 0x70, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00};
+    SeqWithExt r{};
+    PerDecodeStream s{wire};
+    IDecodeStream& ds = s;
+    bool ok = PerCodec::instance().decode(ds, SeqWithExt::asn_DEF, &r).has_value();
+    check("wide ext bitmap: decode ok", ok);
+    check("wide ext bitmap: one addition skipped", s.skipped_extensions() == 1);
+    check("wide ext bitmap: id==42", (int64_t)r.id == 42);
+    check("wide ext bitmap: known additions absent", r.note == nullptr && r.extra == nullptr);
+}
+
+// ── ENUMERATED extension ordinals ─────────────────────────────────────────────
+
+/// @brief Extension items of an extensible ENUMERATED encode their ordinal as
+///        a normally small non-negative whole number: 6 bits up to 63, then
+///        the octet count as a length and the octets.
+/// @see X.691 §14.3, §11.6. Expected bytes are asn1c's UPER for the same values.
+static void test_enum_ext_ordinals() {
+    struct Case { BigExtEnum::Enm v; std::vector<uint8_t> uper; const char* label; };
+    const Case cases[] = {
+        {BigExtEnum::e0,  {0x80}, "enum ext ordinal 0 = asn1c 80"},
+        {BigExtEnum::e63, {0xBF}, "enum ext ordinal 63 = asn1c BF"},
+        {BigExtEnum::e64, {0xC0, 0x50, 0x00}, "enum ext ordinal 64 = asn1c C05000"},
+    };
+    for (const auto& c : cases) {
+        BigExtEnum e{c.v};
+        auto enc = per_enc(BigExtEnum::asn_DEF, &e);
+        check(c.label, enc == c.uper);
+        BigExtEnum back{};
+        check("  ...decodes back", per_dec(c.uper, BigExtEnum::asn_DEF, &back) && back == c.v);
+    }
+}
+
 int main() {
     printf("\n── PER extension members (issue #13) ─────────────────────────────────\n");
 
@@ -214,6 +261,8 @@ int main() {
     test_choice_ext_alt();
     test_deep_ext_skip();
     test_roundtrip_idempotent();
+    test_enum_ext_ordinals();
+    test_wide_ext_bitmap();
 
     printf("\n  %d failure(s).\n", failures);
     if (failures) return 1;

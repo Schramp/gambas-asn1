@@ -461,6 +461,23 @@ static char peek_char(JerDecodeStream& s) {
     return s.at_end() ? '\0' : s.data()[0];
 }
 
+/// @brief Detects the JSON literal `null` (RFC 8259 §3) as the next value,
+///        without consuming it.
+/// @param s Decode stream, positioned before a value.
+/// @return The octets from the cursor through the end of `null`, leading
+///         whitespace included; 0 when the next value is not `null`.
+static std::size_t peek_null(const JerDecodeStream& s) {
+    std::string_view rest = s.remaining();
+    std::size_t i = 0;
+    while (i < rest.size() && is_ws(static_cast<unsigned char>(rest[i]))) ++i;
+    if (i == rest.size() || rest[i] != 'n' || rest.substr(i, 4) != "null") return 0;
+    if (rest.size() > i + 4) {
+        char c = rest[i + 4];
+        if (c != ',' && c != '}' && c != ']' && !is_ws(static_cast<unsigned char>(c))) return 0;
+    }
+    return i + 4;
+}
+
 } // namespace jer_detail
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1088,14 @@ struct ContainedJer {
     }
 };
 
+/// @brief True for a type whose own JER value can be `null`: NULL
+///        (X.697 §26) and an open type, which carries any value.
+/// @param def The member's type descriptor.
+static bool jer_value_may_be_null(const TypeDescriptor& def) {
+    return def.kind == TypeKind::Any
+        || (def.kind == TypeKind::Primitive && builtin_tag(def).number == 5);
+}
+
 struct SequenceJerHandler final : IJerTypeHandler {
     void encode(const JerCodec& codec, JerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
@@ -1131,6 +1156,15 @@ struct SequenceJerHandler final : IJerTypeHandler {
             const auto& mbr = spec.members[found];
             if (!mbr.type_descriptor) {
                 if (auto r = jer_detail::skip_json_value(s); !r) return r;
+                continue;
+            }
+            // X.697 §27.3.4: an absent OPTIONAL or DEFAULT member may be
+            // sent as `null`, unless its type can itself be `null`.
+            std::size_t null_len = mbr.optional ? jer_detail::peek_null(s) : 0;
+            if (null_len && !jer_value_may_be_null(*mbr.type_descriptor)) {
+                s.advance(null_len);
+                mbr.optional_ops.set_present(dest, false);
+                seen[found] = false;
                 continue;
             }
             if (mbr.optional)

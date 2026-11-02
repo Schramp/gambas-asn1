@@ -153,10 +153,11 @@ pub fn dump_tables<T: AsMemberRef + Default>(name: &str) -> String {
                 .map(|(i, r)| {
                     let untagged = matches!(s.get_member(i), MemberRef::Choice(c) if c.spec().own_tag.is_none());
                     format!(
-                        "{{\"name\":{},{},\"optional\":{},\"constraints\":{},\"xer_instruction\":\"{}\",\"contained\":{}}}",
+                        "{{\"name\":{},{},\"optional\":{},\"has_default\":{},\"constraints\":{},\"xer_instruction\":\"{}\",\"contained\":{}}}",
                         jstr(r.name),
                         jtagging(r.ber, Some(r.tag), untagged),
                         r.optional,
+                        r.has_default,
                         jconstraints(r.constraints),
                         xer_name(r.xer_instruction),
                         r.contained.is_some()

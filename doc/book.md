@@ -711,6 +711,128 @@ For the same reason the `SIZE` check on such a type only looks at the bits up to
 1 bit. A `BIT STRING` without named bits is sent at its own length. BER keeps the value
 as given (X.690 §8.6.2.4 allows either).
 
+**Length determinants and the 64K edge.** A length or element count with a `SIZE`
+whose upper bound is below 64K (65536) is written as the constrained whole number
+n − lb in just enough bits for the range (X.691 §11.9.4.1): `OCTET STRING (SIZE (0..65535))`
+sends 10 as the 16 bits `000a`. With an upper bound of 64K or more, or with no upper bound
+at all (`SIZE (lb..MAX)`), the length is n itself in the general form (X.691 §11.9.4.2,
+§11.9.3.5–§11.9.3.8): one octet up to 127, two octets below 16K, and from 16K on the value
+is sent in fragments of 16K, 32K, 48K or 64K octets, each preceded by its own length octet.
+So `SIZE (10..MAX)` sends 10 as `0a`, not as 0, and `SIZE (0..65536)` sends 65535 octets as
+a 48K fragment (`c3`) followed by a 16383-octet tail (`bfff`). The lower bound of
+`SIZE (lb..MAX)` does not shape the encoding, but it is still a constraint: validation
+rejects a shorter value (X.680 §51.5) and `RandomFiller` never generates one.
+
+#### SIZE on non-known-multiplier strings (`--per-nkm-size`)
+
+**Summary.** By default, gambas-asn1 ignores a `SIZE` constraint on `UTF8String` and the
+other non-known-multiplier string types when encoding PER, as X.691 requires. asn1c does
+not ignore it. If you exchange PER with asn1c-generated code (NGAP stacks, for example), you
+may need `--per-nkm-size=visible`, either for the whole build or per type through the
+sidecar. Read this section before deploying PER against an existing peer.
+
+**Which types.** X.691 §30.1 lists the *known-multiplier* character string types:
+NumericString, PrintableString, VisibleString (ISO646String), IA5String, BMPString and
+UniversalString. Each character takes a fixed number of octets. The others are
+UTF8String, TeletexString (T61String), VideotexString, GraphicString, GeneralString and
+ObjectDescriptor. For those:
+
+- X.691 §10.3.18: constraints are PER-visible only on integer types and
+  known-multiplier character string types.
+- X.691 §30.6: "constraints are never PER-visible, and the type can never be extensible
+  for PER encoding". PER sends the octets of the value (its BER contents) after an
+  unconstrained length determinant (X.691 §11.9.4.2), with no extension bit.
+
+So, under X.691, `UTF8String (SIZE(1..150, ...))` and `UTF8String` have the same PER
+encoding.
+
+**The two readings.**
+
+| `--per-nkm-size=` | PER encoding of a SIZE on these types | Who does this |
+|---|---|---|
+| `strict` (**default**) | Not PER-visible: unconstrained length, no extension bit, octets as they are. A `FROM` does not shape the encoding either. | X.691 §30.6. Erlang/OTP `asn1` (no option to change it), Python asn1tools, Wireshark's PER dissector (`dissect_per_UTF8String`). |
+| `visible` | Encoded as if PER-visible: constrained length (X.691 §11.9.4.1), extension bit when the SIZE has `...`. A `FROM` is handled as before this option existed (alphabet-indexed characters, except on UTF8String). | asn1c since it made the SIZE PER-visible (mouse07410/asn1c#491, #494). Peers built on it, such as Open5GS NGAP. gambas-asn1 before this option existed. **Not X.691-conformant.** |
+
+Example, `T ::= SEQUENCE { s UTF8String (SIZE(0..32)) }` with `s = "ab"`, UPER:
+
+```
+strict   02 61 62     length octet 2, then "ab"            (Erlang/OTP, X.691)
+visible  09 85 88     6-bit length 2, then "ab" unaligned  (asn1c)
+```
+
+The two forms cannot be read by each other. A strict decoder reading `09 85 88` sees a
+length of 9 octets and fails or misreads the rest of the message.
+
+**Where it matters.** 3GPP TS 38.413 (NGAP) defines `RANNodeNameUTF8String` and
+`AMFNameUTF8String` as `UTF8String (SIZE(1..150, ...))`. Equipment that follows the
+asn1c reading puts an extension bit and an 8-bit length in front of these IEs, for
+example in NGSetupRequest's `RANNodeName` / `Extended-RANNodeName`. Wireshark and strict
+decoders then fail on them. In ETSI LI (TS 102 232-3/-4), several `UTF8String (SIZE ...)`
+members exist, but ETSI LI is BER, where SIZE never changes the encoding.
+
+**What the option changes.** Only PER: the length and extension-bit encoding of those
+six types, when they carry a SIZE. Not affected:
+
+- BER, DER, XER and JER: identical in both modes.
+- Which values are valid (SIZE and FROM alike). "Not PER-visible" means only that the constraint does not shape
+  the encoding (X.691 §3.7.22). The SIZE still restricts the values of the type, and X.691
+  §10.3 (note) is explicit that this "does not ... imply that values violating such
+  constraints are allowed to be transmitted by a conforming sender". So in both modes
+  `validate()` checks the SIZE, and PER encode rejects a value outside a non-extensible
+  SIZE: a 40-character value in a `UTF8String (SIZE(0..32))` fails encoding either way. A
+  value outside the root of an extensible SIZE such as `SIZE(1..150, ...)` is a value of
+  the type and encodes in both modes. Decode is lenient: it accepts whatever length
+  arrives, and checking the decoded value is `validate()`'s job.
+- Known-multiplier strings, OCTET STRING, BIT STRING and SEQUENCE OF: their SIZE is always
+  PER-visible.
+
+**Choosing per type or member.** The mode is decided at code generation: the generated
+`Constraints` table of each affected type carries the flag `PER_SIZE_INVISIBLE` (512)
+under `strict`. Both C++ and Rust runtimes read it. The command-line mode is the default;
+a `per_nkm_size` array in the `--container-config` sidecar overrides it per type
+assignment or per member:
+
+```json
+{
+  "per_nkm_size": [
+    { "module": "NGAP-IEs", "type": "RANNodeNameUTF8String", "mode": "visible" },
+    { "module": "NGAP-IEs", "type": "AMFNameUTF8String",     "mode": "visible" },
+    { "module": "My-Module", "type": "Rec", "field": "label", "mode": "strict" }
+  ]
+}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `module` | Module name (required) |
+| `type` | Type assignment name (required). Without `field`, the entry covers the type itself (a string alias such as `RANNodeNameUTF8String`, which every member referring to it uses) and every inline member below it. |
+| `field` | A member or alternative of `type`, or a dotted path to a nested one (`outer.inner`). `*` names a SEQUENCE OF element (`items.*`). |
+| `mode` | `strict` or `visible` (required) |
+
+Precedence: a `field` entry, then a `type` entry, then `--per-nkm-size`. A file can
+hold only `per_nkm_size`, only `container_fields`, or both. An entry naming a type or
+member that is not in the compilation is a warning, and a duplicate entry is an error.
+
+`--list-per-nkm-size` prints every SIZE-constrained string of these types with the mode
+that applies and where the mode came from, then exits:
+
+```
+per-nkm-size: PerNkmSize.Name UTF8String mode=visible source=config
+per-nkm-size: PerNkmSize.Rec.s UTF8String mode=strict source=default
+per-nkm-size: PerNkmSize.Rec.g GeneralString mode=visible source=config
+```
+
+A member that refers to a string type by name (`named Name`) uses that type's mode and
+is not listed separately.
+
+**Upgrading.** Code generated before this option behaved like `visible`. To keep the
+PER bytes of an existing deployment, regenerate with `--per-nkm-size=visible`, or mark
+only the types your peer sends that way. Tests: `per_nkm_size_{strict,visible,mixed}`
+(C++) and `rust_per_nkm_size_*` (Rust) check all three setups against Erlang/OTP
+(strict) and asn1c (visible, mixed) bytes. xval_sweep runs each affected schema in both
+modes, and its asn1c PER rows on strict builds are marked `ASN1CNKMVISIBLE`
+(informational).
+
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
 
@@ -999,7 +1121,8 @@ Output:
 ### Constraint Validation
 
 In Debug builds, constraint validation runs automatically on encode and decode.
-Violations increment a counter and (optionally) record a path:
+Every `SIZE` form is checked, including one with only a lower bound (`SIZE (4..MAX)`
+rejects a 3-octet value). Violations increment a counter and (optionally) record a path:
 
 ```cpp
 #include <asn1cpp/Validate.hpp>
@@ -1166,6 +1289,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--package=<name>` | `--target=java` only: the Java package every generated class declares (e.g. `com.example.asn1`). Default: the unnamed package. Files are written flat into `-o <dir>`; point `-o` at the matching source directory. `-fprefix` is rejected with `--target=java`. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
+| `--per-nkm-size=strict\|visible` | PER handling of `SIZE` on UTF8String, TeletexString/T61String, VideotexString, GraphicString, GeneralString and ObjectDescriptor. `strict` (default): not PER-visible (X.691 §10.3.18, §30.6), matching Erlang/OTP, asn1tools and Wireshark. `visible`: encoded as if PER-visible, matching asn1c (not X.691-conformant). Only PER changes. Can be overridden per type or member with the sidecar's `per_nkm_size` entries. See [SIZE on non-known-multiplier strings](#size-on-non-known-multiplier-strings---per-nkm-size). |
+| `--list-per-nkm-size` | Print every SIZE-constrained string of those types with its effective mode and its source (`default` or `config`), then exit without generating code. |
 
 ### Comparison with asn1c CLI
 
@@ -1188,6 +1313,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 | `-no-gen-BER/XER/UPER` | — | Not applicable; all codecs are in the runtime |
 | `-gen-autotools` | — | Not applicable; CMake is the build system |
 | `-Werror` | — | Not implemented |
+| (no flag; SIZE on UTF8String etc. is always PER-visible) | `--per-nkm-size=visible` | asn1c's PER encoding; the gambas-asn1 default is `strict` (X.691 §30.6). See [SIZE on non-known-multiplier strings](#size-on-non-known-multiplier-strings---per-nkm-size). |
 
 ### Runtime Environment Variables
 
@@ -1309,11 +1435,36 @@ A failure names the seed, record index, and check that failed — narrowing the 
 a specific type within seconds.
 
 `RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
-members, randomly includes optional members, and respects SIZE and value constraints.
+members, randomly includes optional members, and respects SIZE (including a lower bound
+alone, `SIZE (lb..MAX)`) and value constraints. The xval_sweep `randgen` checks this
+itself: when a record generated without `--invalid-percent` breaks a constraint, it exits
+with status 2 (rerun with `ASN1CPP_DEBUG=0x40` to see which value), so a filler gap fails
+the sweep instead of showing up as a decoder disagreement.
 A [contained field](#contained-values) gets a random inner value, encoded through the
 field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the nested
 decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
 asserts on malformed input.
+
+Inside the repository, `validation-tools/xval_sweep/xval_sweep.py` runs the same kind
+of matrix (C++ vs Rust, BER/XER/JER/PER, every round trip) over each schema and PDU
+type in `targets.txt`. It adds independent ground-truth legs when the tools are found:
+
+- **asn1c**, when `asn1c` is on `PATH`, in `ASN1C_BIN_DIR` or in `/usr/local/bin`
+  (`--asn1c-dir DIR` to point elsewhere, `--no-asn1c` to skip it).
+- **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
+  it). The schema is compiled once with `-bber +der` and once with `-buper`, and
+  `erl_harness.escript` adds these rows per target:
+  - `orig vs erl.B2D(orig)`: Erlang decodes the records and re-encodes them as DER.
+  - `erl.PER vs cpp.PER` and `erl.PER vs rust.PER`: Erlang's UPER for the same
+    values.
+  - `orig vs erl.P2B(cpp.PER)`: Erlang decodes our UPER.
+  - `cpp.PER vs erl.P2P(cpp.PER)`: Erlang decodes our UPER and re-encodes it.
+
+  Every Erlang row is informational: a mismatch is printed for comparison but never
+  fails the target. Before compiling, comments and XER/JER encoding instructions are
+  removed from the schema copy, since BER and PER ignore them. When `erlc` rejects the
+  schema for one codec, only the rows that need that codec are skipped. Erlang has no
+  XER, and its JER is not compared.
 
 ### Fully Table-Based: Minimal Generated Code
 
@@ -1607,7 +1758,9 @@ UPER extension handling is complete:
 - Extension members: present-bitmap (normally-small number of extensions, then n bits),
   each present member wrapped as an open-type (length-prefixed octet string, X.691 §12).
 - CHOICE root alternatives encoded by canonical-tag-order index in ⌈log₂(n)⌉ bits.
-  Extension alternatives use the normally-small-non-negative-number encoding (X.691 §22.6).
+  Extension alternatives, and extension items of an ENUMERATED, use the normally small
+  non-negative whole number (X.691 2021 §23.8, §14.3, §11.6): 6 bits up to 63, above that
+  one bit, the octet count as a length determinant and the octets, as asn1c writes it.
 - Unknown extension members from newer senders are skipped by consuming the open-type
   length prefix. `PerDecodeStream::skipped_extensions()` reports the skip count.
 

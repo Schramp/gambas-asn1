@@ -141,26 +141,47 @@ pub fn get_nslength(r: &mut Reader) -> Result<usize, DecodeError> {
     }
 }
 
-/// X.691 §10.6 "normally small non-negative whole number" — used for a
-/// CHOICE's extension alternative index. Flag=0: value in `0..=63`, encode
-/// in 6 bits. Flag=1: delegate to [`put_length`].
+/// @brief Writes a normally small non-negative whole number: the choice
+///        index of a CHOICE extension alternative or the ordinal of an
+///        ENUMERATED extension item (X.691 §11.6).
+/// @note Bit 0 and `n` in 6 bits for `n` <= 63 (§11.6.1); otherwise bit 1
+///       and `n` as a semi-constrained whole number with lb 0, preceded by
+///       its octet count as a length determinant (§11.6.2, §11.7, §11.9).
 pub fn put_nsnn(w: &mut Writer, n: i64) {
     if n <= 63 {
         w.put_bits(0, 1);
         w.put_bits(n as u64, 6);
-    } else {
-        w.put_bits(1, 1);
-        put_length(w, n as usize);
+        return;
+    }
+    let v = n as u64;
+    let len = (v.ilog2() / 8 + 1) as usize;
+    w.put_bits(1, 1);
+    put_length(w, len);
+    for i in (0..len).rev() {
+        w.put_bits((v >> (8 * i)) & 0xFF, 8);
     }
 }
 
+/// @brief Decode counterpart of [`put_nsnn`].
+/// @return The number, or an error for a zero octet count or a number
+///         beyond `i64`.
 pub fn get_nsnn(r: &mut Reader) -> Result<i64, DecodeError> {
     let flag = r.get_bits(1)?;
     if flag == 0 {
-        Ok(r.get_bits(6)? as i64)
-    } else {
-        Ok(get_length(r)? as i64)
+        return Ok(r.get_bits(6)? as i64);
     }
+    let len = get_length(r)?;
+    if len == 0 {
+        return Err(DecodeError::new("PER: normally small number with no octets", r.bit_pos()));
+    }
+    let mut v: u64 = 0;
+    for _ in 0..len {
+        if v >> 55 != 0 {
+            return Err(DecodeError::new("PER: normally small number beyond i64", r.bit_pos()));
+        }
+        v = (v << 8) | r.get_bits(8)?;
+    }
+    Ok(v as i64)
 }
 
 /// True when a SIZE constraint selects the constrained-count form of the
@@ -301,6 +322,29 @@ mod tests {
         put_nsnn(&mut w2, 5); // <=63: flag 0 + 5 in 6 bits = 0 000101
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0b0_000101_0]);
+    }
+
+    /// X.691 §11.6.2: 64 or more is flag 1, the octet count as a length,
+    /// then the octets. asn1c writes an extensible ENUMERATED's 65th
+    /// extension item as `C0 50 00`: extension bit 1, then this field.
+    #[test]
+    fn nsnn_64_or_more_matches_asn1c() {
+        let mut w = Writer::new();
+        w.put_bits(1, 1);
+        put_nsnn(&mut w, 64);
+        w.flush();
+        let bytes = w.into_bytes();
+        assert_eq!(bytes, vec![0xC0, 0x50, 0x00]);
+        let mut r = Reader::new(&bytes);
+        r.get_bits(1).unwrap();
+        assert_eq!(get_nsnn(&mut r).unwrap(), 64);
+        for n in [255i64, 256, 65535, 1 << 40] {
+            let mut w = Writer::new();
+            put_nsnn(&mut w, n);
+            w.flush();
+            let bytes = w.into_bytes();
+            assert_eq!(get_nsnn(&mut Reader::new(&bytes)).unwrap(), n, "n = {n}");
+        }
     }
 
     fn sized(lower: i64, upper: i64) -> Constraints {
