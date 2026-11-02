@@ -1,6 +1,7 @@
 -- CHOICE alternatives whose type reaches the CHOICE again (X.680 §3.6.55):
--- directly (neg), through a SEQUENCE (Sum) and through an inline SEQUENCE
--- OF (list). The CHOICE's header must not need those types complete. A
+-- directly (neg), through a SEQUENCE (Sum), through an inline SEQUENCE OF
+-- (list) and through an inline SEQUENCE (pair). The CHOICE's header must
+-- not need those types complete, and no type may hold itself by value. A
 -- cycle that already passes an OPTIONAL member (Wrap.e) needs no further
 -- indirection: `wrap` stays inline in C++, whose OPTIONAL members are
 -- pointers.
@@ -11,6 +12,7 @@ Expr ::= CHOICE {
     neg   Expr,
     sum   Sum,
     list  SEQUENCE OF Expr,
+    pair  SEQUENCE { first Expr, second Expr OPTIONAL },
     wrap  Wrap
 }
 

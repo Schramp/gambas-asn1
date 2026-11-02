@@ -546,12 +546,16 @@ bool Generator::type_reaches(const ast::TypeDef& from, const std::string& target
         const ast::TypeDef* member_def = nullptr;
         std::string member_key;
         if (m->is_sequence() || m->is_choice() || m->is_set()) {
-            // Anonymous inline class-typed member — no independent ASN.1
-            // name to compare against `target`, but still needs a unique
-            // `visited` key so a cycle purely among anonymous members
-            // terminates.
+            // Inline class-typed member: promoted to a type of its own
+            // (generate_inline_types), whose name `target` may be when the
+            // walk starts inside that promoted type. Otherwise it still
+            // needs a unique `visited` key so a cycle purely among
+            // anonymous members terminates.
             member_def = m.get();
-            member_key = std::format("$anon:{}", static_cast<const void*>(m.get()));
+            auto promoted = promoted_member_name_.find(m.get());
+            member_key = promoted != promoted_member_name_.end()
+                ? promoted->second
+                : std::format("$anon:{}", static_cast<const void*>(m.get()));
         } else if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
             if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set())) {
