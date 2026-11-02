@@ -134,7 +134,9 @@ static std::string java_real_constraints(const RealRangeSpec& r) {
 }
 
 /// @brief A runtime `Constraints` constructor call for a SIZE constraint
-///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS),
+///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS,
+///        SIZE_LOWER_BOUND for SIZE(lb..MAX), PER_SIZE_INVISIBLE for a
+///        non-known-multiplier string under --per-nkm-size=strict),
 ///        PER length width (X.691 §11.9) and bounds. An unbounded upper
 ///        SIZE is stored as `Long.MAX_VALUE`, as in the other runtimes.
 ///        A permitted alphabet (X.680 §51.7) adds its sorted characters
@@ -144,7 +146,10 @@ template <class S>
 static std::string java_size_constraints(const S& spec) {
     int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
               | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
-              | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+              | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
+              | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
+              | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+                 ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     int64_t upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     std::string c = std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
                                 kWire, flags, spec.size_range_bits, java_long(spec.size_lower), java_long(upper));
@@ -919,7 +924,8 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
     std::string constraints = std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
     if (spec.has_size_constraint) {
         int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
-                  | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+                  | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+                  | (!spec.size_upper && spec.size_lower > 0 ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         constraints = std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
                                   kWire, flags, spec.range_bits, java_long(spec.size_lower),
                                   java_long(spec.size_upper.value_or(std::numeric_limits<int64_t>::max())));

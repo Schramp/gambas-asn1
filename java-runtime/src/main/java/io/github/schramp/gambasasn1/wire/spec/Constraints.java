@@ -45,6 +45,19 @@ public record Constraints(
     public static final int REAL_UPPER_OPEN = 128;
     /** The JER-visible base constraint admits only base 10 (X.697 §23.1.4). */
     public static final int REAL_BASE_10 = 256;
+    /**
+     * SIZE (and FROM) of a non-known-multiplier character string is not
+     * PER-visible (X.691 §10.3.18, §30.6): PER encodes the length as
+     * unconstrained with no extension bit. The constraint still restricts
+     * the values, so PER encode rejects a value that breaks it.
+     */
+    public static final int PER_SIZE_INVISIBLE = 512;
+    /**
+     * SIZE(lb..MAX): sizeLower is a lower bound with no upper bound
+     * (X.680 §51.5). PER encodes such a length as unconstrained
+     * (X.691 §11.9.4.2), so SIZE_CONSTRAINED stays clear.
+     */
+    public static final int SIZE_LOWER_BOUND = 1024;
 
     public static final Constraints UNCONSTRAINED =
             new Constraints(0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, null, 0, null, 0.0, 0.0);
