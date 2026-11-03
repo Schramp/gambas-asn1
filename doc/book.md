@@ -2395,6 +2395,43 @@ hits and not errors. The search does not look into unknown extensions, ANY,
 or a `Containing` field whose contents were not decoded. A decoded contained
 value is searched.
 
+**As a Maven dependency.** The runtime is the artifact
+`io.github.schramp.gambasasn1:gambasasn1-wire`, with sources and javadoc jars:
+
+```xml
+<dependency>
+  <groupId>io.github.schramp.gambasasn1</groupId>
+  <artifactId>gambasasn1-wire</artifactId>
+  <version>X.Y.Z</version>
+</dependency>
+```
+
+The generated sources compile against it with nothing else on the class
+path. `examples/contact-book/maven/` shows the setup: `make test` publishes
+`java-runtime` into a private local repository, generates the contact-book
+types, compiles them with Maven and checks the output. ctest runs it as
+`java_example_maven` when `mvn` is found. For a published version, run
+`make test GAMBASASN1_VERSION=X.Y.Z SKIP_PUBLISH=1`, which resolves the
+runtime from Maven Central.
+
+`./java-runtime/gradlew -p java-runtime publishToMavenLocal` installs a
+snapshot (`0.1.0-SNAPSHOT`, or `-Pversion=...`) into `~/.m2`.
+
+Releases go through the `java-release` workflow
+(`.github/workflows/java-release.yml`):
+
+1. Push a tag `java-runtime-vX.Y.Z`, or start the workflow by hand with a
+   version.
+2. The workflow runs the runtime tests and builds a signed bundle.
+3. It uploads the bundle to the Central Portal as a user-managed
+   deployment.
+4. You publish the deployment from the Portal's Deployments page.
+
+The workflow needs the repository secrets `CENTRAL_TOKEN_USERNAME` and
+`CENTRAL_TOKEN_PASSWORD` (a Central Portal user token for the
+`io.github.schramp` namespace), and `SIGNING_KEY` and `SIGNING_PASSWORD` (an
+ASCII-armoured PGP key whose public half is on a key server).
+
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
 BER-decoded and re-encoded by the Java runtime and must come back byte for

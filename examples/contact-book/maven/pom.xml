@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  contact-book example as a Maven project: the Java that asn1cpp generates
+  from ../contact.asn1, compiled against the gambasasn1-wire artifact the
+  way a user of the published runtime would. See the Makefile.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>example</groupId>
+  <artifactId>contact-book</artifactId>
+  <version>1</version>
+
+  <properties>
+    <gambasasn1.version>0.1.0-SNAPSHOT</gambasasn1.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.schramp.gambasasn1</groupId>
+      <artifactId>gambasasn1-wire</artifactId>
+      <version>${gambasasn1.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!-- The Makefile puts the generated sources and Main.java here. -->
+    <sourceDirectory>src</sourceDirectory>
+  </build>
+</project>
