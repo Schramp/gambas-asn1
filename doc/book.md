@@ -2234,6 +2234,40 @@ it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
 records nothing and costs one null check per node.
 
+**Finding values by type.** `Extract.all(root, T.class)` (package `query`)
+returns every value of type `T` below a decoded `root`, and `root` itself when
+it is one, in depth-first order. Pass the `Decoded` of a positions decode as
+well, and you get `Hit(value, bitOffset)` pairs:
+
+```java
+List<Timestamp> ts = Extract.all(pdu, Timestamp.class);
+List<Extraction.Hit<EncryptedPayload>> eps = Extract.all(pdu, decoded, EncryptedPayload.class);
+```
+
+Several targets are found in one pass by a compiled plan:
+
+```java
+ExtractPlan plan = ExtractPlan.of(PS_PDU::new, List.of(Timestamp.class, IRIContents.class));
+Extraction x = plan.run(pdu, decoded.positions());   // positions may be null
+x.values(Timestamp.class);  x.get(IRIContents.class);
+```
+
+A plan is built from the tables, not from data. It is compiled once per root
+type and target set, and cached, so `ExtractPlan.of` returns the same plan
+again. Members that cannot hold a target are left out of it, and
+`plan.toString()` prints what remains. A plan runs over a value of its root
+type or of any named type below it.
+
+A value matches when it is an instance of the target class, so an alias type
+(`A ::= B`, generated as `class A extends B`) also matches `B`. Builtin
+targets such as `Asn1Integer` match every value of that builtin.
+
+Every occurrence is a hit: each SEQUENCE OF element, each present OPTIONAL or
+extension member, and the selected CHOICE alternative. Absent members are not
+hits and not errors. The search does not look into unknown extensions, ANY,
+or a `Containing` field whose contents were not decoded. A decoded contained
+value is searched.
+
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
 BER-decoded and re-encoded by the Java runtime and must come back byte for

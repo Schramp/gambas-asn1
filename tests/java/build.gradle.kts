@@ -35,6 +35,8 @@ tasks.withType<JavaCompile>().configureEach {
 tasks.test {
     useJUnitPlatform()
     systemProperty("vectors.dir", layout.projectDirectory.dir("../vectors").asFile.absolutePath)
+    systemProperty("etsi.sample", layout.projectDirectory
+            .file("../../examples/sample.source.ETSI-LI-PS-PDU/nested-decoder/pdu-00000001.etsi").asFile.absolutePath)
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
