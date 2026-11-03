@@ -302,7 +302,7 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
         throw std::logic_error(std::format("emit_enumerated: {} has no items", spec.type_name));
     const std::string& t = spec.type_name;
     // A member type may not share its enclosing class's simple name (JLS §8.1).
-    std::string item_type = escape("Value", {t});
+    std::string item_type = escape("Value", {simple_name(t)});
     size_t root_count = spec.root_count > 0 ? static_cast<size_t>(spec.root_count) : spec.sorted_values.size();
     unsigned root_bits = 0;
     for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
@@ -897,7 +897,7 @@ void JavaBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         set = std::format("{}.set(\"{}\")", prim("Asn1CharString"), escape_string_literal(spec.string_val));
         break;
     case Kind::EnumRef:
-        set = std::format("v.set({}.{}.{})", type_name, escape("Value", {type_name}), escape(value_name(spec.enum_name)));
+        set = std::format("v.set({}.{}.{})", type_name, escape("Value", {simple_name(type_name)}), escape(value_name(spec.enum_name)));
         break;
     case Kind::Real: {
         // The exact bits, so infinities and -0 (X.680 §21) need no literal form.

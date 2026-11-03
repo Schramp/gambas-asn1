@@ -2086,6 +2086,21 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
     )
     list(APPEND java_leg_outputs ${gen_dir}/.stamp)
 endforeach()
+# Per-module layout probe: java_modules_test.asn1 holds several modules,
+# generated without --flat-package into gen.modules.<Module>, so javac
+# checks the names that only the package layout keeps apart.
+set(java_modules_gen ${JAVA_LEGS_GEN_DIR}/gen/modules)
+add_custom_command(
+    OUTPUT  ${java_modules_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_modules_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_modules_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.modules
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/java_modules_test.asn1 -o ${java_modules_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_modules_gen}/.stamp
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/java_modules_test.asn1
+    COMMENT "Generating Java from java_modules_test.asn1 (per-module layout)"
+)
+list(APPEND java_leg_outputs ${java_modules_gen}/.stamp)
 # Real-schema build probe: the ETSI LI PS-PDU module set, generated whole
 # (no -pdu filtering beyond the two message roots) into gen.etsi, one
 # sub-package per ASN.1 module, so the java_legs Gradle run compiles it

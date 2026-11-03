@@ -1,0 +1,12 @@
+-- Java per-module package layout (Java target, no flat-package option):
+-- each module's types in their own package, names that only a qualified
+-- reference tells apart. javac over the generated tree is the test.
+
+ModA DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- An ENUMERATED type whose own name is the one its item enum would take.
+    Value ::= ENUMERATED { red, green }
+
+    Holder ::= SEQUENCE { v Value, w Value DEFAULT green }
+
+END
