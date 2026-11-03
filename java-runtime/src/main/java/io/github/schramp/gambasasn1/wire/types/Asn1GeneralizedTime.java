@@ -6,7 +6,7 @@ import java.nio.charset.Charset;
 /**
  * GeneralizedTime (X.680 §46): a VisibleString with its own universal tag, held as the
  * time text itself, for example {@code 20240115143000.5Z}; the text is not checked against
- * the time format.
+ * the time format; {@link #parse()} reads it.
  *
  * <p>{@link #get()} maps each octet to the character of the same code (ISO 8859-1).
  */
@@ -27,6 +27,16 @@ public final class Asn1GeneralizedTime extends Asn1CharString {
     @Override
     protected Charset charset() {
         return java.nio.charset.StandardCharsets.ISO_8859_1;
+    }
+
+    /**
+     * Reads the text as a time: its fields, how it relates to UTC and, for
+     * a UTC or offset time, its instant. Malformed text gives a
+     * {@link TimeParse.Malformed} that says why; the text stays the value
+     * either way.
+     */
+    public TimeParse parse() {
+        return TimeText.generalized(get());
     }
 
     @Override
