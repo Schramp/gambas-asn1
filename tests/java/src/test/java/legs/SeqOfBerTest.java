@@ -96,7 +96,7 @@ class SeqOfBerTest {
     @Test
     void membersSetByAccessorEncodeAsAsn1cDoes() {
         Holder h = new Holder();
-        h.opt(new SeqOf<>(Asn1Boolean::new));
+        h.opt(new gen.seqof_ber.HolderOpt());
         h.opt().add(new Asn1Boolean(true));
         h.opt().add(new Asn1Boolean(false));
         h.named().add(i(4));

@@ -2163,8 +2163,13 @@ yet. A collection member's SIZE is its collection type's `CONSTRAINTS`.
 A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
 `spec`). `items()` is the element list, which can be changed in place, and
 `add(v)` appends an element. A named SEQUENCE OF / SET OF type is a class that
-extends one of these. An inline collection member uses them directly; a
-nested one is a collection of collections. Decoding replaces the elements a
+extends one of these. An inline collection member or alternative
+(`parties [9] SET SIZE(1..10) OF Party` in `Rec`) has a class generated for
+it too, named after its type and member (`RecParties extends SetOf<Party>`),
+and the field has that class as its type, so `Extract.all(v, RecParties.class)`
+finds it; to set the member, pass a `new RecParties()`. A nested inline
+collection's elements have generated classes of their own as well
+(`HolderNested extends SeqOf<HolderNestedAnon>`). Decoding replaces the elements a
 collection held. A SET OF keeps the order its elements were added or decoded
 in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
 

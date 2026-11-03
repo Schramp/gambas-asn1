@@ -211,4 +211,13 @@ class ExtractTest {
         assertTrue(hits.get(0).bitOffset() > 0);
         assertTrue(Extract.all(pdu, Asn1OctetString.class).stream().anyMatch(o -> o == liid.value));
     }
+
+    @Test
+    void anInlineSequenceOfIsFoundByItsGeneratedClass() {
+        gen.seqof_ber.Holder h = new gen.seqof_ber.Holder();
+        BerObject.decode(h, hex("301930003100A000A10830060101FF010100300302010463003000"));
+        assertSame(h.opt(), Extract.all(h, gen.seqof_ber.HolderOpt.class).get(0));
+        assertTrue(ExtractPlan.of(gen.etsi.PS_PDU::new,
+                gen.etsi.UmtsHI2OperationsIRI_ParametersPartyInformation.class).canMatch());
+    }
 }
