@@ -379,25 +379,6 @@ std::string JavaBackend::native_builtin_type(ast::BuiltinType bt) const {
     return cls;
 }
 
-/// @brief The Java type of a SEQUENCE OF / SET OF member, level by level
-///        from its ElemShape: `SeqOf` or `SetOf` (X.680 §25, §27) around
-///        the element type.
-/// @param kind  The collection kind at this level.
-/// @param elem  The element's shape.
-static std::string java_collection_type(SeqOfKind kind, const ElemShape& elem) {
-    std::string inner = elem.kind == SeqOfKind::None ? elem.leaf_native_type
-                                                     : java_collection_type(elem.kind, *elem.nested);
-    return std::format("{}.spec.{}<{}>", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", inner);
-}
-
-/// @brief A new, empty collection of a SEQUENCE OF / SET OF member, with
-///        the factory of its elements (nested collections included).
-static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
-    std::string factory = elem.kind == SeqOfKind::None ? elem.leaf_native_type + "::new"
-                                                       : "() -> " + java_collection_new(elem.kind, *elem.nested);
-    return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
-}
-
 /// @brief Emit a CHOICE type assignment (X.680 §28) as a class holding the
 ///        selected alternative's index and value, and the `SPEC` table:
 ///        one `AltMeta` row per alternative in Generator's canonical
@@ -471,16 +452,15 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         return n;
     };
     bool extensible = spec.ext_at >= 0;
-    // An inline collection alternative's SeqOf/SetOf type and factory
-    // come from its ElemShape, as for a SEQUENCE member.
+    // An inline collection alternative has the class generated for its
+    // collection type, as a SEQUENCE member has.
     auto alt_type = [&](const ChoiceAlternativeSpec& a) {
-        return a.seq_of_kind != SeqOfKind::None ? java_collection_type(a.seq_of_kind, a.elem_shape) : a.mtype;
+        return a.seq_of_kind != SeqOfKind::None ? escape(synthetic_name(spec.type_name, a.asn1_name)) : a.mtype;
     };
     auto alt_factory = [&](const ChoiceAlternativeSpec& a) {
         if (a.contained)
             return std::format("() -> new {}({}::new, {}.CONTAINED)", a.mtype, a.contained_inner, a.contained_base);
-        return a.seq_of_kind != SeqOfKind::None ? "() -> " + java_collection_new(a.seq_of_kind, a.elem_shape)
-                                                : a.mtype + "::new";
+        return alt_type(a) + "::new";
     };
 
     auto& os = session.buffer(declaration_extension());
@@ -515,9 +495,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         const auto& a = spec.alternatives[i];
         std::string n = accessor(a);
         os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
-        // An inline collection or contained value has a generic type, so the cast from the
-        // stored Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
-        if (a.seq_of_kind != SeqOfKind::None || a.contained) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
+        // A contained value has a generic type, so the cast from the stored
+        // Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
+        if (a.contained) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
         os << std::format("    public {} {}() {{\n", alt_type(a), n);
         os << std::format("        return index == {} ? ({}) value : null;\n", i, alt_type(a));
         os << "    }\n\n";
@@ -669,9 +649,11 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     std::vector<std::string> names, types, news;
     for (const auto& m : spec.members) {
         names.push_back(accessor(m));
-        bool coll = m.seq_of_kind != SeqOfKind::None;
-        types.push_back(coll ? java_collection_type(m.seq_of_kind, m.elem_shape) : m.mtype);
-        news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape)
+        // An inline SEQUENCE OF / SET OF member has the class generated for
+        // its collection type, so finding values by class sees that type.
+        std::string coll = m.seq_of_kind != SeqOfKind::None ? escape(synthetic_name(spec.type_name, m.asn1_name)) : "";
+        types.push_back(!coll.empty() ? coll : m.mtype);
+        news.push_back(!coll.empty() ? std::format("new {}()", coll)
                             : m.contained ? std::format("new {}({}::new, {}.CONTAINED)", m.mtype, m.contained_inner, m.contained_base)
                             : m.has_default_setter ? std::format("{}.make()", default_class(member_descriptor_base_name(t, m.mname)))
                             : std::format("new {}()", m.mtype));
