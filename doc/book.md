@@ -2331,6 +2331,36 @@ CHOICE, ENUMERATED and named SEQUENCE OF class returns this text from
 which octet and character strings are cut off; the defaults are 32 and 128.
 A cut-off value ends in a comment that gives its full size.
 
+**Reading time values.** `Asn1UtcTime` and `Asn1GeneralizedTime` keep the
+time text exactly as it was received. Their `parse()` method reads that text
+into a `TimeParse`, which is one of two results:
+
+- `TimeParse.Time` holds the fields (year to second, `nanos`,
+  `millisecond()`), the precision and the number of fraction digits. Its
+  zone is `LOCAL` (no indicator), `UTC` (`Z`) or `OFFSET` (`±hh[mm]`, with
+  `offsetMinutes`). It also has `localDateTime()`, and for UTC and offset
+  times `offsetDateTime()` and `instant()`.
+- `TimeParse.Malformed` gives the reason and the character index. A
+  malformed text is never read as zero.
+
+```java
+switch (t.parse()) {
+    case TimeParse.Time time -> time.instant().ifPresent(this::use);
+    case TimeParse.Malformed bad -> log(bad.reason() + " at " + bad.index());
+}
+```
+
+UTCTime (X.680 §47) is `YYMMDDhhmm[ss]`, then `Z` or `±hhmm`. Its two-digit
+year is read in the window 1950..2049, as X.509 does. X.680 itself gives no
+century, so the result has `twoDigitYear()` set.
+
+GeneralizedTime (X.680 §46) is `YYYYMMDDhh[mm[ss]]`, then an optional
+fraction of the last component after `.` or `,`, then nothing, `Z` or
+`±hh[mm]`. A fraction of an hour or a minute is spread over the lower
+fields, so `2024011514,25` reads as 14:15:00. Hour 24 and a time difference
+beyond 18 hours are malformed. Second 60 (a leap second) is accepted for
+GeneralizedTime only.
+
 **Finding values by type.** `Extract.all(root, T.class)` (package `query`)
 returns every value of type `T` below a decoded `root`, and `root` itself when
 it is one, in depth-first order. Pass the `Decoded` of a positions decode as
