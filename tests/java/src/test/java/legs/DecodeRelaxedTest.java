@@ -77,6 +77,19 @@ class DecodeRelaxedTest {
     }
 
     @Test
+    void aNullDecoderSettingMeansTheDefaults() {
+        byte[] der = plain().der();
+        Plain want = new Plain();
+        BerObject.decode(want, der);
+        Plain ber = new Plain();
+        BerObject.decode(ber, der, null);
+        assertEquals(want, ber);
+        Plain xer = new Plain();
+        XerObject.decode(xer, XerObject.encode(want), null);
+        assertEquals(want, xer);
+    }
+
+    @Test
     void berRelaxedTakesALongBoolean() {
         byte[] der = plain().der();
         // 01 01 FF (flag) becomes 01 02 00 FF.

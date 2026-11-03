@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.containing.Pick;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
@@ -85,7 +86,7 @@ class ContainingXerTest {
         assertTrue(text.contains("<viaConstraint>\n        <Inner>\n"), text);
         assertTrue(text.contains("        <!-- raw: 3003800105 -->\n    </viaConstraint>\n"), text);
         Asn1Pdu back = ContainingTest.TYPES.get("Holder").get();
-        XerObject.decode(back, text.getBytes(StandardCharsets.UTF_8), raw);
+        XerObject.decode(back, text.getBytes(StandardCharsets.UTF_8), DecodeOptions.DEFAULT.withContained(raw));
         assertArrayEquals(vec.der(), BerObject.encode(back));
         String hex = new String(XerObject.encode(h, new ContainedOptions(null, false, ContainedText.HEX, null)),
                 StandardCharsets.UTF_8);
