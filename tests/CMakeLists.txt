@@ -2931,6 +2931,17 @@ if(WITH_JAVA_RUNTIME_TEST)
         COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder test
                 ASNCPP=$<TARGET_FILE:asn1cpp>)
     set_tests_properties(java_example_nested_decoder PROPERTIES TIMEOUT 600 LABELS "java")
+    # The published-artifact path: java-runtime as a Maven dependency
+    # (gambasasn1-wire, from a private local repository) of a Maven build of
+    # generated code. Needs mvn and, on first run, network for Maven's plugins.
+    find_program(MVN_EXECUTABLE mvn)
+    if(MVN_EXECUTABLE)
+        add_test(NAME java_example_maven
+            COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/contact-book/maven test
+                    ASNCPP=$<TARGET_FILE:asn1cpp> MVN=${MVN_EXECUTABLE})
+        set_tests_properties(java_example_maven PROPERTIES TIMEOUT 600 LABELS "java"
+            RESOURCE_LOCK java_runtime_build)
+    endif()
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
