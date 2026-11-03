@@ -1287,7 +1287,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
 | `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
-| `--package=<name>` | `--target=java` only: the root Java package (e.g. `com.example.asn1`; default: the unnamed package). Each ASN.1 module's types go in a sub-package named after the module, transliterated like a type name (`-` becomes `_`) and never recased: `MicroSecondTimeStamp` of module `LI-PS-PDU` is `com.example.asn1.LI_PS_PDU.MicroSecondTimeStamp`, in `-o <dir>/LI_PS_PDU/`. Point `-o` at the source directory of `<name>`. A type name defined in several modules keeps its ASN.1 name in each module's package, and a reference to another module's type uses its fully qualified name, so no imports are needed. `-fprefix` is rejected with `--target=java`. |
+| `--package=<name>` | `--target=java` only: the root Java package (e.g. `com.example.asn1`); required unless `--flat-package` is given, where it defaults to the unnamed package. Each ASN.1 module's types go in a sub-package named after the module, transliterated like a type name (`-` becomes `_`) and never recased: `MicroSecondTimeStamp` of module `LI-PS-PDU` is `com.example.asn1.LI_PS_PDU.MicroSecondTimeStamp`, in `-o <dir>/LI_PS_PDU/`. Point `-o` at the source directory of `<name>`. This layout needs `--package`, and its first segment may not be `value`, `index`, `unknown`, `code`, `ext`, `i`, `item`, `o`, `other` or `v`, names generated classes declare themselves. A type name defined in several modules keeps its ASN.1 name in each module's package, and a reference to another module's type uses its fully qualified name, so no imports are needed. `-fprefix` is rejected with `--target=java`. |
 | `--flat-package` | `--target=java` only: put every class directly in `--package`, files flat in `-o <dir>`. A type name defined in more than one module then gets its module's name in front (`EpsHI2OperationsIRI_Parameters`), as in C++ and Rust. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
@@ -2030,7 +2030,11 @@ the test dependencies.
 The Java backend (`--target=java`) keeps ASN.1 names as the other backends
 do (hyphen to underscore, no recasing). A name that is a Java keyword,
 literal (`true`, `false`, `null`) or contextual keyword (`record`, `var`,
-`yield`, ...) gets a trailing underscore: `class` becomes `class_`.
+`yield`, ...) gets a trailing underscore: `class` becomes `class_`. So does a
+name equal to the first segment of a package that generated code names in
+full: `io` and `java` always, and in the per-module layout the root of
+`--package` (with `--package=gen.etsi`, a member `gen` becomes `gen_`). A
+field or type of that name would otherwise hide the package (JLS §6.4.2).
 
 A builtin type assignment (`Flag ::= BOOLEAN`) becomes a class holding the
 runtime's builtin wrapper in its `value` field; `BerObject.encode`/`decode`

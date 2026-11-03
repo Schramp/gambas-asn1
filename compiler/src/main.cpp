@@ -100,11 +100,12 @@ static void print_help(const char* prog) {
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
         "  --target=<lang>             Output language: cpp (default), rust or java (WIP).\n"
-        "  --package=<name>            (java) Package every generated class declares,\n"
-        "                              e.g. com.example.asn1. Default: the unnamed package.\n"
-        "                              Each ASN.1 module's types go in a sub-package\n"
-        "                              named after the module (<name>.<Module>).\n"
-        "  --flat-package              (java) Put every type in the --package itself.\n"
+        "  --package=<name>            (java) Root package, e.g. com.example.asn1. Each\n"
+        "                              ASN.1 module's types go in a sub-package named\n"
+        "                              after the module (<name>.<Module>). Required\n"
+        "                              unless --flat-package is given.\n"
+        "  --flat-package              (java) Put every type in the --package itself\n"
+        "                              (default there: the unnamed package).\n"
         "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
         "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
         "                              EXTERNAL, auto-included in every module).\n"
@@ -256,6 +257,12 @@ int main(int argc, char** argv) {
         }
         if (!asn1::codegen::JavaBackend::valid_package(java_package)) {
             std::cerr << "error: --package value '" << java_package << "' is not a valid Java package name\n";
+            return 1;
+        }
+    }
+    if (target == "java" && !java_flat) {
+        if (auto why = asn1::codegen::JavaBackend::module_layout_problem(java_package); !why.empty()) {
+            std::cerr << "error: " << why << "\n";
             return 1;
         }
     }

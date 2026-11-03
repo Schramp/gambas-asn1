@@ -1089,4 +1089,18 @@ bool JavaBackend::valid_package(std::string_view pkg) {
     }
 }
 
+std::string JavaBackend::module_layout_problem(std::string_view pkg) {
+    if (pkg.empty())
+        return "the per-module layout needs --package=<root> (or use --flat-package)";
+    // Fields and local variables generated classes declare themselves.
+    static const std::unordered_set<std::string_view> generated = {
+        "value", "index", "unknown", "code", "ext", "i", "item", "o", "other", "v",
+    };
+    auto root = pkg.substr(0, pkg.find('.'));
+    if (generated.count(root))
+        return std::format("--package root '{}' is a name generated classes declare, which would "
+                           "hide the package; choose another root", root);
+    return {};
+}
+
 } // namespace asn1::codegen
