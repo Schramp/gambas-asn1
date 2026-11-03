@@ -129,31 +129,43 @@ public final class XerPrimitive {
      * @see "X.693 §17.9"
      */
     private static void encodeReal(Asn1Real r, XerWriter w) {
+        double d = r.value();
+        boolean decimal = r.exact() != null && r.exact().storage() == Asn1Real.Storage.DECIMAL;
+        if (!decimal && (Double.isNaN(d) || Double.isInfinite(d))) {
+            w.empty(realText(r));
+        } else {
+            w.ascii(realText(r));
+        }
+    }
+
+    /**
+     * The text of {@code r} as XER writes it (see {@link #encodeReal}),
+     * a special value as its name, such as {@code PLUS-INFINITY}.
+     */
+    public static String realText(Asn1Real r) {
         Asn1Real.Exact x = r.exact();
         if (x != null && x.storage() == Asn1Real.Storage.DECIMAL) {
-            w.ascii(x.negative() ? "-" : "").ascii(new String(x.mantissa(), StandardCharsets.US_ASCII));
-            if (x.exponent() != 0) {
-                w.ascii("E" + x.exponent());
-            }
-            return;
+            return (x.negative() ? "-" : "") + new String(x.mantissa(), StandardCharsets.US_ASCII)
+                    + (x.exponent() != 0 ? "E" + x.exponent() : "");
         }
         double d = r.value();
         if (Double.isNaN(d)) {
-            w.empty("NOT-A-NUMBER");
-        } else if (Double.isInfinite(d)) {
-            w.empty(d > 0 ? "PLUS-INFINITY" : "MINUS-INFINITY");
-        } else if (d == 0.0) {
-            w.ascii(1 / d < 0 ? "-0" : "0");
-        } else {
-            String s = new BigDecimal(d).setScale(15, RoundingMode.HALF_EVEN).toPlainString();
-            int dot = s.indexOf('.');
-            int last = s.length() - 1;
-            while (last > dot + 1 && s.charAt(last) == '0') {
-                last--;
-            }
-            // %.15f keeps the sign of a value that rounds to zero; BigDecimal does not.
-            w.ascii(d < 0 && s.charAt(0) != '-' ? "-" : "").ascii(s.substring(0, last + 1));
+            return "NOT-A-NUMBER";
         }
+        if (Double.isInfinite(d)) {
+            return d > 0 ? "PLUS-INFINITY" : "MINUS-INFINITY";
+        }
+        if (d == 0.0) {
+            return 1 / d < 0 ? "-0" : "0";
+        }
+        String s = new BigDecimal(d).setScale(15, RoundingMode.HALF_EVEN).toPlainString();
+        int dot = s.indexOf('.');
+        int last = s.length() - 1;
+        while (last > dot + 1 && s.charAt(last) == '0') {
+            last--;
+        }
+        // %.15f keeps the sign of a value that rounds to zero; BigDecimal does not.
+        return (d < 0 && s.charAt(0) != '-' ? "-" : "") + s.substring(0, last + 1);
     }
 
     private static double decodeReal(XerReader r) {

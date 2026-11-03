@@ -184,6 +184,16 @@ static std::string java_member_xer_instruction(const TaggedMemberSpec& m) {
     return std::format("{}.spec.XerInstruction.{}", kWire, name);
 }
 
+/// @brief The `toString()` override of a generated value class: the
+///        runtime's `ValuePrinter` text, so a test failure shows the value
+///        (display only, never parsed back).
+static std::string java_to_string_method() {
+    return std::format("\n    @java.lang.Override\n"
+                       "    public java.lang.String toString() {{\n"
+                       "        return {}.print.ValuePrinter.print(this);\n"
+                       "    }}\n", kWire);
+}
+
 /// @brief Emit the members every value-holding generated class shares:
 ///        the `AsMemberRef` answers for a builtin wrapped in `value`.
 /// @param os       The `.java` buffer.
@@ -273,7 +283,8 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 /// @brief Emit an ENUMERATED type assignment (X.680 §20) as a class whose
 ///        nested Java enum names the items in declaration order, with the
 ///        `ENUM_SPEC` table (items sorted by value, X.691 §11.4) and the
-///        `EnumSlot` mapping between items and their values.
+///        `EnumSlot` mapping between items and their values, and a
+///        `toString()` through the runtime's `ValuePrinter`.
 /// @param spec    Resolved items, extensibility and tag.
 /// @param session Per-type output session; writes the `.java` buffer.
 void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -339,6 +350,7 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public int hashCode() {\n        return value.hashCode();\n    }\n";
+    os << java_to_string_method();
     os << ber_framing_method(spec);
     os << "}\n";
 }
@@ -392,7 +404,7 @@ static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
 ///        §31.2.7), `extAt` and `rangeBits` (X.691 §23.6). Each
 ///        alternative gets a getter (its value, or null when another is
 ///        selected) and a setter that selects it, both named after the
-///        alternative.
+///        alternative. `toString()` goes through the runtime's `ValuePrinter`.
 /// @param spec    Resolved alternatives, tags and dispatch table.
 /// @param session Per-type output session; writes the `.java` buffer.
 /// @throws std::logic_error for an alternative shape this backend does
@@ -572,6 +584,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "    public int hashCode() {\n";
     os << "        return index < 0 ? -1 : 31 * index + value.asMemberRef().hashCode();\n";
     os << "    }\n";
+    os << java_to_string_method();
     os << "}\n";
 }
 
@@ -583,7 +596,8 @@ static std::string default_class(const std::string& base) {
 /// @brief Emit one SEQUENCE or SET type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
-///        (`BerObject`) reads. The class holds no codec code.
+///        (`BerObject`) reads, and a `toString()` through the runtime's
+///        `ValuePrinter`. The class holds no codec code.
 /// @param spec    Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param session Per-type output session.
 /// @see X.680 §25 (SEQUENCE), §27 (SET; members in canonical tag order,
@@ -776,6 +790,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "    public int hashCode() {\n        int h = 1;\n";
     os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n            h = 31 * h + getMember(i).hashCode();\n        }\n";
     os << "        return h;\n    }\n";
+    os << java_to_string_method();
     os << "}\n";
 }
 
@@ -915,7 +930,8 @@ void JavaBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///        extends the runtime's `SeqOf` / `SetOf` collection: its own XER
 ///        names (X.693 §12), its SIZE constraint (X.680 §51.5) and its
 ///        BER framing when the type assignment has a tag of its own
-///        (X.680 §31.2). The class holds no codec code.
+///        (X.680 §31.2), and a `toString()` through the runtime's
+///        `ValuePrinter`. The class holds no codec code.
 /// @param spec    Resolved, backend-agnostic decision (see SeqOfSpec).
 /// @param session Per-type output session.
 void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
@@ -955,6 +971,7 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
     }
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.Constraints pduConstraints() {{\n        return CONSTRAINTS;\n    }}\n", kWire);
+    os << java_to_string_method();
     os << ber_framing_method(spec);
     os << "}\n";
 }

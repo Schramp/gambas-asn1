@@ -2288,6 +2288,49 @@ DecodeOptions opts = DecodeOptions.DEFAULT
 - **Constraint checks** under XER and JER run over the decoded value once
   the document is read, and the error offset is the end of the document.
 
+**Printing values.** `ValuePrinter.print(v)` (package `print`) renders any
+generated value as text in the layout of ASN.1 value notation. It is for
+people to read, and is never parsed back. Every generated SEQUENCE, SET,
+CHOICE, ENUMERATED and named SEQUENCE OF class returns this text from
+`toString()`, so a failed `assertEquals` shows both values:
+
+```
+{
+  color blue,
+  pick s : "z",
+  -- opick absent
+  points {
+    /* [0] */ {
+      x 1,
+      y 2
+    }
+  },
+  data '0A0B'H,
+  payload CONTAINING {
+    id 5
+  }
+}
+```
+
+- SEQUENCE and SET members are listed by name, one per line. An absent
+  OPTIONAL member is a `-- name absent` line.
+- A CHOICE is shown as `alternative : value`.
+- SEQUENCE OF elements are numbered in `/* [i] */` comments.
+- An ENUMERATED value is shown as its identifier, and an OBJECT IDENTIFIER
+  as `{ arcs }`.
+- REAL is shown as XER writes it.
+- Strings and times are shown in quotes, with quote characters doubled and
+  control characters shown as `.`.
+- OCTET STRING and ANY are shown as `'..'H`. When all octets are printable,
+  a comment shows them as text.
+- A BIT STRING is shown as `'..'B` up to 64 bits, and as hex beyond that.
+- A contained value that was decoded is shown as `CONTAINING value`.
+  Otherwise its octets are shown, with its status and the reason.
+
+`new ValuePrinter(maxOctets, maxChars).format(v)` changes the limits after
+which octet and character strings are cut off; the defaults are 32 and 128.
+A cut-off value ends in a comment that gives its full size.
+
 **Finding values by type.** `Extract.all(root, T.class)` (package `query`)
 returns every value of type `T` below a decoded `root`, and `root` itself when
 it is one, in depth-first order. Pass the `Decoded` of a positions decode as
