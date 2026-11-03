@@ -1893,6 +1893,16 @@ add_test(NAME pdu_filter_absent
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
+# Stale generated files: a module dropped between runs, or a layout switch,
+# leaves no files behind (Generator::remove_stale_files and its manifest).
+add_test(NAME stale_files
+    COMMAND ${CMAKE_COMMAND}
+            -DCOMPILER=$<TARGET_FILE:asn1cpp>
+            -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/asn1/stale
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/stale_files_out
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_stale_files.cmake)
+set_tests_properties(stale_files PROPERTIES TIMEOUT 60)
+
 # ---- JER basic-type unit test (#156) ----------------------------------------
 add_executable(test_jer_basic jer/test_jer_basic.cpp)
 target_link_libraries(test_jer_basic PRIVATE asn1cpp_runtime)
