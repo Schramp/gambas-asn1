@@ -278,6 +278,82 @@ class PositionsTest {
         }
     }
 
+    @Test
+    void aBuiltinAliasObjectIsTheSameNodeAsItsValue() {
+        byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
+                + "160171A6083006020105020106");
+        Refs v = new Refs();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertTrue(p.contains(v.tbool()));
+        assertEquals(p.bitOffset(v.tbool().value), p.bitOffset(v.tbool()));
+        assertEquals(8 * 5, p.sizeBits(v.tbool()));
+        assertEquals(8 * 17, p.valueBitOffset(v.texp()));
+    }
+
+    @Test
+    void berValueSpans() {
+        // 30 11 | 30 0C | 02 01 01 | 01 01 00 | 0C 00 | 04 00 | 05 00 | 02 01 02
+        byte[] der = hex("3011300C0201010101000C0004000500020102");
+        Outer v = new Outer();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertEquals(8 * 2, p.valueBitOffset(v));
+        assertEquals(8 * 17, p.valueSizeBits(v));
+        assertEquals(8 * 4, p.valueBitOffset(v.inner()));
+        assertEquals(8 * 16, p.valueEndBitOffset(v.inner()));
+        assertEquals(p.contentsBitOffset(v.inner().num()), p.valueBitOffset(v.inner().num()));
+        assertEquals(8, p.valueSizeBits(v.inner().num()));
+        assertEquals(0, p.valueSizeBits(v.inner().data()));
+    }
+
+    @Test
+    void berChoiceValueIsItsAlternativesAndEnumeratedItsContents() {
+        // 30 32 | 0A 01 02 (color) | ... | 16 01 7A (pick s "z") at 29
+        byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
+                + "160171A6083006020105020106");
+        Refs v = new Refs();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertEquals(8 * 4, p.valueBitOffset(v.color()));
+        assertEquals(8, p.valueSizeBits(v.color()));
+        assertEquals(-1, p.contentsBitOffset(v.pick()));
+        assertEquals(8 * 28, p.valueBitOffset(v.pick()));
+        assertEquals(8, p.valueSizeBits(v.pick()));
+    }
+
+    @Test
+    void bitStringValueLeavesOutTheUnusedBitsOctetAndTheUnusedBits() {
+        io.github.schramp.gambasasn1.wire.types.Asn1BitString b = new io.github.schramp.gambasasn1.wire.types.Asn1BitString();
+        // 03 03 04 A5 B0: unused-bits octet 4, value 1010 0101 1011 (12 bits).
+        byte[] der = hex("030304A5B0");
+        Positions p = BerObject.decodeWithPositions(b, der, null).positions();
+        assertEquals(8 * 2, p.contentsBitOffset(b));
+        assertEquals(8 * 3, p.contentsSizeBits(b));
+        assertEquals(8 * 3, p.valueBitOffset(b));
+        assertEquals(12, p.valueSizeBits(b));
+        PerObject.decodeWithPositions(new io.github.schramp.gambasasn1.wire.types.Asn1BitString(), PerObject.encode(b), null);
+        io.github.schramp.gambasasn1.wire.types.Asn1BitString c = new io.github.schramp.gambasasn1.wire.types.Asn1BitString();
+        Positions q = PerObject.decodeWithPositions(c, PerObject.encode(b), null).positions();
+        // An unconstrained BIT STRING: an 8-bit length, then the bits (X.691 §16.11).
+        assertEquals(8, q.valueBitOffset(c));
+        assertEquals(12, q.valueSizeBits(c));
+    }
+
+    @Test
+    void perContainedAndOctetStringValues() {
+        byte[] uper = row("containing_test.vectors", "Holder", "<viaConstraint>008280").asn1cUper();
+        Holder v = new Holder();
+        Positions p = PerObject.decodeWithPositions(v, uper, null).positions();
+        for (var c : java.util.List.of(v.viaConstraint(), v.viaAlias(), v.viaConfig(), v.viaSized())) {
+            assertEquals(p.contentsBitOffset(c), p.valueBitOffset(c), c.toString());
+            assertEquals(8L * c.bytes().length, p.valueSizeBits(c), c.toString());
+        }
+        io.github.schramp.gambasasn1.wire.types.Asn1OctetString o = new io.github.schramp.gambasasn1.wire.types.Asn1OctetString();
+        o.set(hex("010203"));
+        io.github.schramp.gambasasn1.wire.types.Asn1OctetString back = new io.github.schramp.gambasasn1.wire.types.Asn1OctetString();
+        Positions q = PerObject.decodeWithPositions(back, PerObject.encode(o), null).positions();
+        assertEquals(8, q.valueBitOffset(back));
+        assertEquals(24, q.valueSizeBits(back));
+    }
+
     /**
      * Over every record of the ETSI sample: each node's contents lie inside
      * its encoding, which lies inside the record, and an OCTET STRING's
@@ -305,6 +381,8 @@ class PositionsTest {
                             start + ".." + end + " contents " + cs + ".." + p.contentsEndBitOffset(n) + ": " + n.getClass());
                 }
                 if (n instanceof io.github.schramp.gambasasn1.wire.types.Asn1OctetString o) {
+                    assertEquals(cs, p.valueBitOffset(n));
+                    assertEquals(8L * o.get().length, p.valueSizeBits(n));
                     assertArrayEquals(o.get(), java.util.Arrays.copyOfRange(all, (int) (cs / 8),
                             (int) (p.contentsEndBitOffset(n) / 8)));
                     strings++;

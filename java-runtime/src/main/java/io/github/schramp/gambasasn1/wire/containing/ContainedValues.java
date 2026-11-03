@@ -90,9 +90,9 @@ public final class ContainedValues {
     private static Long siblingValue(MemberRef m) {
         return switch (m) {
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> slot.enumGet();
-            case MemberRef.Primitive(Asn1Integer v) -> v.get();
-            case MemberRef.Primitive(Asn1UInteger v) -> v.get();
-            case MemberRef.Primitive(Asn1Boolean v) -> v.get() ? 1L : 0L;
+            case MemberRef.Primitive(Asn1Integer v, var owner) -> v.get();
+            case MemberRef.Primitive(Asn1UInteger v, var owner) -> v.get();
+            case MemberRef.Primitive(Asn1Boolean v, var owner) -> v.get() ? 1L : 0L;
             default -> null;
         };
     }

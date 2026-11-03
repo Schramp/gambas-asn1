@@ -2229,7 +2229,8 @@ after the reorder into table order, and an extension addition or CHOICE
 extension decoded from its open type keeps its place in the outer input. A
 contained value (`Containing`) is placed at the field's contents octets,
 and the inner value's own nodes from there on. A builtin alias class
-(`TBool ::= [APPLICATION 1] BOOLEAN`) is recorded under its `value` field.
+(`LIID ::= OCTET STRING`) and the builtin in its `value` field are the same
+node: `p.bitOffset(liid)` and `p.bitOffset(liid.value)` agree.
 
 Each node also has an end: `endBitOffset` is the bit just after its encoding
 (`endByteOffset` rounds up), and `sizeBits` is the length of its whole
@@ -2249,6 +2250,19 @@ long to = p.contentsEndBitOffset(packet) / 8;   // exclusive
 The inner value of a contained field ends where its own encoding ends, so
 padding stripped by the contained-value decoder lies between its end and the
 field's contents end.
+
+The value span (`valueBitOffset`, `valueEndBitOffset`, `valueSizeBits`) is
+where the decoded value itself lies, without any encoding rule to apply:
+
+| Node | Value span |
+|---|---|
+| BER primitive, ENUMERATED, contained field | its contents octets |
+| BER BIT STRING | its contents without the unused-bits octet and the unused bits (`valueSizeBits` = `bitCount()`) |
+| BER SEQUENCE, SET, SEQUENCE OF, SET OF | its contents octets, without end-of-contents octets |
+| CHOICE | its chosen alternative's value span |
+| PER OCTET STRING, BIT STRING, contained field | the octets or bits after the length determinant, unless the length is 16K or more (fragmented, X.691 §11.9.3.8) |
+
+Every other node reports -1.
 `decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
 it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
@@ -2407,7 +2421,10 @@ type or of any named type below it.
 
 A value matches when it is an instance of the target class, so an alias type
 (`A ::= B`, generated as `class A extends B`) also matches `B`. Builtin
-targets such as `Asn1Integer` match every value of that builtin.
+targets such as `Asn1Integer` match every value of that builtin. A builtin
+alias class (`LIID ::= OCTET STRING`, a class with a `value` field) matches
+as itself, the hit being the `LIID` object, and its `value` matches the
+builtin target.
 
 Every occurrence is a hit: each SEQUENCE OF element, each present OPTIONAL or
 extension member, and the selected CHOICE alternative. Absent members are not

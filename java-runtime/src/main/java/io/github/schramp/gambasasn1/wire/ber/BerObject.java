@@ -102,7 +102,7 @@ public final class BerObject {
         return switch (m) {
             case MemberRef.Composite(var s) -> s.spec().name();
             case MemberRef.Choice(var c) -> c.spec().name();
-            case MemberRef.Primitive(var p) -> p.xerElementName();
+            case MemberRef.Primitive(var p, var owner) -> p.xerElementName();
             case MemberRef.SeqOf(var q) -> q.ownXerName();
             case MemberRef.Enumerated(var e, var spec) -> spec.name();
             default -> m.getClass().getSimpleName();
@@ -190,7 +190,7 @@ public final class BerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> BerPrimitive.encode(p, framing, out);
+            case MemberRef.Primitive(var p, var owner) -> BerPrimitive.encode(p, framing, out);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
                 byte[] content = BerPrimitive.encodeInteger(slot.enumGet());
                 switch (framing.resolve()) {
@@ -243,6 +243,7 @@ public final class BerObject {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);
         if (node != null) {
             r.markStart(node);
+            r.positions().recordOwner(Positions.ownerOf(m), node);
         }
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeMemberRefLevel(m, framing, r);
@@ -265,7 +266,7 @@ public final class BerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
-            case MemberRef.Primitive(var p) -> BerPrimitive.decode(p, framing, r);
+            case MemberRef.Primitive(var p, var owner) -> BerPrimitive.decode(p, framing, r);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
                 switch (framing.resolve()) {
                     case BerTagging.Implicit(Tag tag) -> decodeEnumerated(slot, tag, r);
@@ -329,8 +330,7 @@ public final class BerObject {
                 f.setRawFromWire(raw.get(), ContainedEncoding.BER);
                 if (r.positions() != null) {
                     // A primitive TLV ends with its contents (X.690 §8.1.1).
-                    long end = r.absoluteEndBit(r.position());
-                    r.positions().recordContents(f, end - 8L * raw.get().length, end);
+                    r.markContents(f, r.position() - raw.get().length, r.position());
                 }
             }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());
@@ -347,10 +347,12 @@ public final class BerObject {
         if (!tlv.tag().equals(tag)) {
             throw new DecodeException("expected tag " + tag + ", got " + tlv.tag(), start);
         }
+        int len = tlv.value().remaining();
         long v = BerPrimitive.decodeInteger(tlv.value(), start);
         if (!slot.enumSet(v)) {
             throw new DecodeException("invalid ENUMERATED value: " + v, start);
         }
+        r.markContents(slot, r.position() - len, r.position());
     }
 
     /** A SEQUENCE value under its type's own tag (X.690 §8.9). */
@@ -390,6 +392,7 @@ public final class BerObject {
      * an extension marker they are an error.
      */
     private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
+        r.markValue(s, r.position(), r.position() + r.source().remaining());
         SequenceSpec spec = s.spec();
         if (spec.isSet()) {
             r = setInTableOrder(s, r);
@@ -525,6 +528,7 @@ public final class BerObject {
      * element is appended and decoded per TLV until the contents end.
      */
     private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+        r.markValue(q, r.position(), r.position() + r.source().remaining());
         BerTagging framing = q.elemBerFraming();
         q.clear();
         if (r.options().plain()) {

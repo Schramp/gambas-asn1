@@ -195,7 +195,10 @@ static std::string java_to_string_method() {
 }
 
 /// @brief Emit the members every value-holding generated class shares:
-///        the `AsMemberRef` answers for a builtin wrapped in `value`.
+///        the `AsMemberRef` answers for a builtin wrapped in `value`. The
+///        member reference names the class's own object as the builtin's
+///        owner, so finding nodes by type and source positions see the
+///        alias class as well as the builtin the codecs walk.
 /// @param os       The `.java` buffer.
 /// @param cls      Fully qualified runtime wrapper class.
 /// @param xer_name The type's own XER element name (X.693 §12).
@@ -205,7 +208,7 @@ static void emit_primitive_holder(std::ostream& os, const std::string& cls, cons
     os << std::format("    public final {0} value = new {0}();\n\n", cls);
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n", kWire);
-    os << std::format("        return new {}.spec.MemberRef.Primitive(value);\n", kWire);
+    os << std::format("        return new {}.spec.MemberRef.Primitive(value, this);\n", kWire);
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public java.lang.String ownElementXerName() {\n";
