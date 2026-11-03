@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.containing.Pick;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.jer.JerObject;
@@ -94,7 +95,7 @@ class ContainingJerTest {
         String text = jer(h, inline);
         assertTrue(text.contains("\"viaConstraint\":{\"containing\":{\"id\":5}}"), text);
         Asn1Pdu back = ContainingTest.TYPES.get("Holder").get();
-        JerObject.decode(back, text.getBytes(StandardCharsets.UTF_8), inline);
+        JerObject.decode(back, text.getBytes(StandardCharsets.UTF_8), DecodeOptions.DEFAULT.withContained(inline));
         assertEquals(text, jer(back, inline));
         String hex = jer(h, new ContainedOptions(null, false, null, ContainedText.HEX));
         assertEquals(Json.parse(vec.asn1cJer()), Json.parse(hex), hex);

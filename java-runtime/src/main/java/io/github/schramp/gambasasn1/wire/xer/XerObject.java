@@ -60,11 +60,6 @@ public final class XerObject {
         decode(v, new XerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        decode(v, new XerReader(data).withContained(opts));
-    }
-
     /**
      * {@link #decode(AsMemberRef, byte[])} under the decoder settings
      * {@code opts} (null for the defaults): relaxed accepts the asn1c

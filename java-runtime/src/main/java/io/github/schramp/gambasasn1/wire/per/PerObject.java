@@ -73,14 +73,18 @@ public final class PerObject {
         decodeWhole(v, data, c, new PerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; {@code opts} may be null. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        decodeWhole(v, data, rootConstraints(v), new PerReader(data).withContained(opts));
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings
+     * {@code opts} ({@link DecodeOptions#DEFAULT} for the defaults; a null
+     * also means the defaults, cast to {@code DecodeOptions}).
+     */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        decode(v, data, rootConstraints(v), opts);
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
-        decodeWhole(v, data, rootConstraints(v), new PerReader(data).withOptions(opts));
+    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
+        decodeWhole(v, data, c, new PerReader(data).withOptions(opts));
     }
 
     /**

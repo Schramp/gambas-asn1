@@ -2152,8 +2152,10 @@ byte. Decode fills `value()` and `status()` (`DECODED`, `SKIPPED` when a
 reason in `error()`; `on_error: fail` makes it a decode error instead). `set(v)`
 or a change through `edit()` makes encode write the inner value's encoding.
 The contained members are decoded after the others, so a `when` condition sees
-the sibling member it names. Contained settings for one call go in
-`BerObject.decode(v, der, new ContainedOptions(registry, off))`; a
+the sibling member it names. Contained settings for one call go in the decoder
+settings,
+`BerObject.decode(v, der, DecodeOptions.DEFAULT.withContained(new ContainedOptions(registry, off)))`
+(the same for PER, XER and JER); a
 `ContainedDecoders` registry adds custom decoders by name beside the built-in
 `plain`, `zero_padding`, `pkcs7` and `none`. An OPTIONAL contained member is
 made with its row: `new Containing<>(Inner::new, Outer.SPEC.members().get(i).contained())`.
@@ -2543,8 +2545,8 @@ value without the comment gets its bytes by encoding it with the field's
 decoder, and the contained members are then decoded as after a BER decode. The
 form can be set for one call: `XerObject.encode(v, new ContainedOptions(null,
 false, ContainedText.INLINE_RAW, null))` writes every contained field that
-way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
-takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+way, in place of each row's `xer` form, and `XerObject.decode(v, xer,
+DecodeOptions.DEFAULT.withContained(opts))` takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
 (`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER,
 JER and unaligned PER output for each DER value after the DER column. The Java
 XER legs compare the XER byte for byte, the Java JER legs the JER as JSON values
@@ -2587,8 +2589,9 @@ open bounds, base-10-only) like the C++ and Rust tables.
 A contained field (X.682 §11) is in its row's `jer` form, in the C++ runtime's
 layout: its bytes as a hex string, `{"containing":<inner value>}` (X.697
 §25.4), or that object with `"raw":"<hex>"` after it. `JerObject.encode(v,
-opts)` and `JerObject.decode(v, jer, opts)` take a `ContainedOptions` whose
-`jer` form replaces every row's. The decoder takes every form; `raw`, when
+opts)` takes a `ContainedOptions`, and `JerObject.decode(v, jer,
+DecodeOptions.DEFAULT.withContained(opts))` takes it inside the decoder
+settings; its `jer` form replaces every row's. The decoder takes every form; `raw`, when
 given, is kept as the field's bytes, otherwise the inner value is encoded to
 get them.
 
@@ -2661,8 +2664,9 @@ follow the outer rules (X.682 §11.4): contents read from BER are written as
 PER when the outer value is written as PER, and back; a `--container-config`
 field keeps its configured rules. The inner value is decoded after the
 enclosing value, through the same decoder registry as BER, and
-`PerObject.encode(v, opts)` / `PerObject.decode(v, data, opts)` take a
-`ContainedOptions`. asn1c, which has no contents constraints, writes a
+`PerObject.encode(v, opts)` takes a `ContainedOptions`, and
+`PerObject.decode(v, data, DecodeOptions.DEFAULT.withContained(opts))` takes it
+inside the decoder settings. asn1c, which has no contents constraints, writes a
 field's bytes as they are.
 
 ```java

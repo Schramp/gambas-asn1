@@ -66,19 +66,10 @@ public final class JerObject {
         decode(v, data, c, DecodeOptions.DEFAULT);
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        decode(v, data, rootConstraints(v), opts);
-    }
-
-    /** {@link #decode(AsMemberRef, byte[], Constraints)} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c, ContainedOptions opts) {
-        decode(v, data, c, DecodeOptions.DEFAULT.withContained(opts));
-    }
-
     /**
      * {@link #decode(AsMemberRef, byte[])} under the decoder settings
-     * {@code opts} (null for the defaults): constraint checks run over the
+     * {@code opts} ({@link DecodeOptions#DEFAULT} for the defaults; a null
+     * also means the defaults, cast to {@code DecodeOptions}): constraint checks run over the
      * decoded value, relaxed lets other text follow the value, and rich
      * errors name the failing value's type and show the input there.
      */
