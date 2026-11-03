@@ -127,14 +127,18 @@ public final class BerPrimitive {
         switch (p) {
             // X.690 §8.2.2: any non-zero contents octet is TRUE.
             case Asn1Boolean b -> {
-                if (v.remaining() != 1) {
+                if (v.remaining() != 1 && !(r.options().relaxed() && v.remaining() > 1)) {
                     throw new DecodeException("BOOLEAN: contents must be one octet, got " + v.remaining(), start);
                 }
-                b.set(v.read("BOOLEAN") != 0);
+                boolean any = false;
+                while (!v.atEnd()) {
+                    any |= v.read("BOOLEAN") != 0;
+                }
+                b.set(any);
             }
             // X.690 §8.8.2: no contents octets.
             case Asn1Null n -> {
-                if (!v.atEnd()) {
+                if (!v.atEnd() && !r.options().relaxed()) {
                     throw new DecodeException("NULL: contents must be empty, got " + v.remaining() + " octets", start);
                 }
             }
@@ -150,8 +154,11 @@ public final class BerPrimitive {
                     throw new DecodeException("BIT STRING: contents need the unused-bits octet", start);
                 }
                 int unused = v.read("BIT STRING");
-                if (unused > 7 || (unused != 0 && v.atEnd())) {
+                if (unused > 7 || (unused != 0 && v.atEnd() && !r.options().relaxed())) {
                     throw new DecodeException("BIT STRING: " + unused + " unused bits with " + v.remaining() + " octets", start);
+                }
+                if (v.atEnd()) {
+                    unused = 0;
                 }
                 b.set(v.remainingBytes(), unused);
             }

@@ -2237,14 +2237,17 @@ records nothing and costs one null check per node.
 **Decoder settings.** A `DecodeOptions` record holds the settings of a
 decoder. You make it once and pass it to any number of decodes:
 `BerObject.decode(v, data, opts)`, `BerObject.decodeWithPositions(v, data, opts)`,
-`new BerReader(data).withOptions(opts)` for records read back to back, and
-the same `PerObject` calls. Nested and contained decodes take the settings of
-the decode around them.
+`new BerReader(data).withOptions(opts)` for records read back to back, the
+same `PerObject` calls, and `XerObject.decode(v, data, opts)` and
+`JerObject.decode(v, data, opts)`. Nested and contained decodes take the
+settings of the decode around them.
 
 ```java
 DecodeOptions opts = DecodeOptions.DEFAULT
         .withConstraintChecks(true)     // reject values outside their constraints
         .withRichErrors(true)           // path and input octets in DecodeException
+        .withRelaxed(true)              // tolerate off-standard input with a clear meaning
+        .withTrace(System.err::println) // one line per member decoded
         .withContained(containedOptions);
 ```
 
@@ -2262,7 +2265,28 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   stopped. `e.path()` gives the path, for example `Limits.byte` or
   `PS_PDU.payload.iRIPayloadSequence[2].timeStamp`, and `e.reason()` gives the
   bare reason. A PER error's offset is in the outer input, also inside an
-  open type.
+  open type. Under XER and JER the path names the root type only, except for
+  a constraint violation, which carries its full path.
+- **Relaxed** (off by default) accepts input that a strict decoder rejects
+  but whose meaning is clear:
+  - BER: TLVs after the last member of a SEQUENCE without an extension
+    marker are skipped, as for an extensible one.
+  - BER: a TLV that matches no alternative of a non-extensible CHOICE is
+    kept as an unknown extension.
+  - BER: octets after the value inside an EXPLICIT or CHOICE tag are
+    ignored.
+  - BER: a BOOLEAN with more than one contents octet is TRUE when any of
+    them is non-zero.
+  - BER: a NULL with contents is accepted.
+  - BER: a BIT STRING with unused bits but no octets is empty.
+  - PER and JER: data after the value is ignored.
+  - XER: asn1c's text forms are accepted, the same as `decodeLenient`.
+- **Trace** (null by default) receives one line per member, alternative
+  and element as it is decoded, with its offset, path segment and type, for
+  example `BER byte 4 .num INTEGER` or `PER bit 16 .flag BOOLEAN` (BER and
+  PER).
+- **Constraint checks** under XER and JER run over the decoded value once
+  the document is read, and the error offset is the end of the document.
 
 **Finding values by type.** `Extract.all(root, T.class)` (package `query`)
 returns every value of type `T` below a decoded `root`, and `root` itself when

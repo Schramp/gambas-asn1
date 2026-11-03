@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.jer;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
@@ -12,6 +13,7 @@ import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
@@ -61,7 +63,7 @@ public final class JerObject {
 
     /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
-        decode(v, data, c, null);
+        decode(v, data, c, DecodeOptions.DEFAULT);
     }
 
     /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
@@ -71,10 +73,42 @@ public final class JerObject {
 
     /** {@link #decode(AsMemberRef, byte[], Constraints)} with contained-value settings; null for the defaults. */
     public static void decode(AsMemberRef v, byte[] data, Constraints c, ContainedOptions opts) {
-        JerReader r = new JerReader(data).withContained(opts);
-        decodeValue(v.asMemberRef(), c, r);
-        if (!r.atEnd()) {
-            throw new DecodeException("JER: trailing data after the value", r.position());
+        decode(v, data, c, DecodeOptions.DEFAULT.withContained(opts));
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings
+     * {@code opts} (null for the defaults): constraint checks run over the
+     * decoded value, relaxed lets other text follow the value, and rich
+     * errors name the failing value's type and show the input there.
+     */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        decode(v, data, rootConstraints(v), opts);
+    }
+
+    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
+        JerReader r = new JerReader(data).withOptions(opts);
+        DecodeOptions o = r.options();
+        try {
+            decodeValue(v.asMemberRef(), c, r);
+            if (!r.atEnd() && !o.relaxed()) {
+                throw new DecodeException("JER: trailing data after the value", r.position());
+            }
+            if (o.checkConstraints()) {
+                ConstraintCheck.Violation bad = ConstraintCheck.firstViolation(v.asMemberRef(), c, "");
+                if (bad != null) {
+                    DecodeException e = new DecodeException("constraint violated: " + bad.reason(), r.position());
+                    throw o.richErrors() ? e.within(v.ownElementXerName() + bad.path()) : e;
+                }
+            }
+        } catch (DecodeException e) {
+            if (!o.richErrors() || !e.path().isEmpty()) {
+                throw e;
+            }
+            int at = Math.min(Math.max(e.position(), 0), data.length);
+            throw e.within(v.ownElementXerName()).showing(java.util.Arrays.copyOfRange(data, at,
+                    Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
         }
     }
 
@@ -369,7 +403,7 @@ public final class JerObject {
      * decoders: no bytes of its own, the same nesting depth and settings.
      */
     private static BerReader berAnchor(JerReader r) {
-        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        BerReader b = new BerReader(new byte[0]).withOptions(r.options());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
         }

@@ -53,6 +53,54 @@ public final class ConstraintCheck {
         };
     }
 
+    /** A value that breaks its constraints, {@code path} naming it ({@code Type.member[index]}). */
+    public record Violation(String path, String reason) {
+    }
+
+    /**
+     * The first value, depth first, in the tree under {@code m} that breaks
+     * its constraints ({@code c} for {@code m} itself, then each member's,
+     * alternative's or element's own row), or null when there is none. The
+     * inner value of a contained field is not looked into: its decode
+     * checks it.
+     */
+    public static Violation firstViolation(MemberRef m, Constraints c, String path) {
+        String why = violation(m, c);
+        if (why != null) {
+            return new Violation(path, why);
+        }
+        switch (m) {
+            case MemberRef.Composite(var s) -> {
+                for (int i = 0; i < s.spec().members().size(); i++) {
+                    MemberMeta row = s.spec().members().get(i);
+                    Violation v = firstViolation(s.getMember(i), row.constraints(), path + "." + row.name());
+                    if (v != null) {
+                        return v;
+                    }
+                }
+            }
+            case MemberRef.Choice(var ch) -> {
+                int i = ch.activeIndex();
+                if (i >= 0) {
+                    AltMeta row = ch.spec().alternatives().get(i);
+                    return firstViolation(ch.getActive(), row.constraints(), path + "." + row.name());
+                }
+            }
+            case MemberRef.SeqOf(var q) -> {
+                Constraints e = c != null && c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
+                for (int i = 0; i < q.size(); i++) {
+                    Violation v = firstViolation(q.get(i), e, path + "[" + i + "]");
+                    if (v != null) {
+                        return v;
+                    }
+                }
+            }
+            default -> {
+            }
+        }
+        return null;
+    }
+
     private static String range(long v, Constraints c) {
         int f = c.flags();
         if ((f & Constraints.EXTENSIBLE) != 0) {

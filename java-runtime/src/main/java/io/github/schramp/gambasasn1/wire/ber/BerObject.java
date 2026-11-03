@@ -81,10 +81,11 @@ public final class BerObject {
     public static void decode(AsMemberRef v, BerReader r) {
         DecodeOptions o = r.options();
         MemberRef m = v.asMemberRef();
-        if (!o.checkConstraints() && !o.richErrors()) {
+        if (o.plain()) {
             decodeMemberRef(m, v.berFraming(), r);
             return;
         }
+        trace(o, r, typeName(m), m);
         try {
             decodeChecked(m, v.berFraming(), v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED,
                     o.checkConstraints(), r);
@@ -132,10 +133,18 @@ public final class BerObject {
      */
     private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String segment, BerReader r) {
         DecodeOptions o = r.options();
+        trace(o, r, segment, m);
         try {
             decodeChecked(m, framing, c, o.checkConstraints(), r);
         } catch (DecodeException e) {
             throw o.richErrors() ? e.within(segment) : e;
+        }
+    }
+
+    /** A trace line for {@code m}, about to be decoded as {@code segment}, when tracing is on. */
+    private static void trace(DecodeOptions o, BerReader r, String segment, MemberRef m) {
+        if (o.trace() != null) {
+            o.trace().accept("BER byte " + r.absoluteBit(r.position()) / 8 + " " + segment + " " + typeName(m));
         }
     }
 
@@ -384,7 +393,7 @@ public final class BerObject {
             r = setInTableOrder(s, r);
         }
         List<MemberMeta> rows = spec.members();
-        boolean plain = !r.options().checkConstraints() && !r.options().richErrors();
+        boolean plain = r.options().plain();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
             if (row.optional()) {
@@ -405,7 +414,7 @@ public final class BerObject {
         if (!spec.containedMembers().isEmpty()) {
             ContainedValues.decodeMembers(s, ContainedEncoding.BER, r);
         }
-        if (spec.extAt() >= 0) {
+        if (spec.extAt() >= 0 || r.options().relaxed()) {
             while (!r.atEnd()) {
                 r.readTlv();
             }
@@ -516,18 +525,14 @@ public final class BerObject {
     private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
         BerTagging framing = q.elemBerFraming();
         q.clear();
-        if (!r.options().richErrors()) {
+        if (r.options().plain()) {
             while (!r.atEnd()) {
                 decodeMemberRef(q.addDefault(), framing, r);
             }
             return;
         }
         for (int i = 0; !r.atEnd(); i++) {
-            try {
-                decodeMemberRef(q.addDefault(), framing, r);
-            } catch (DecodeException e) {
-                throw e.within("[" + i + "]");
-            }
+            decodePart(q.addDefault(), framing, Constraints.UNCONSTRAINED, "[" + i + "]", r);
         }
     }
 
@@ -589,8 +594,7 @@ public final class BerObject {
         int alt = dispatch(spec.berTags(), tag);
         if (alt >= 0) {
             AltMeta row = spec.alternatives().get(alt);
-            DecodeOptions o = r.options();
-            if (!o.checkConstraints() && !o.richErrors()) {
+            if (r.options().plain()) {
                 decodeMemberRef(c.select(alt), row.ber(), r);
             } else {
                 decodePart(c.select(alt), row.ber(), row.constraints(), "." + row.name(), r);
@@ -600,7 +604,7 @@ public final class BerObject {
             }
             return;
         }
-        if (spec.extAt() < 0) {
+        if (spec.extAt() < 0 && !r.options().relaxed()) {
             throw new DecodeException("CHOICE " + spec.name() + ": no alternative has tag " + tag, start);
         }
         Tlv tlv = r.readTlv();
@@ -638,7 +642,7 @@ public final class BerObject {
 
     /** A tag's contents hold exactly one encoding (X.690 §8.14.2). */
     private static void expectEnd(BerReader inner, Tag tag) {
-        if (!inner.atEnd()) {
+        if (!inner.atEnd() && !inner.options().relaxed()) {
             throw new DecodeException("trailing octets inside tag " + tag, inner.position());
         }
     }
