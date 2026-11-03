@@ -1281,7 +1281,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 |------|--------|
 | `-h`, `--help` | Print option summary and exit. |
 | `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
-| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`) |
+| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`). Each run lists the files it wrote in `<dir>/.asn1cpp-generated` and removes the generated files of the previous run that it no longer writes, in sub-directories too (a module dropped from the input, a switch to `--flat-package`); files no run generated are left alone. |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |

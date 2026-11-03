@@ -234,32 +234,20 @@ public:
     }
 
     /// @brief Delete generated files left over from a previous run that no
-    ///        longer correspond to any type this run produced — e.g. a
-    ///        SEQUENCE that became a plain alias (drops its `.cpp` file),
-    ///        or the backend's declaration/definition extensions changing
-    ///        (e.g. switching backends between a two-file and single-file
-    ///        layout).
-    /// @note Only considers files directly in out_dir_, or directly in a
-    ///       subdirectory this run wrote a file into (a backend's
-    ///       `output_stem` can place types below out_dir_), whose extension
-    ///       matches backend_.declaration_extension()/definition_extension()
-    ///       — never touches unrelated files (e.g. a hand-maintained
-    ///       sources.mk) or other subdirectories.
-    void remove_stale_files() const {
-        std::set<std::string> exts{"." + backend_.declaration_extension(),
-                                    "." + backend_.definition_extension()};
-        if (!fs::exists(out_dir_)) return;
-        std::set<fs::path> dirs{out_dir_};
-        for (const auto& f : known_files_) dirs.insert(f.parent_path());
-        for (const auto& dir : dirs) {
-            for (const auto& entry : fs::directory_iterator(dir)) {
-                if (!entry.is_regular_file()) continue;
-                if (!exts.count(entry.path().extension().string())) continue;
-                if (known_files_.count(entry.path())) continue;
-                fs::remove(entry.path());
-            }
-        }
-    }
+    ///        longer correspond to any type this run produced: a SEQUENCE
+    ///        that became a plain alias (drops its `.cpp` file), a backend
+    ///        switching between a two-file and a single-file layout, or a
+    ///        module whose types are no longer generated (its whole
+    ///        sub-directory, under a backend whose `output_stem` places
+    ///        types below out_dir_).
+    /// @note Two sources of candidates, both limited to the backend's
+    ///       declaration/definition extensions: files directly in out_dir_
+    ///       or in a directory this run wrote into, and every file the
+    ///       previous run listed in out_dir_'s generated-files manifest.
+    ///       Directories left empty below out_dir_ are removed. Files no
+    ///       run of this generator wrote elsewhere (a hand-maintained
+    ///       sources.mk, a user's own sub-directory) are never touched.
+    void remove_stale_files() const;
 
     /// @brief The generated name of a type assignment, used for it
     ///        throughout code generation: the backend's module-scoped name

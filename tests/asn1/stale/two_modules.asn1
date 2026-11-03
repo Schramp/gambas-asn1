@@ -1,0 +1,10 @@
+-- First run of the stale_files test: two modules, ModB using ModA's Lim.
+ModA DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Lim ::= INTEGER (0..5)
+    AType ::= BOOLEAN
+END
+
+ModB DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Lim FROM ModA;
+    BType ::= SEQUENCE { l Lim }
+END

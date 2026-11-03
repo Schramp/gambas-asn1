@@ -3819,4 +3819,48 @@ void Generator::compute_reachable(const ast::ParseResult& pr) {
             std::cerr << "warning: -pdu type '" << root << "' not found in input\n";
 }
 
+/// Name of the file in the output directory listing, one relative path per
+/// line, every file the last run wrote.
+static constexpr const char* kGeneratedManifest = ".asn1cpp-generated";
+
+void Generator::remove_stale_files() const {
+    if (!fs::exists(out_dir_)) return;
+    std::set<std::string> exts{"." + backend_.declaration_extension(),
+                               "." + backend_.definition_extension()};
+    std::set<fs::path> stale;
+    std::set<fs::path> dirs{out_dir_};
+    for (const auto& f : known_files_) dirs.insert(f.parent_path());
+    for (const auto& dir : dirs)
+        for (const auto& entry : fs::directory_iterator(dir))
+            if (entry.is_regular_file()) stale.insert(entry.path());
+    const fs::path manifest = out_dir_ / kGeneratedManifest;
+    if (std::ifstream in(manifest); in)
+        for (std::string line; std::getline(in, line);) {
+            fs::path rel(line);
+            // Only paths below out_dir_: the manifest is ordinary text a user can edit.
+            bool below = !line.empty() && rel.is_relative() &&
+                         std::none_of(rel.begin(), rel.end(), [](const fs::path& p) { return p == ".."; });
+            if (below) stale.insert(out_dir_ / rel);
+        }
+
+    std::set<fs::path> emptied;
+    for (const auto& path : stale) {
+        if (known_files_.count(path) || !exts.count(path.extension().string())) continue;
+        if (!fs::is_regular_file(path)) continue;
+        fs::remove(path);
+        emptied.insert(path.parent_path());
+    }
+    // Deepest first, so a module directory goes before its parent.
+    for (auto it = emptied.rbegin(); it != emptied.rend(); ++it)
+        for (fs::path d = *it; d != out_dir_ && d.native().starts_with(out_dir_.native())
+                               && fs::is_directory(d) && fs::is_empty(d); d = d.parent_path())
+            fs::remove(d);
+
+    std::set<std::string> rel;
+    for (const auto& f : known_files_) rel.insert(fs::relative(f, out_dir_).generic_string());
+    std::string listing;
+    for (const auto& r : rel) listing += r + "\n";
+    write_if_changed(manifest, listing);
+}
+
 } // namespace asn1::codegen
