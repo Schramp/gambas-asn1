@@ -3027,7 +3027,14 @@ void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session)
 ///       one file. Revisit if/when that combination occurs.
 void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
                                  const ast::Module& mod) {
-    std::string base = bounded_file_stem(backend_.output_stem(name));
+    // Bound only the file name: the directories output_stem puts in front
+    // (a Java module package) are not part of the name a type's own
+    // declaration must match (JLS §7.6).
+    std::string stem = backend_.output_stem(name);
+    auto slash = stem.rfind('/');
+    std::string base = slash == std::string::npos
+        ? bounded_file_stem(stem)
+        : stem.substr(0, slash + 1) + bounded_file_stem(stem.substr(slash + 1));
     emitted_type_refs_.clear();
     TypeOutputSession session;
     emit_type_body(def, mod, session);

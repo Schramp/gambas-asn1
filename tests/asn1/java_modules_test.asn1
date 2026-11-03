@@ -34,3 +34,9 @@ Foo DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
     Foo ::= SEQUENCE { item Item }
 END
+
+-- A type name short enough to keep whole as a class name, in a module
+-- whose package directory would push module path plus name past the bound.
+Some-Long-Module-Name DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Lxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ::= INTEGER
+END
