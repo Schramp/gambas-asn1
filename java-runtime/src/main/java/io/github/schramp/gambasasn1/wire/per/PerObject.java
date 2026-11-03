@@ -15,6 +15,8 @@ import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
+import io.github.schramp.gambasasn1.wire.spec.Decoded;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
@@ -93,6 +95,22 @@ public final class PerObject {
         return (int) Math.max(1, (r.bitPos() + 7) / 8);
     }
 
+    /**
+     * {@link #decode(AsMemberRef, byte[], ContainedOptions)} that also
+     * records where every decoded node starts, in bits from the start of
+     * {@code data}. {@code opts} may be null.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        Positions p = Positions.recording();
+        PerReader r = new PerReader(data).withContained(opts).withPositions(p, 0);
+        decodeValue(v.asMemberRef(), rootConstraints(v), r);
+        boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
+        if (r.remaining() >= 8 && !emptyEncoding) {
+            throw r.error("PER: trailing data after the value");
+        }
+        return new Decoded((int) Math.max(1, (r.bitPos() + 7) / 8), p);
+    }
+
     private static Constraints rootConstraints(AsMemberRef v) {
         return v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED;
     }
@@ -118,6 +136,12 @@ public final class PerObject {
 
     /** Decode counterpart of {@link #encodeValue}; a constructed value counts one nesting level. */
     static void decodeValue(MemberRef m, Constraints c, PerReader r) {
+        if (r.positions() != null) {
+            Object node = Positions.nodeOf(m);
+            if (node != null) {
+                r.markStart(node);
+            }
+        }
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeLevel(m, c, r);
             return;
@@ -143,6 +167,10 @@ public final class PerObject {
                 Asn1OctetString raw = new Asn1OctetString();
                 PerPrimitive.decode(raw, c, r);
                 f.setRawFromWire(raw.get(), ContainedEncoding.PER_UNALIGNED);
+                if (r.positions() != null) {
+                    // The octets follow their length determinant (X.691 §17.8).
+                    r.positions().recordContents(f, r.absoluteBit(r.bitPos()) - 8L * raw.get().length);
+                }
             }
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
         }
@@ -310,7 +338,7 @@ public final class PerObject {
                     continue;
                 }
                 Addition a = additions.get(j);
-                PerReader in = r.sub(field);
+                PerReader in = r.subJustRead(field);
                 if (a.group()) {
                     decodeGroup(s, a, in);
                 } else {
@@ -336,7 +364,7 @@ public final class PerObject {
      * decode's nesting depth and contained-value settings.
      */
     private static BerReader berAnchor(PerReader r) {
-        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        BerReader b = new BerReader(new byte[0]).withContained(r.contained()).withPositions(r.positions());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
         }
@@ -421,7 +449,7 @@ public final class PerObject {
             return;
         }
         int i = root + (int) ext;
-        decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.sub(field));
+        decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.subJustRead(field));
         decodeContainedAlternative(ch, r);
     }
 

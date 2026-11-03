@@ -17,9 +17,11 @@ import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
+import io.github.schramp.gambasasn1.wire.spec.Decoded;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import java.util.ArrayList;
@@ -68,6 +70,33 @@ public final class BerObject {
      */
     public static void decode(AsMemberRef v, BerReader r) {
         decodeMemberRef(v.asMemberRef(), v.berFraming(), r);
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, byte[], ContainedOptions)} that also
+     * records where every decoded node starts. {@code opts} may be null.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        return decodeWithPositions(v, new BerReader(data).withContained(opts));
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, BerReader)} that also records where every
+     * decoded node starts, in bits from the reader's position at the call;
+     * records read back to back each get their own positions. The reader is
+     * left after the value.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) {
+        Positions p = Positions.recording();
+        Positions before = r.positions();
+        int start = r.position();
+        r.withPositions(p);
+        try {
+            decode(v, r);
+        } finally {
+            r.withPositions(before);
+        }
+        return new Decoded(r.position() - start, p.withBase(-r.absoluteBit(start)));
     }
 
     /** Encodes one member, alternative or element under its row's framing (X.690 §8.14). */
@@ -135,6 +164,12 @@ public final class BerObject {
      * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
      */
     public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
+        if (r.positions() != null) {
+            Object node = Positions.nodeOf(m);
+            if (node != null) {
+                r.markStart(node);
+            }
+        }
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeMemberRefLevel(m, framing, r);
             return;
@@ -215,6 +250,10 @@ public final class BerObject {
                 Asn1OctetString raw = new Asn1OctetString();
                 BerPrimitive.decode(raw, framing, r);
                 f.setRawFromWire(raw.get(), ContainedEncoding.BER);
+                if (r.positions() != null) {
+                    // A primitive TLV ends with its contents (X.690 §8.1.1).
+                    r.positions().recordContents(f, r.absoluteBit(r.position()) - 8L * raw.get().length);
+                }
             }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());
         }
@@ -313,30 +352,50 @@ public final class BerObject {
     private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
         List<MemberMeta> rows = s.spec().members();
         byte[][] slot = new byte[rows.size()][];
+        long[] slotAt = new long[rows.size()];
         List<byte[]> unmatched = new ArrayList<>();
+        List<Long> unmatchedAt = new ArrayList<>();
         ByteSource src = r.source();
         while (!r.atEnd()) {
             int start = src.position();
             Tag t = r.readTlv().tag();
             byte[] raw = src.bytesSince(start);
+            long at = r.absoluteBit(start);
             int i = 0;
             while (i < rows.size() && (slot[i] != null || !setMemberMatches(s, i, t))) {
                 i++;
             }
             if (i < rows.size()) {
                 slot[i] = raw;
+                slotAt[i] = at;
             } else {
                 unmatched.add(raw);
+                unmatchedAt.add(at);
             }
         }
         ByteSink out = new ByteSink();
-        for (byte[] raw : slot) {
-            if (raw != null) {
-                out.write(raw);
+        List<Integer> local = new ArrayList<>();
+        List<Long> abs = new ArrayList<>();
+        int len = 0;
+        for (int i = 0; i < slot.length; i++) {
+            if (slot[i] != null) {
+                local.add(len);
+                abs.add(slotAt[i]);
+                len += slot[i].length;
+                out.write(slot[i]);
             }
         }
-        unmatched.forEach(out::write);
-        return r.nested(out.toByteArray());
+        for (int i = 0; i < unmatched.size(); i++) {
+            local.add(len);
+            abs.add(unmatchedAt.get(i));
+            len += unmatched.get(i).length;
+            out.write(unmatched.get(i));
+        }
+        if (r.positions() == null || local.isEmpty()) {
+            return r.nested(out.toByteArray());
+        }
+        return r.nestedPieces(out.toByteArray(), local.stream().mapToInt(Integer::intValue).toArray(),
+                abs.stream().mapToLong(Long::longValue).toArray());
     }
 
     /**

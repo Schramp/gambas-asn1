@@ -2210,6 +2210,30 @@ and `.inline.expected` for the nested decoder); ctest runs both as
 `java_example_contact_book` and `java_example_nested_decoder` when a JDK is
 found.
 
+**Source positions.** `BerObject.decodeWithPositions` and
+`PerObject.decodeWithPositions` decode like `decode` and also return where
+each decoded node starts in the input, as a `Decoded(bytesConsumed,
+positions)`:
+
+```java
+Decoded d = BerObject.decodeWithPositions(pdu, bytes, null);   // null: default ContainedOptions
+long at = d.positions().byteOffset(pdu.payload());             // -1 when not decoded
+```
+
+A node is any value object of the decoded tree (a SEQUENCE, CHOICE, SEQUENCE
+OF element or primitive), looked up by identity. Offsets are in bits from the
+start of the input (`bitOffset`; `byteOffset` divides by 8): for BER the first
+tag octet of the node's TLV (the outer tag of an EXPLICIT member), for
+unaligned PER the node's first bit. SET components keep their wire positions
+after the reorder into table order, and an extension addition or CHOICE
+extension decoded from its open type keeps its place in the outer input. A
+contained value (`Containing`) is placed at the field's contents octets
+(`contentsBit(field)`), and the inner value's own nodes from there on.
+`decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
+it after that record; its offsets are from the record's own first octet, and
+`positions().withBase(bits)` shifts them to a file offset. A plain `decode`
+records nothing and costs one null check per node.
+
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
 BER-decoded and re-encoded by the Java runtime and must come back byte for
