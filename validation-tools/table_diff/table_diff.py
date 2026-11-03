@@ -182,7 +182,8 @@ JAVA_ALIAS = re.compile(r"^public class \w+ extends \w+ \{\n\}", re.M)
 
 def dump_java(work, files, flags, slot):
     gen = os.path.join(work, "gen")
-    generate(files, [*flags, "--package=gen"], "java", gen)
+    # One package, so the classes are found and named as the C++ types are.
+    generate(files, [*flags, "--package=gen", "--flat-package"], "java", gen)
     types = sorted(os.path.splitext(n)[0] for n in os.listdir(gen)
                    if n.endswith(".java") and not JAVA_ALIAS.search(open(os.path.join(gen, n)).read()))
     chunks = [types[i:i + JAVA_DUMPS_PER_METHOD] for i in range(0, len(types), JAVA_DUMPS_PER_METHOD)]

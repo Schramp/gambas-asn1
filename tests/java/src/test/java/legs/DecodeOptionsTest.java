@@ -95,7 +95,7 @@ class DecodeOptionsTest {
         BerReader r = new BerReader(file).withOptions(RICH);
         int n = 0;
         while (!r.atEnd()) {
-            BerObject.decode(new gen.etsi.PS_PDU(), r);
+            BerObject.decode(new gen.etsi.LI_PS_PDU.PS_PDU(), r);
             n++;
         }
         assertTrue(n > 1);

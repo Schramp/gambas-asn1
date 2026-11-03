@@ -1287,7 +1287,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
 | `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
-| `--package=<name>` | `--target=java` only: the Java package every generated class declares (e.g. `com.example.asn1`). Default: the unnamed package. Files are written flat into `-o <dir>`; point `-o` at the matching source directory. `-fprefix` is rejected with `--target=java`. |
+| `--package=<name>` | `--target=java` only: the root Java package (e.g. `com.example.asn1`; default: the unnamed package). Each ASN.1 module's types go in a sub-package named after the module, transliterated like a type name (`-` becomes `_`) and never recased: `MicroSecondTimeStamp` of module `LI-PS-PDU` is `com.example.asn1.LI_PS_PDU.MicroSecondTimeStamp`, in `-o <dir>/LI_PS_PDU/`. Point `-o` at the source directory of `<name>`. A type name defined in several modules keeps its ASN.1 name in each module's package, and a reference to another module's type uses its fully qualified name, so no imports are needed. `-fprefix` is rejected with `--target=java`. |
+| `--flat-package` | `--target=java` only: put every class directly in `--package`, files flat in `-o <dir>`. A type name defined in more than one module then gets its module's name in front (`EpsHI2OperationsIRI_Parameters`), as in C++ and Rust. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 | `--per-nkm-size=strict\|visible` | PER handling of `SIZE` on UTF8String, TeletexString/T61String, VideotexString, GraphicString, GeneralString and ObjectDescriptor. `strict` (default): not PER-visible (X.691 §10.3.18, §30.6), matching Erlang/OTP, asn1tools and Wireshark. `visible`: encoded as if PER-visible, matching asn1c (not X.691-conformant). Only PER changes. Can be overridden per type or member with the sidecar's `per_nkm_size` entries. See [SIZE on non-known-multiplier strings](#size-on-non-known-multiplier-strings---per-nkm-size). |
@@ -2187,8 +2188,9 @@ the ASN.1 name and shares B's tables, as the C++ alias does. Generated
 classes are therefore not `final`.
 
 The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
--Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
-table diff covers it.
+-Werror`); `java_legs` compiles it under `--package=gen.etsi`, one package per
+module (`gen.etsi.LI_PS_PDU.PS_PDU`), and the cpp/java table diff covers it
+(under `--flat-package`, so its class names line up with the C++ ones).
 
 **Java examples.** Two examples build with plain `javac` (no Gradle) against
 the `java-runtime` sources and the compiler in the tree:

@@ -1338,7 +1338,8 @@ def build_java(target_dir, asn1_files_abs, pdu_types, asncpp_flags=()):
     gen_dir = os.path.join(java_dir, "gen")
     shutil.rmtree(gen_dir, ignore_errors=True)
     os.makedirs(gen_dir)
-    r = subprocess.run([ASNCPP_BIN, "--target=java", f"--package={JAVA_PACKAGE}",
+    # One package, so the harness names each PDU type by its class alone.
+    r = subprocess.run([ASNCPP_BIN, "--target=java", f"--package={JAVA_PACKAGE}", "--flat-package",
                         *[f"-pdu={t}" for t in pdu_types], *asncpp_flags, *asn1_files_abs, "-o", gen_dir],
                        capture_output=True, text=True)
     if r.returncode != 0:

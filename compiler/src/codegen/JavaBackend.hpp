@@ -52,9 +52,25 @@ inline std::string java_escape(std::string n,
 /// schema using one fails loudly naming the missing construct.
 class JavaBackend : public Backend {
 public:
-    /// @param package Java package every generated compilation unit
-    ///                declares (`--package`); empty for the unnamed package.
-    explicit JavaBackend(std::string package = {}) : package_(std::move(package)) {}
+    /// @param package   Java package every generated compilation unit
+    ///                  declares (`--package`); empty for the unnamed package.
+    /// @param by_module Put each ASN.1 module's types in a sub-package of
+    ///                  `package` named after the module; false for one
+    ///                  package (`--flat-package`).
+    explicit JavaBackend(std::string package = {}, bool by_module = false)
+        : package_(std::move(package)), by_module_(by_module) {}
+
+    /// @brief A type's fully qualified class name in its module's package,
+    ///        `<package>.<Module>.<Type>`, when types go in per-module
+    ///        packages; empty otherwise.
+    std::string module_scoped_type_name(const std::string& module_name, const std::string& type_name) const override;
+
+    /// @brief The file of a class: below the output directory, one
+    ///        directory per package part after `package` (JLS §7.2).
+    std::string output_stem(const std::string& type_name) const override;
+
+    void emit_declaration_preamble(const std::string& module_comment, const std::string& module_name,
+                                   TypeOutputSession& session) const override;
 
     /// @brief A public class must live in the file of its own name (JLS
     ///        §7.6), so an overlong name is shortened as its file is
@@ -155,6 +171,10 @@ public:
 
 private:
     std::string package_;
+    bool by_module_;
+
+    /// @brief The package of the types of ASN.1 module `module_name`.
+    std::string module_package(const std::string& module_name) const;
 
     /// @brief The `BER_FRAMING` constant of a type assignment whose own
     ///        tag is not its builtin's universal tag (X.680 §31.2).

@@ -3,8 +3,8 @@
 // generates with --target=java from ../contact.asn1. If you change the
 // schema or main.cpp, update this file too.
 
-import contacts.Contact;
-import contacts.PhoneNumber;
+import contacts.ContactBook.Contact;
+import contacts.ContactBook.PhoneNumber;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.types.Asn1Ia5String;

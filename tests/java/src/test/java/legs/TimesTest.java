@@ -20,12 +20,12 @@ import org.junit.jupiter.api.Test;
 class TimesTest {
     @Test
     void etsiSampleTimesParse() throws IOException {
-        ExtractPlan plan = ExtractPlan.of(gen.etsi.PS_PDU::new,
+        ExtractPlan plan = ExtractPlan.of(gen.etsi.LI_PS_PDU.PS_PDU::new,
                 List.of(Asn1GeneralizedTime.class, Asn1UtcTime.class));
         BerReader r = new BerReader(Files.readAllBytes(Path.of(System.getProperty("etsi.sample"))));
         int n = 0;
         while (!r.atEnd()) {
-            gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+            gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
             BerObject.decode(pdu, r);
             Extraction x = plan.run(pdu);
             for (Asn1GeneralizedTime t : x.values(Asn1GeneralizedTime.class)) {

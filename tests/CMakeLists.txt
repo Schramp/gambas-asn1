@@ -2077,7 +2077,8 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
         OUTPUT  ${gen_dir}/.stamp
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
-        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags} ${java_leg_${leg}_FLAGS}
+        # One module per leg schema: its classes go straight into gen.<leg>.
+        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} --flat-package ${pdu_flags} ${java_leg_${leg}_FLAGS}
                 ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 -o ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E touch ${gen_dir}/.stamp
         DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 ${java_leg_${leg}_DEPS}
@@ -2086,8 +2087,9 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
     list(APPEND java_leg_outputs ${gen_dir}/.stamp)
 endforeach()
 # Real-schema build probe: the ETSI LI PS-PDU module set, generated whole
-# (no -pdu filtering beyond the two message roots) into gen.etsi, so the
-# java_legs Gradle run compiles it under -Xlint:all -Werror.
+# (no -pdu filtering beyond the two message roots) into gen.etsi, one
+# sub-package per ASN.1 module, so the java_legs Gradle run compiles it
+# under -Xlint:all -Werror.
 set(JAVA_ETSI_DIR ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU)
 file(GLOB_RECURSE java_etsi_asn1 ${JAVA_ETSI_DIR}/asn1-files/*.asn ${JAVA_ETSI_DIR}/asn1-files/*.asn1)
 list(SORT java_etsi_asn1)
