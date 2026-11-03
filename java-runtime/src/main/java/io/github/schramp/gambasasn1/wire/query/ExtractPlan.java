@@ -30,7 +30,10 @@ import java.util.function.Supplier;
  * type, one pass per value for all targets together.
  *
  * <p>A value matches a target when it is an instance of the target class;
- * the members it is reached through are those of its declared type. Every
+ * the members it is reached through are those of its declared type. A
+ * builtin held by an alias class ({@code LIID ::= OCTET STRING}) matches
+ * both as that class, the hit then being the class's object, and as the
+ * builtin. Every
  * occurrence is found: each element of a SEQUENCE OF, each present OPTIONAL
  * or extension member, the selected CHOICE alternative. Absent members,
  * unknown extensions, ANY and the bytes of a contained value that was not
@@ -52,6 +55,8 @@ public final class ExtractPlan {
         final Kind kind;
         /** The targets a value of this type is an instance of, in target order. */
         int[] hits = new int[0];
+        /** Per hit: whether it is the object of the builtin's alias class rather than the builtin. */
+        boolean[] hitOwner = new boolean[0];
         List<Step> steps = new ArrayList<>();
         /** For a CHOICE: the step of each alternative, or null when it leads nowhere. */
         Step[] byAlt;
@@ -160,8 +165,8 @@ public final class ExtractPlan {
             return;
         }
         out.visited++;
-        for (int t : n.hits) {
-            out.add(t, v);
+        for (int k = 0; k < n.hits.length; k++) {
+            out.add(n.hits[k], n.hitOwner[k] ? Positions.ownerOf(m) : v);
         }
         switch (n.kind) {
             case SEQUENCE -> {
@@ -207,7 +212,8 @@ public final class ExtractPlan {
      */
     private Node build(MemberRef sample, Map<Class<?>, Node> named, List<Node> all) {
         Object v = Positions.nodeOf(sample);
-        Class<?> c = v.getClass();
+        Object owner = Positions.ownerOf(sample);
+        Class<?> c = owner.getClass();
         boolean generic = c == SeqOf.class || c == io.github.schramp.gambasasn1.wire.spec.SetOf.class
                 || c == Containing.class;
         if (!generic) {
@@ -228,12 +234,19 @@ public final class ExtractPlan {
         }
         all.add(n);
         List<Integer> hits = new ArrayList<>();
+        List<Boolean> byOwner = new ArrayList<>();
         for (int t = 0; t < targets.size(); t++) {
-            if (targets.get(t).isInstance(v)) {
+            boolean ofOwner = owner != v && targets.get(t).isInstance(owner);
+            if (ofOwner || targets.get(t).isInstance(v)) {
                 hits.add(t);
+                byOwner.add(ofOwner);
             }
         }
         n.hits = hits.stream().mapToInt(Integer::intValue).toArray();
+        n.hitOwner = new boolean[byOwner.size()];
+        for (int k = 0; k < n.hitOwner.length; k++) {
+            n.hitOwner[k] = byOwner.get(k);
+        }
         switch (sample) {
             case MemberRef.Composite(var s) -> {
                 for (int i = 0; i < s.spec().members().size(); i++) {

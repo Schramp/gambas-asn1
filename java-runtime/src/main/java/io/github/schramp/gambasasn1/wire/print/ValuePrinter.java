@@ -82,7 +82,7 @@ public final class ValuePrinter {
 
     private void value(MemberRef m, int depth, StringBuilder sb) {
         switch (m) {
-            case MemberRef.Primitive(var p) -> primitive(p, sb);
+            case MemberRef.Primitive(var p, var owner) -> primitive(p, sb);
             case MemberRef.Enumerated(var slot, var spec) -> enumerated(slot, spec, sb);
             case MemberRef.Composite(var s) -> sequence(s, depth, sb);
             case MemberRef.Choice(var c) -> choice(c, depth, sb);

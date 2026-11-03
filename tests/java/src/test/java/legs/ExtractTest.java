@@ -197,4 +197,18 @@ class ExtractTest {
         assertSameValues(walkAll(scrambled, Inner.class), found);
         assertTrue(found.size() < 4);
     }
+
+    @Test
+    void aBuiltinAliasClassIsFoundAsItselfAndItsBuiltinAsTheBuiltin() throws IOException {
+        byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
+        gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+        Decoded d = BerObject.decodeWithPositions(pdu, file, null);
+        gen.etsi.LI_PS_PDULawfulInterceptionIdentifier liid = pdu.pSHeader().lawfulInterceptionIdentifier();
+        var hits = Extract.all(pdu, d, gen.etsi.LI_PS_PDULawfulInterceptionIdentifier.class);
+        assertEquals(1, hits.size());
+        assertSame(liid, hits.get(0).value());
+        assertEquals(d.positions().bitOffset(liid.value), hits.get(0).bitOffset());
+        assertTrue(hits.get(0).bitOffset() > 0);
+        assertTrue(Extract.all(pdu, Asn1OctetString.class).stream().anyMatch(o -> o == liid.value));
+    }
 }

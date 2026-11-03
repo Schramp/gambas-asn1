@@ -17,8 +17,29 @@ public sealed interface MemberRef {
     record Unsupported(String reason) implements MemberRef {
     }
 
-    /** A builtin leaf value. */
-    record Primitive(Asn1Primitive value) implements MemberRef {
+    /**
+     * A builtin leaf value. {@code owner} is the generated value that holds
+     * it: a builtin alias class ({@code LIID ::= OCTET STRING}) whose
+     * {@code value} field this is, or the builtin value itself when it has no
+     * class of its own. The codecs work on {@code value}; finding nodes by
+     * type and their positions also know {@code owner}.
+     */
+    record Primitive(Asn1Primitive value, AsMemberRef owner) implements MemberRef {
+        /** A builtin value that is its own owner. */
+        public Primitive(Asn1Primitive value) {
+            this(value, value);
+        }
+
+        /** Equal to another reference to an equal builtin value, whichever object owns it. */
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Primitive p && value.equals(p.value);
+        }
+
+        @Override
+        public int hashCode() {
+            return value.hashCode();
+        }
     }
 
     /** A SEQUENCE or SET. */

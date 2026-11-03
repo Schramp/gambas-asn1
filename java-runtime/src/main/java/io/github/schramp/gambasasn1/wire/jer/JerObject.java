@@ -127,7 +127,7 @@ public final class JerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> JerPrimitive.encode(p, c, w);
+            case MemberRef.Primitive(var p, var owner) -> JerPrimitive.encode(p, c, w);
             case MemberRef.Enumerated(var slot, var spec) -> JerPrimitive.encodeEnumerated(slot, spec, w);
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
@@ -158,7 +158,7 @@ public final class JerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
-            case MemberRef.Primitive(var p) -> JerPrimitive.decode(p, c, r);
+            case MemberRef.Primitive(var p, var owner) -> JerPrimitive.decode(p, c, r);
             case MemberRef.Enumerated(var slot, var spec) -> JerPrimitive.decodeEnumerated(slot, spec, r);
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
@@ -244,7 +244,7 @@ public final class JerObject {
 
     /** Whether {@code m}'s own JER value can be {@code null}: NULL (X.697 §26) or an open type. */
     private static boolean mayBeNull(MemberRef m) {
-        return m instanceof MemberRef.Primitive(var p) && (p instanceof Asn1Null || p instanceof Asn1Any);
+        return m instanceof MemberRef.Primitive(var p, var owner) && (p instanceof Asn1Null || p instanceof Asn1Any);
     }
 
     private static int indexOf(List<MemberMeta> members, String key) {

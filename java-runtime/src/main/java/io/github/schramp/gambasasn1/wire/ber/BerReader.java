@@ -137,6 +137,32 @@ public final class BerReader {
         }
     }
 
+    /**
+     * Absolute bits of local octets {@code from} up to {@code to}
+     * (exclusive), as {start, end}.
+     */
+    private long[] span(int from, int to) {
+        long a = absoluteBit(from);
+        return new long[] {a, to == from ? a : absoluteEndBit(to)};
+    }
+
+    /** Records local octets {@code from} up to {@code to} as the contents and the value of {@code node}. */
+    public void markContents(Object node, int from, int to) {
+        if (positions != null) {
+            long[] s = span(from, to);
+            positions.recordContents(node, s[0], s[1]);
+            positions.recordValue(node, s[0], s[1]);
+        }
+    }
+
+    /** Records local octets {@code from} up to {@code to} as the value of {@code node}. */
+    public void markValue(Object node, int from, int to) {
+        if (positions != null) {
+            long[] s = span(from, to);
+            positions.recordValue(node, s[0], s[1]);
+        }
+    }
+
     /** Records that {@code node} ends at the reader's current position, when positions are recorded. */
     public void markEnd(Object node) {
         if (positions != null) {

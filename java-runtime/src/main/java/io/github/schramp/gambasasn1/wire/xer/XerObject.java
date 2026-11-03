@@ -119,7 +119,7 @@ public final class XerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> {
+            case MemberRef.Primitive(var p, var owner) -> {
                 w.open(name);
                 if (p instanceof Asn1OctetString o) {
                     XerPrimitive.encodeOctets(o.get(), ins, w);
@@ -227,8 +227,8 @@ public final class XerObject {
 
     private static boolean isValueList(MemberRef el) {
         return el instanceof MemberRef.Enumerated
-                || el instanceof MemberRef.Primitive(Asn1Boolean b)
-                || el instanceof MemberRef.Primitive(Asn1Null n);
+                || el instanceof MemberRef.Primitive(Asn1Boolean b, var owner)
+                || el instanceof MemberRef.Primitive(Asn1Null n, var owner2);
     }
 
     /**
@@ -240,13 +240,13 @@ public final class XerObject {
         boolean setOf = q.naturalTag().number() == UniversalTag.SET;
         for (int i = 0; i < q.size(); i++) {
             MemberRef el = q.get(i);
-            boolean isNull = el instanceof MemberRef.Primitive(Asn1Null n);
+            boolean isNull = el instanceof MemberRef.Primitive(Asn1Null n, var owner);
             if (isNull || setOf) {
                 w.ascii("\n").indent(depth + 2);
             }
             switch (el) {
                 case MemberRef.Enumerated(EnumSlot slot, EnumSpec spec) -> encodeEnumerated(slot, spec, w);
-                case MemberRef.Primitive(Asn1Boolean b) -> w.empty(b.get() ? "true" : "false");
+                case MemberRef.Primitive(Asn1Boolean b, var owner) -> w.empty(b.get() ? "true" : "false");
                 default -> w.empty(q.elemNaturalXerName(i));
             }
         }
@@ -270,7 +270,7 @@ public final class XerObject {
         int at = r.position();
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, at);
-            case MemberRef.Primitive(var p) -> {
+            case MemberRef.Primitive(var p, var owner) -> {
                 boolean empty = r.consumeOpenOrEmptyTag(name);
                 XerReader content = empty ? new XerReader(new byte[0], r.lenient()).withOptions(r.options()) : r;
                 if (p instanceof Asn1OctetString o) {
@@ -369,7 +369,7 @@ public final class XerObject {
             MemberRef el = q.addDefault();
             switch (el) {
                 case MemberRef.Enumerated(EnumSlot slot, EnumSpec spec) -> decodeEnumerated(slot, spec, r);
-                case MemberRef.Primitive(Asn1Boolean b) when peek.name().equals("true") || peek.name().equals("false") -> {
+                case MemberRef.Primitive(Asn1Boolean b, var owner) when peek.name().equals("true") || peek.name().equals("false") -> {
                     r.consumeTag();
                     b.set(peek.name().equals("true"));
                 }

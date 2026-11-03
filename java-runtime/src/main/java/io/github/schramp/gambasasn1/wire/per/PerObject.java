@@ -23,7 +23,9 @@ import io.github.schramp.gambasasn1.wire.spec.Positions;
 import io.github.schramp.gambasasn1.wire.spec.ExtUnit;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -118,7 +120,7 @@ public final class PerObject {
         return switch (m) {
             case MemberRef.Composite(var s) -> s.spec().name();
             case MemberRef.Choice(var c) -> c.spec().name();
-            case MemberRef.Primitive(var p) -> p.xerElementName();
+            case MemberRef.Primitive(var p, var owner) -> p.xerElementName();
             case MemberRef.SeqOf(var q) -> q.ownXerName();
             case MemberRef.Enumerated(var e, var spec) -> spec.name();
             default -> m.getClass().getSimpleName();
@@ -179,7 +181,7 @@ public final class PerObject {
     static void encodeValue(MemberRef m, Constraints c, PerWriter w) {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> PerPrimitive.encode(p, c, w);
+            case MemberRef.Primitive(var p, var owner) -> PerPrimitive.encode(p, c, w);
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.encodeEnumerated(slot, spec, w);
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
@@ -195,6 +197,7 @@ public final class PerObject {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);
         if (node != null) {
             r.markStart(node);
+            r.positions().recordOwner(Positions.ownerOf(m), node);
         }
         long start = r.bitPos();
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
@@ -219,10 +222,34 @@ public final class PerObject {
         }
     }
 
+    /**
+     * Records where the value of an OCTET STRING or BIT STRING just read
+     * lies: its octets or bits come last, after any length determinant
+     * (X.691 §16, §17). A length of 16K or more is sent in fragments with a
+     * length determinant before each (X.691 §11.9.3.8), so no single span
+     * holds the value and none is recorded.
+     */
+    private static void markValue(Asn1Primitive p, PerReader r) {
+        long n = switch (p) {
+            case Asn1OctetString o -> o.get().length < 16384 ? 8L * o.get().length : -1;
+            case Asn1BitString b -> b.bitCount() < 16384 ? b.bitCount() : -1;
+            default -> -1;
+        };
+        if (n >= 0) {
+            long end = r.absoluteBit(r.bitPos());
+            r.positions().recordValue(p, end - n, end);
+        }
+    }
+
     private static void decodeLevel(MemberRef m, Constraints c, PerReader r) {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw r.error(reason);
-            case MemberRef.Primitive(var p) -> PerPrimitive.decode(p, c, r);
+            case MemberRef.Primitive(var p, var owner) -> {
+                PerPrimitive.decode(p, c, r);
+                if (r.positions() != null) {
+                    markValue(p, r);
+                }
+            }
             case MemberRef.Enumerated(var slot, var spec) -> PerPrimitive.decodeEnumerated(slot, spec, r);
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
@@ -236,6 +263,7 @@ public final class PerObject {
                     // The octets follow their length determinant (X.691 §17.8).
                     long end = r.absoluteBit(r.bitPos());
                     r.positions().recordContents(f, end - 8L * raw.get().length, end);
+                    r.positions().recordValue(f, end - 8L * raw.get().length, end);
                 }
             }
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");

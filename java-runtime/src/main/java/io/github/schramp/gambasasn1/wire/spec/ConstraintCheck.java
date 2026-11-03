@@ -31,7 +31,7 @@ public final class ConstraintCheck {
             return null;
         }
         return switch (m) {
-            case MemberRef.Primitive(var p) -> switch (p) {
+            case MemberRef.Primitive(var p, var owner) -> switch (p) {
                 case Asn1Integer i -> range(i.get(), c);
                 case Asn1UInteger u -> rangeUnsigned(u.get(), c);
                 case Asn1Real r -> realRange(r.value(), c);
