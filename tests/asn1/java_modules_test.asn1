@@ -10,3 +10,27 @@ ModA DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     Holder ::= SEQUENCE { v Value, w Value DEFAULT green }
 
 END
+
+-- A type named like another module it imports from, and a type named
+-- like its own module: an unrooted Beta.Item or Foo.Foo would resolve
+-- Beta or Foo to the class, not the package.
+Alpha DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Item FROM Beta;
+
+    Beta ::= INTEGER
+
+    Rec ::= SEQUENCE { i Item, b Beta }
+
+    -- Members named like the root package and the runtime's packages.
+    Roots ::= SEQUENCE { gen INTEGER, io BOOLEAN, java Item }
+END
+
+Beta DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Item ::= INTEGER (0..10)
+END
+
+Foo DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Item FROM Beta;
+
+    Foo ::= SEQUENCE { item Item }
+END
