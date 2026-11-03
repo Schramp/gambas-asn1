@@ -99,16 +99,16 @@ class ExtractTest {
     @Test
     void etsiFusedPlanFindsWhatAWholeWalkFinds() throws IOException {
         byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
-        java.util.List<Class<?>> targets = java.util.List.of(gen.etsi.EncryptedPayload.class,
-                gen.etsi.Timestamp.class, gen.etsi.CCContents.class, gen.etsi.IRIContents.class,
+        java.util.List<Class<?>> targets = java.util.List.of(gen.etsi.LI_PS_PDU.EncryptedPayload.class,
+                gen.etsi.TS33128Payloads.Timestamp.class, gen.etsi.LI_PS_PDU.CCContents.class, gen.etsi.LI_PS_PDU.IRIContents.class,
                 Asn1OctetString.class, Asn1Integer.class);
-        ExtractPlan plan = ExtractPlan.of(gen.etsi.PS_PDU::new, targets);
+        ExtractPlan plan = ExtractPlan.of(gen.etsi.LI_PS_PDU.PS_PDU::new, targets);
         assertTrue(plan.canMatch());
         BerReader r = new BerReader(file);
         int pdus = 0;
         int payloads = 0;
         while (!r.atEnd()) {
-            gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+            gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
             Decoded d = BerObject.decodeWithPositions(pdu, r);
             Extraction x = plan.run(pdu, d.positions());
             for (Class<?> t : targets) {
@@ -119,7 +119,7 @@ class ExtractTest {
                     assertEquals(d.positions().bitOffset(h.value()), h.bitOffset());
                 }
             }
-            payloads += x.values(gen.etsi.EncryptedPayload.class).size();
+            payloads += x.values(gen.etsi.LI_PS_PDU.EncryptedPayload.class).size();
             pdus++;
         }
         assertTrue(pdus > 1);
@@ -201,10 +201,10 @@ class ExtractTest {
     @Test
     void aBuiltinAliasClassIsFoundAsItselfAndItsBuiltinAsTheBuiltin() throws IOException {
         byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
-        gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+        gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
         Decoded d = BerObject.decodeWithPositions(pdu, file, null);
-        gen.etsi.LI_PS_PDULawfulInterceptionIdentifier liid = pdu.pSHeader().lawfulInterceptionIdentifier();
-        var hits = Extract.all(pdu, d, gen.etsi.LI_PS_PDULawfulInterceptionIdentifier.class);
+        gen.etsi.LI_PS_PDU.LawfulInterceptionIdentifier liid = pdu.pSHeader().lawfulInterceptionIdentifier();
+        var hits = Extract.all(pdu, d, gen.etsi.LI_PS_PDU.LawfulInterceptionIdentifier.class);
         assertEquals(1, hits.size());
         assertSame(liid, hits.get(0).value());
         assertEquals(d.positions().bitOffset(liid.value), hits.get(0).bitOffset());
@@ -217,7 +217,7 @@ class ExtractTest {
         gen.seqof_ber.Holder h = new gen.seqof_ber.Holder();
         BerObject.decode(h, hex("301930003100A000A10830060101FF010100300302010463003000"));
         assertSame(h.opt(), Extract.all(h, gen.seqof_ber.HolderOpt.class).get(0));
-        assertTrue(ExtractPlan.of(gen.etsi.PS_PDU::new,
-                gen.etsi.UmtsHI2OperationsIRI_ParametersPartyInformation.class).canMatch());
+        assertTrue(ExtractPlan.of(gen.etsi.LI_PS_PDU.PS_PDU::new,
+                gen.etsi.UmtsHI2Operations.IRI_ParametersPartyInformation.class).canMatch());
     }
 }

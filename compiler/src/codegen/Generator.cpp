@@ -37,10 +37,14 @@ Generator::Generator(fs::path out_dir, sema::Resolver& res)
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Write content to path only if it differs from the existing file.
-// Uses a .tmp sidecar: write there, compare, then rename or remove.
-// Avoids bumping mtime on unchanged generated files → fewer downstream recompiles.
+/// @brief Write a generated file only when its content changed, so an
+///        unchanged file keeps its mtime and downstream builds skip it.
+///        Creates the file's directory, which a backend's `output_stem`
+///        can place below the output directory.
+/// @param path    The file to write.
+/// @param content Its new content.
 static void write_if_changed(const fs::path& path, const std::string& content) {
+    fs::create_directories(path.parent_path());
     fs::path tmp = path; tmp += ".tmp";
     { std::ofstream out(tmp, std::ios::binary); out << content; }
     if (fs::exists(path)) {
@@ -3023,7 +3027,7 @@ void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session)
 ///       one file. Revisit if/when that combination occurs.
 void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
                                  const ast::Module& mod) {
-    std::string base = filename_for(name);
+    std::string base = bounded_file_stem(backend_.output_stem(name));
     emitted_type_refs_.clear();
     TypeOutputSession session;
     emit_type_body(def, mod, session);
@@ -3075,7 +3079,7 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
         }
         module_comment += " }";
     }
-    backend_.emit_declaration_preamble(module_comment, session);
+    backend_.emit_declaration_preamble(module_comment, mod.name, session);
 
     // A top-level type alias that also carries its own [n] tag override
     // (`Label2 ::= [1] Label`) needs a real descriptor, not a bare `using`

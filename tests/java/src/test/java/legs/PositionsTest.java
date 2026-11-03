@@ -366,7 +366,7 @@ class PositionsTest {
         int strings = 0;
         while (!r.atEnd()) {
             long base = 8L * r.position();
-            gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+            gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
             Decoded d = BerObject.decodeWithPositions(pdu, r);
             Positions p = d.positions().withBase(base);
             assertEquals(base + 8L * d.bytesConsumed(), p.endBitOffset(pdu));

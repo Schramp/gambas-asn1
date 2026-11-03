@@ -122,7 +122,7 @@ class ValuePrinterTest {
         BerReader r = new BerReader(Files.readAllBytes(Path.of(System.getProperty("etsi.sample"))));
         int n = 0;
         while (!r.atEnd()) {
-            gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+            gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
             BerObject.decode(pdu, r);
             String s = pdu.toString();
             assertTrue(s.startsWith("{\n  pSHeader {\n"), s);

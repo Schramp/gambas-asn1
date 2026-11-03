@@ -16,9 +16,9 @@
  * Usage: java NestedDecoder [--xer-form hex|inline|inline_raw] <file.etsi>
  */
 
-import etsi.EncryptedPayload;
-import etsi.EncryptionContainer;
-import etsi.PS_PDU;
+import etsi.LI_PS_PDU.EncryptedPayload;
+import etsi.LI_PS_PDU.EncryptionContainer;
+import etsi.LI_PS_PDU.PS_PDU;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
