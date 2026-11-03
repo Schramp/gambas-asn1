@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.xer;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
@@ -26,7 +27,7 @@ public final class XerReader {
     private int pos;
     private final boolean lenient;
     private int depth;
-    private ContainedOptions contained;
+    private DecodeOptions options = DecodeOptions.DEFAULT;
 
     /** A strict reader: BASIC-XER only (X.693 §8). */
     public XerReader(byte[] buf) {
@@ -43,18 +44,30 @@ public final class XerReader {
         this.lenient = lenient;
     }
 
+    /** Whether asn1c's non-standard forms are accepted: a lenient reader, or relaxed settings. */
     public boolean lenient() {
-        return lenient;
+        return lenient || options.relaxed();
     }
 
     /** Contained-value settings of this decode; null for the defaults. */
     public ContainedOptions contained() {
-        return contained;
+        return options.contained();
     }
 
     /** Sets the contained-value settings of this decode. */
-    public XerReader withContained(ContainedOptions options) {
-        contained = options;
+    public XerReader withContained(ContainedOptions c) {
+        options = options.withContained(c);
+        return this;
+    }
+
+    /** The decoder settings of this decode. */
+    public DecodeOptions options() {
+        return options;
+    }
+
+    /** Sets the decoder settings, contained-value settings included; null for the defaults. */
+    public XerReader withOptions(DecodeOptions o) {
+        options = DecodeOptions.orDefault(o);
         return this;
     }
 

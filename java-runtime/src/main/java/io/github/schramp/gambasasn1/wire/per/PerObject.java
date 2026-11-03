@@ -83,15 +83,17 @@ public final class PerObject {
 
     /**
      * Decodes {@code data}, one complete encoding, into {@code v}: after
-     * the value only the padding of its last octet may follow. With rich
-     * errors on, an error names the type and shows the input there.
+     * the value only the padding of its last octet may follow, or, relaxed,
+     * anything. With rich errors on, an error names the type and shows the
+     * input there.
      */
     private static void decodeWhole(AsMemberRef v, byte[] data, Constraints c, PerReader r) {
         MemberRef m = v.asMemberRef();
         try {
+            trace(r, typeName(m), m);
             decodeValue(m, c, r);
             boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
-            if (r.remaining() >= 8 && !emptyEncoding) {
+            if (r.remaining() >= 8 && !emptyEncoding && !r.options().relaxed()) {
                 throw r.error("PER: trailing data after the value");
             }
         } catch (DecodeException e) {
@@ -101,6 +103,13 @@ public final class PerObject {
             int at = Math.min(e.position(), data.length);
             throw e.within(typeName(m)).showing(java.util.Arrays.copyOfRange(data, at,
                     Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
+        }
+    }
+
+    /** A trace line for {@code m}, about to be decoded as {@code segment}, when tracing is on. */
+    private static void trace(PerReader r, String segment, MemberRef m) {
+        if (r.options().trace() != null) {
+            r.options().trace().accept("PER bit " + r.absoluteBit(r.bitPos()) + " " + segment + " " + typeName(m));
         }
     }
 
@@ -116,8 +125,13 @@ public final class PerObject {
         };
     }
 
-    /** {@link #decodeValue} with {@code segment} added to the path of an error, when errors are rich. */
+    /**
+     * {@link #decodeValue} as {@code segment} of its parent: traced when
+     * tracing is on, and with the segment added to the path of an error
+     * when errors are rich.
+     */
     private static void decodePart(MemberRef m, Constraints c, String segment, PerReader r) {
+        trace(r, segment, m);
         if (!r.options().richErrors()) {
             decodeValue(m, c, r);
             return;
