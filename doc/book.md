@@ -2312,8 +2312,6 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   but whose meaning is clear:
   - BER: TLVs after the last member of a SEQUENCE without an extension
     marker are skipped, as for an extensible one.
-  - BER: a TLV that matches no alternative of a non-extensible CHOICE is
-    kept as an unknown extension.
   - BER: octets after the value inside an EXPLICIT or CHOICE tag are
     ignored.
   - BER: a BOOLEAN with more than one contents octet is TRUE when any of

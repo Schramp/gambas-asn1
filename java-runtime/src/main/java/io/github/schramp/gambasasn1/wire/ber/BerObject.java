@@ -610,7 +610,9 @@ public final class BerObject {
             }
             return;
         }
-        if (spec.extAt() < 0 && !r.options().relaxed()) {
+        // Only an extensible CHOICE takes an unknown alternative (X.680 §52.1),
+        // relaxed or not: a non-extensible one has nowhere to keep it.
+        if (spec.extAt() < 0) {
             throw new DecodeException("CHOICE " + spec.name() + ": no alternative has tag " + tag, start);
         }
         Tlv tlv = r.readTlv();
