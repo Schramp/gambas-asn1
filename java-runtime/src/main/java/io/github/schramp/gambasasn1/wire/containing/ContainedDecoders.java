@@ -93,7 +93,7 @@ public final class ContainedDecoders {
         int used;
         switch (args.encoding()) {
             case BER, CER, DER -> {
-                long at = args.parent().positions() == null ? -1 : args.parent().positions().contentsBit(args.inner());
+                long at = args.parent().positions() == null ? -1 : args.parent().positions().placementBit(args.inner());
                 BerReader r = at >= 0 ? args.parent().nestedAt(bytes, at) : args.parent().nested(bytes);
                 try {
                     BerObject.decode(args.inner(), r);
@@ -104,7 +104,7 @@ public final class ContainedDecoders {
             }
             case PER_UNALIGNED -> {
                 PerReader r = new PerReader(bytes).withOptions(args.parent().options());
-                long at = args.parent().positions() == null ? -1 : args.parent().positions().contentsBit(args.inner());
+                long at = args.parent().positions() == null ? -1 : args.parent().positions().placementBit(args.inner());
                 if (at >= 0) {
                     r.withPositions(args.parent().positions(), at);
                 }

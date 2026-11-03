@@ -8,6 +8,7 @@ import gen.containing.Holder;
 import gen.containing.Inner;
 import gen.sequence_ber.Outer;
 import gen.sequence_ber.Plain;
+import gen.sequence_ber.Refs;
 import gen.set_ber.Rec;
 import gen.seqof_ber.Point;
 import gen.seqof_ber.Points;
@@ -159,6 +160,158 @@ class PositionsTest {
                 assertEquals(at, p.bitOffset(c.value()));
             }
         }
+    }
+
+    @Test
+    void berNodesSpanTheirWholeEncodingAndPrimitivesTheirContents() {
+        // 30 11 | 30 0C | 02 01 01 | 01 01 00 | 0C 00 | 04 00 | 05 00 | 02 01 02
+        byte[] der = hex("3011300C0201010101000C0004000500020102");
+        Outer v = new Outer();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertEquals(8 * der.length, p.sizeBits(v));
+        assertEquals(der.length, p.endByteOffset(v));
+        assertEquals(8 * 14, p.sizeBits(v.inner()));
+        assertEquals(16, p.endByteOffset(v.inner()));
+        assertEquals(8 * 3, p.sizeBits(v.inner().num()));
+        assertEquals(8 * 6, p.contentsBitOffset(v.inner().num()));
+        assertEquals(8, p.contentsSizeBits(v.inner().num()));
+        assertEquals(8 * 7, p.contentsEndBitOffset(v.inner().num()));
+        // An empty value has empty contents right after its header.
+        assertEquals(8 * 12, p.contentsBitOffset(v.inner().text()));
+        assertEquals(0, p.contentsSizeBits(v.inner().text()));
+        assertEquals(16, p.sizeBits(v.inner().nul()));
+        // A constructed value has no contents span of its own.
+        assertEquals(-1, p.contentsBitOffset(v.inner()));
+    }
+
+    @Test
+    void berExplicitTagSpansTheOuterTlvAndItsContentsTheInnerOnes() {
+        // 30 32 | 0A 01 02 | 02 01 00 | 61 03 [01 01 00] | 6D 03 [02 01 FB] | ...
+        byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
+                + "160171A6083006020105020106");
+        Refs v = new Refs();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertEquals(8, p.byteOffset(v.tbool().value));
+        assertEquals(8 * 5, p.sizeBits(v.tbool().value));
+        assertEquals(8 * 12, p.contentsBitOffset(v.tbool().value));
+        assertEquals(8, p.contentsSizeBits(v.tbool().value));
+        assertEquals(13, p.byteOffset(v.texp().value));
+        assertEquals(18, p.endByteOffset(v.texp().value));
+        assertEquals(8 * 17, p.contentsBitOffset(v.texp().value));
+        assertEquals(8, p.contentsSizeBits(v.texp().value));
+    }
+
+    @Test
+    void berSetComponentEndsFollowTheirWirePlace() {
+        // 31 0A | 80 02 00 C7 (zeroth) | 81 01 00 (first) | 83 01 02 (third): table order is third, first, zeroth
+        byte[] der = hex("310A800200C7810100830102");
+        Rec v = new Rec();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        assertEquals(6, p.endByteOffset(v.zeroth()));
+        assertEquals(8 * 4, p.sizeBits(v.zeroth()));
+        assertEquals(8 * 4, p.contentsBitOffset(v.zeroth()));
+        assertEquals(16, p.contentsSizeBits(v.zeroth()));
+        assertEquals(9, p.endByteOffset(v.first()));
+        assertEquals(12, p.endByteOffset(v.third()));
+        assertEquals(8 * 11, p.contentsBitOffset(v.third()));
+        assertEquals(12, p.endByteOffset(v));
+    }
+
+    @Test
+    void berContainedInnerValueSpansItsOwnEncodingInsideTheFieldContents() {
+        byte[] der = row("containing_test.vectors", "Holder", "<plain/>").der();
+        Holder v = new Holder();
+        Positions p = BerObject.decodeWithPositions(v, der, null).positions();
+        // 30 2D | 80 01 01 | 81 05 [30 03 80 01 05] ...
+        assertEquals(8 * 7, p.contentsBitOffset(v.viaConstraint()));
+        assertEquals(8 * 5, p.contentsSizeBits(v.viaConstraint()));
+        assertEquals(8 * 7, p.sizeBits(v.viaConstraint()));
+        Inner inner = v.viaConstraint().value();
+        assertEquals(8 * 5, p.sizeBits(inner));
+        assertEquals(p.contentsEndBitOffset(v.viaConstraint()), p.endBitOffset(inner));
+        assertEquals(8 * 7, p.bitOffset(inner));
+        assertEquals(-1, p.contentsBitOffset(inner));
+    }
+
+    @Test
+    void berEndsMoveWithTheBase() {
+        byte[] one = hex("3011300C0201010101000C0004000500020102");
+        byte[] two = hex("301030060201010201023006020103020104");
+        byte[] both = new byte[one.length + two.length];
+        System.arraycopy(one, 0, both, 0, one.length);
+        System.arraycopy(two, 0, both, one.length, two.length);
+        BerReader r = new BerReader(both);
+        BerObject.decodeWithPositions(new Outer(), r);
+        Points b = new Points();
+        Positions p = BerObject.decodeWithPositions(b, r).positions();
+        assertEquals(two.length, p.endByteOffset(b));
+        assertEquals(18, p.endByteOffset(b.items().get(1)));
+        Positions moved = p.withBase(8L * one.length);
+        assertEquals(both.length, moved.endByteOffset(b));
+        assertEquals(one.length + 17, moved.contentsBitOffset(b.items().get(1).y()) / 8);
+        assertEquals(p.sizeBits(b), moved.sizeBits(b));
+    }
+
+    @Test
+    void perNodesSpanTheirBits() {
+        byte[] uper = row("sequence_ber_test.vectors", "Outer", "<tail>2</tail>").asn1cUper();
+        Outer v = new Outer();
+        Decoded d = PerObject.decodeWithPositions(v, uper, null);
+        Positions p = d.positions();
+        assertEquals(16, p.sizeBits(v.inner().num()));
+        assertEquals(1, p.sizeBits(v.inner().flag()));
+        assertEquals(0, p.sizeBits(v.inner().nul()));
+        assertEquals(p.endBitOffset(v.tail()), p.endBitOffset(v));
+        assertEquals(p.bitOffset(v.tail()), p.endBitOffset(v.inner()));
+        assertEquals(uper.length, p.endByteOffset(v));
+        assertEquals(-1, p.contentsBitOffset(v.inner().num()));
+    }
+
+    @Test
+    void perContainedFieldContentsEndWithTheField() {
+        byte[] uper = row("containing_test.vectors", "Holder", "<viaConstraint>008280").asn1cUper();
+        Holder v = new Holder();
+        Positions p = PerObject.decodeWithPositions(v, uper, null).positions();
+        for (var c : java.util.List.of(v.viaConstraint(), v.viaAlias(), v.viaConfig(), v.viaSized())) {
+            assertEquals(8L * c.bytes().length, p.contentsSizeBits(c), c.toString());
+            assertEquals(p.endBitOffset(c), p.contentsEndBitOffset(c), c.toString());
+        }
+    }
+
+    /**
+     * Over every record of the ETSI sample: each node's contents lie inside
+     * its encoding, which lies inside the record, and an OCTET STRING's
+     * contents span holds exactly its value.
+     */
+    @Test
+    void etsiSampleSpansNestAndOctetStringContentsAreTheirValue() throws java.io.IOException {
+        byte[] all = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(System.getProperty("etsi.sample")));
+        BerReader r = new BerReader(all);
+        int strings = 0;
+        while (!r.atEnd()) {
+            long base = 8L * r.position();
+            gen.etsi.PS_PDU pdu = new gen.etsi.PS_PDU();
+            Decoded d = BerObject.decodeWithPositions(pdu, r);
+            Positions p = d.positions().withBase(base);
+            assertEquals(base + 8L * d.bytesConsumed(), p.endBitOffset(pdu));
+            for (Object n : p.nodes()) {
+                long start = p.bitOffset(n);
+                long end = p.endBitOffset(n);
+                assertTrue(start >= base && start <= end && end <= p.endBitOffset(pdu),
+                        start + ".." + end + " in " + base + ".." + p.endBitOffset(pdu) + ": " + n.getClass());
+                long cs = p.contentsBitOffset(n);
+                if (cs >= 0) {
+                    assertTrue(start <= cs && cs <= p.contentsEndBitOffset(n) && p.contentsEndBitOffset(n) <= end,
+                            start + ".." + end + " contents " + cs + ".." + p.contentsEndBitOffset(n) + ": " + n.getClass());
+                }
+                if (n instanceof io.github.schramp.gambasasn1.wire.types.Asn1OctetString o) {
+                    assertArrayEquals(o.get(), java.util.Arrays.copyOfRange(all, (int) (cs / 8),
+                            (int) (p.contentsEndBitOffset(n) / 8)));
+                    strings++;
+                }
+            }
+        }
+        assertTrue(strings > 0);
     }
 
     @Test

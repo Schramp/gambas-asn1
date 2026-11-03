@@ -120,10 +120,27 @@ public final class BerReader {
         return pieceAbs[i] + 8L * (local - pieceLocal[i]);
     }
 
+    /**
+     * Absolute bit just after the octet before local offset {@code local}:
+     * the end of a value that finishes there. Differs from
+     * {@link #absoluteBit} where a SET's components were reordered, since the
+     * next octet can then come from a different place in the input.
+     */
+    public long absoluteEndBit(int local) {
+        return local == 0 ? absoluteBit(0) : absoluteBit(local - 1) + 8;
+    }
+
     /** Records that {@code node} starts at the reader's current position, when positions are recorded. */
     public void markStart(Object node) {
         if (positions != null) {
             positions.record(node, absoluteBit(src.position()));
+        }
+    }
+
+    /** Records that {@code node} ends at the reader's current position, when positions are recorded. */
+    public void markEnd(Object node) {
+        if (positions != null) {
+            positions.recordEnd(node, absoluteEndBit(src.position()));
         }
     }
 

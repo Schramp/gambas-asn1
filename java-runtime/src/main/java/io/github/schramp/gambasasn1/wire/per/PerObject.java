@@ -192,11 +192,9 @@ public final class PerObject {
 
     /** Decode counterpart of {@link #encodeValue}; a constructed value counts one nesting level. */
     static void decodeValue(MemberRef m, Constraints c, PerReader r) {
-        if (r.positions() != null) {
-            Object node = Positions.nodeOf(m);
-            if (node != null) {
-                r.markStart(node);
-            }
+        Object node = r.positions() == null ? null : Positions.nodeOf(m);
+        if (node != null) {
+            r.markStart(node);
         }
         long start = r.bitPos();
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
@@ -208,6 +206,9 @@ public final class PerObject {
             } finally {
                 r.leaveLevel();
             }
+        }
+        if (node != null) {
+            r.markEnd(node);
         }
         if (r.options().checkConstraints()) {
             String why = ConstraintCheck.violation(m, c);
@@ -233,7 +234,8 @@ public final class PerObject {
                 f.setRawFromWire(raw.get(), ContainedEncoding.PER_UNALIGNED);
                 if (r.positions() != null) {
                     // The octets follow their length determinant (X.691 §17.8).
-                    r.positions().recordContents(f, r.absoluteBit(r.bitPos()) - 8L * raw.get().length);
+                    long end = r.absoluteBit(r.bitPos());
+                    r.positions().recordContents(f, end - 8L * raw.get().length, end);
                 }
             }
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
