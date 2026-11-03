@@ -34,35 +34,42 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # The version reaches every later step through env: only, never through
+      # ${{ }} inside a script, and must be plain X.Y.Z: a dispatch input or a
+      # tag name is text a writer chose, and a tag may hold ; $( ) or `.
       - name: Version
         id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          v="${{ github.event.inputs.version }}"
+          v="$INPUT_VERSION"
           if [ -z "$v" ]; then v="${GITHUB_REF_NAME#java-runtime-v}"; fi
-          case "$v" in
-            *SNAPSHOT*|'') echo "not a release version: '$v'"; exit 1 ;;
-          esac
+          if ! printf '%s' "$v" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "not a release version (X.Y.Z): '$v'"; exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Test and stage the signed bundle
         env:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           test -n "$ORG_GRADLE_PROJECT_signingKey" || { echo "SIGNING_KEY secret missing"; exit 1; }
           ./java-runtime/gradlew -p java-runtime test publishWirePublicationToStagingRepository \
-              -Pversion=${{ steps.v.outputs.version }}
+              -Pversion="$VERSION"
           cd java-runtime/build/staging-deploy
-          ls io/github/schramp/gambasasn1/gambasasn1-wire/${{ steps.v.outputs.version }}/*.asc
+          ls io/github/schramp/gambasasn1/gambasasn1-wire/"$VERSION"/*.asc
           zip -r ../bundle.zip . -x '*maven-metadata*'
 
       - name: Upload to the Central Portal
         env:
           USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
           PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           token=$(printf '%s:%s' "$USERNAME" "$PASSWORD" | base64 -w0)
           curl --fail-with-body -sS -X POST \
               -H "Authorization: Bearer $token" \
               -F bundle=@java-runtime/build/bundle.zip \
-              "https://central.sonatype.com/api/v1/publisher/upload?publishingType=USER_MANAGED&name=gambasasn1-wire-${{ steps.v.outputs.version }}"
+              "https://central.sonatype.com/api/v1/publisher/upload?publishingType=USER_MANAGED&name=gambasasn1-wire-$VERSION"
