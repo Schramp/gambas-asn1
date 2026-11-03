@@ -2465,7 +2465,8 @@ Releases go through the `java-release` workflow
 (`.github/workflows/java-release.yml`):
 
 1. Push a tag `java-runtime-vX.Y.Z`, or start the workflow by hand with a
-   version.
+   version. The version must be plain `X.Y.Z` (digits and dots); anything
+   else, a `-SNAPSHOT` suffix included, stops the workflow.
 2. The workflow runs the runtime tests and builds a signed bundle.
 3. It uploads the bundle to the Central Portal as a user-managed
    deployment.
