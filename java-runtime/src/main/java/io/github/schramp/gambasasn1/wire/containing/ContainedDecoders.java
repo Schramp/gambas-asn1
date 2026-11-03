@@ -103,7 +103,7 @@ public final class ContainedDecoders {
                 used = r.position();
             }
             case PER_UNALIGNED -> {
-                PerReader r = new PerReader(bytes).withContained(args.parent().contained());
+                PerReader r = new PerReader(bytes).withOptions(args.parent().options());
                 long at = args.parent().positions() == null ? -1 : args.parent().positions().contentsBit(args.inner());
                 if (at >= 0) {
                     r.withPositions(args.parent().positions(), at);

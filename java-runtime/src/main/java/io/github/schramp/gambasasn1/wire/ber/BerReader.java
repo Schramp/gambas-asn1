@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
@@ -10,13 +11,13 @@ import io.github.schramp.gambasasn1.wire.spec.Positions;
  * BER input: reads one TLV at a time from a {@link ByteSource}. Every
  * malformed input ends in a {@link DecodeException}. The reader also
  * carries the constructed nesting depth of the decode using it
- * ({@link Nesting}), its contained-value settings and, when the decode
+ * ({@link Nesting}), its {@link DecodeOptions} and, when the decode
  * records them, where its bytes sit in the decode's input ({@link Positions}).
  */
 public final class BerReader {
     private final ByteSource src;
     private int depth;
-    private ContainedOptions contained;
+    private DecodeOptions options = DecodeOptions.DEFAULT;
     private Positions positions;
     // Absolute bit of local offset 0, for a reader over a copy of input bytes.
     private long baseBits;
@@ -29,11 +30,11 @@ public final class BerReader {
         this.src = src;
     }
 
-    /** A reader over a nested value's bytes, at this reader's depth and with its contained-value settings. */
+    /** A reader over a nested value's bytes, at this reader's depth and with its settings. */
     public BerReader nested(ByteSource contents) {
         BerReader r = new BerReader(contents);
         r.depth = depth;
-        r.contained = contained;
+        r.options = options;
         r.positions = positions;
         r.baseBits = baseBits;
         r.pieceLocal = pieceLocal;
@@ -43,12 +44,23 @@ public final class BerReader {
 
     /** Contained-value settings of this decode; null means the defaults. */
     public ContainedOptions contained() {
-        return contained;
+        return options.contained();
     }
 
     /** Sets the contained-value settings; returns this reader. */
-    public BerReader withContained(ContainedOptions options) {
-        contained = options;
+    public BerReader withContained(ContainedOptions c) {
+        options = options.withContained(c);
+        return this;
+    }
+
+    /** The decoder settings of this decode. */
+    public DecodeOptions options() {
+        return options;
+    }
+
+    /** Sets the decoder settings, contained-value settings included; null for the defaults. Returns this reader. */
+    public BerReader withOptions(DecodeOptions o) {
+        options = DecodeOptions.orDefault(o);
         return this;
     }
 

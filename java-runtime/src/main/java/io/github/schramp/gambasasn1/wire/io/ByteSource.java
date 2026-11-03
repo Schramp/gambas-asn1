@@ -91,6 +91,18 @@ public final class ByteSource {
         pos += len;
     }
 
+    /**
+     * Up to {@code max} bytes of the underlying array from absolute offset
+     * {@code at}, for an error message; empty at or past the end of the
+     * array.
+     */
+    public byte[] octetsAt(int at, int max) {
+        if (at < 0 || at >= data.length) {
+            return new byte[0];
+        }
+        return Arrays.copyOfRange(data, at, Math.min(data.length, at + max));
+    }
+
     /** A copy of the unread bytes, leaving the cursor where it is. */
     public byte[] remainingBytes() {
         return Arrays.copyOfRange(data, pos, end);
