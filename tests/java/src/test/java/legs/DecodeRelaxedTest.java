@@ -66,6 +66,17 @@ class DecodeRelaxedTest {
     }
 
     @Test
+    void berRelaxedStillRejectsAnUnknownAlternativeOfANonExtensibleChoice() {
+        // [5] 01 00: a tag no alternative of choice_ber's Plain has.
+        byte[] unknown = tlv(0x85, new byte[] {0});
+        for (DecodeOptions o : List.of(DecodeOptions.DEFAULT, RELAXED)) {
+            DecodeException e = assertThrows(DecodeException.class,
+                    () -> BerObject.decode(new gen.choice_ber.Plain(), unknown, o));
+            assertTrue(e.reason().contains("no alternative has tag"), e.reason());
+        }
+    }
+
+    @Test
     void berRelaxedTakesALongBoolean() {
         byte[] der = plain().der();
         // 01 01 FF (flag) becomes 01 02 00 FF.
