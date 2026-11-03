@@ -2227,8 +2227,28 @@ tag octet of the node's TLV (the outer tag of an EXPLICIT member), for
 unaligned PER the node's first bit. SET components keep their wire positions
 after the reorder into table order, and an extension addition or CHOICE
 extension decoded from its open type keeps its place in the outer input. A
-contained value (`Containing`) is placed at the field's contents octets
-(`contentsBit(field)`), and the inner value's own nodes from there on.
+contained value (`Containing`) is placed at the field's contents octets,
+and the inner value's own nodes from there on. A builtin alias class
+(`TBool ::= [APPLICATION 1] BOOLEAN`) is recorded under its `value` field.
+
+Each node also has an end: `endBitOffset` is the bit just after its encoding
+(`endByteOffset` rounds up), and `sizeBits` is the length of its whole
+encoding, header included, and for an indefinite length the end-of-contents
+octets too. A BER primitive value and a contained field also have a contents
+span, their contents octets alone (X.690 §8.1.1; inside an EXPLICIT tag the
+inner TLV's): `contentsBitOffset`, `contentsEndBitOffset`, `contentsSizeBits`.
+Under PER only a contained field has one, its octets after the length
+determinant. This gives the byte range of, say, a captured packet:
+
+```java
+Positions p = d.positions().withBase(8L * recordStart);
+long from = p.contentsBitOffset(packet) / 8;    // packet: an OCTET STRING node
+long to = p.contentsEndBitOffset(packet) / 8;   // exclusive
+```
+
+The inner value of a contained field ends where its own encoding ends, so
+padding stripped by the contained-value decoder lies between its end and the
+field's contents end.
 `decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
 it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`

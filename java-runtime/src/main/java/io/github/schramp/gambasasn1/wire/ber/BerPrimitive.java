@@ -124,6 +124,11 @@ public final class BerPrimitive {
             throw new DecodeException("expected tag " + tag + ", got " + tlv.tag(), start);
         }
         ByteSource v = tlv.value();
+        if (r.positions() != null) {
+            // A primitive TLV ends with its contents (X.690 §8.1.1).
+            long end = r.absoluteEndBit(r.position());
+            r.positions().recordContents(p, end - 8L * v.remaining(), end);
+        }
         switch (p) {
             // X.690 §8.2.2: any non-zero contents octet is TRUE.
             case Asn1Boolean b -> {

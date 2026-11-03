@@ -240,21 +240,22 @@ public final class BerObject {
      * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
      */
     public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
-        if (r.positions() != null) {
-            Object node = Positions.nodeOf(m);
-            if (node != null) {
-                r.markStart(node);
-            }
+        Object node = r.positions() == null ? null : Positions.nodeOf(m);
+        if (node != null) {
+            r.markStart(node);
         }
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeMemberRefLevel(m, framing, r);
-            return;
+        } else {
+            r.enterLevel();
+            try {
+                decodeMemberRefLevel(m, framing, r);
+            } finally {
+                r.leaveLevel();
+            }
         }
-        r.enterLevel();
-        try {
-            decodeMemberRefLevel(m, framing, r);
-        } finally {
-            r.leaveLevel();
+        if (node != null) {
+            r.markEnd(node);
         }
     }
 
@@ -328,7 +329,8 @@ public final class BerObject {
                 f.setRawFromWire(raw.get(), ContainedEncoding.BER);
                 if (r.positions() != null) {
                     // A primitive TLV ends with its contents (X.690 §8.1.1).
-                    r.positions().recordContents(f, r.absoluteBit(r.position()) - 8L * raw.get().length);
+                    long end = r.absoluteEndBit(r.position());
+                    r.positions().recordContents(f, end - 8L * raw.get().length, end);
                 }
             }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());

@@ -119,7 +119,7 @@ public final class ContainedValues {
                 inner = field.newInner();
                 if (parent.positions() != null && parent.positions().contentsBit(field) >= 0) {
                     // The inner value is placed at the field's contents octets.
-                    parent.positions().recordContents(inner, parent.positions().contentsBit(field));
+                    parent.positions().recordPlacement(inner, parent.positions().contentsBit(field));
                 }
                 r = e.decode().decode(new ContainedDecodeArgs(field.rawOctets(), spec, inner, outer,
                         resolve(spec.encoding(), outerEncoding), reg, parent));

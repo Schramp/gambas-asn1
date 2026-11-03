@@ -141,6 +141,13 @@ public final class PerReader {
         }
     }
 
+    /** Records that {@code node} ends at the reader's current bit, when positions are recorded. */
+    public void markEnd(Object node) {
+        if (positions != null) {
+            positions.recordEnd(node, absoluteBit(pos));
+        }
+    }
+
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */
     public void enterLevel() {
         if (++depth > Nesting.MAX_DECODE_DEPTH) {

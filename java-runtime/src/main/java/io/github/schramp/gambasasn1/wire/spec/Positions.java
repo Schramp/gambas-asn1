@@ -15,7 +15,18 @@ import java.util.Set;
  * plus every node of its decoded inner value. Nodes are keys by identity, so
  * {@code positions.bitOffset(pdu.payload())} finds that very object. The
  * offset is where the node's encoding starts: its first tag octet in BER,
- * its first bit (preamble, length or value) in PER.
+ * its first bit (preamble, length or value) in PER. The end offset is the
+ * bit just after the node's encoding (its last contents octet, or the
+ * end-of-contents octets of an indefinite length, in BER), so
+ * {@link #sizeBits} is the length of the node's whole encoding.
+ *
+ * <p>A BER primitive value and a contained field also have a contents span:
+ * where their contents octets start and end (X.690 §8.1.1), inside an
+ * EXPLICIT tag the inner TLV's. For a contained field under PER the span is
+ * its octets after their length determinant (X.691 §17.8). The decoded
+ * inner value of a contained field starts at the field's contents and ends
+ * where its own encoding ends, before any padding the contained-value
+ * decoder stripped.
  *
  * <p>Offsets are bits from the start of the decode call. {@link #withBase}
  * gives a view that adds a fixed offset, for instance the record's position
@@ -26,18 +37,26 @@ import java.util.Set;
  */
 public final class Positions {
     private final Map<Object, Long> bits;
+    private final Map<Object, Long> ends;
     private final Map<Object, Long> contents;
+    private final Map<Object, Long> contentsEnds;
+    private final Map<Object, Long> placements;
     private final long base;
 
-    private Positions(Map<Object, Long> bits, Map<Object, Long> contents, long base) {
+    private Positions(Map<Object, Long> bits, Map<Object, Long> ends, Map<Object, Long> contents,
+            Map<Object, Long> contentsEnds, Map<Object, Long> placements, long base) {
         this.bits = bits;
+        this.ends = ends;
         this.contents = contents;
+        this.contentsEnds = contentsEnds;
+        this.placements = placements;
         this.base = base;
     }
 
     /** An empty recorder for one decode. */
     public static Positions recording() {
-        return new Positions(new IdentityHashMap<>(), new IdentityHashMap<>(), 0);
+        return new Positions(new IdentityHashMap<>(), new IdentityHashMap<>(), new IdentityHashMap<>(),
+                new IdentityHashMap<>(), new IdentityHashMap<>(), 0);
     }
 
     /**
@@ -49,14 +68,49 @@ public final class Positions {
         bits.putIfAbsent(node, bit);
     }
 
-    /** Records where the contents octets of contained field {@code node} start. Called by the decoders. */
-    public void recordContents(Object node, long bit) {
-        contents.put(node, bit);
+    /**
+     * Records that the encoding of {@code node} ends just before absolute bit
+     * {@code bit}; the last record wins, so where a value is read inside an
+     * EXPLICIT tag the outer TLV's end is kept, matching {@link #record}.
+     * Called by the decoders.
+     */
+    public void recordEnd(Object node, long bit) {
+        ends.put(node, bit);
     }
 
-    /** Absolute bit where the contents of contained field {@code node} start, or -1. Used by the decoders. */
+    /**
+     * Records that the contents octets of {@code node} span absolute bits
+     * {@code bit} up to {@code endBit} (exclusive). Called by the decoders.
+     */
+    public void recordContents(Object node, long bit, long endBit) {
+        contents.put(node, bit);
+        contentsEnds.put(node, endBit);
+    }
+
+    /**
+     * Records that the inner value {@code node} of a contained field is
+     * decoded from octets starting at absolute bit {@code bit}. Called by the
+     * contained-value decoders.
+     */
+    public void recordPlacement(Object node, long bit) {
+        placements.put(node, bit);
+    }
+
+    /** Absolute bit where inner value {@code node} is decoded from, or -1. Used by the decoders. */
+    public long placementBit(Object node) {
+        Long b = placements.get(node);
+        return b == null ? -1 : b;
+    }
+
+    /** Absolute bit where the contents of {@code node} start, or -1. Used by the decoders. */
     public long contentsBit(Object node) {
         Long b = contents.get(node);
+        return b == null ? -1 : b;
+    }
+
+    /** Absolute bit just after the contents of {@code node}, or -1. Used by the decoders. */
+    public long contentsEndBit(Object node) {
+        Long b = contentsEnds.get(node);
         return b == null ? -1 : b;
     }
 
@@ -70,6 +124,44 @@ public final class Positions {
     public long byteOffset(Object node) {
         long b = bitOffset(node);
         return b < 0 ? -1 : b >>> 3;
+    }
+
+    /** Bit just after the encoding of {@code node}, plus this view's base; -1 when not recorded. */
+    public long endBitOffset(Object node) {
+        Long b = ends.get(node);
+        return b == null ? -1 : b + base;
+    }
+
+    /** {@link #endBitOffset} in whole octets (rounded up, so a PER value's last partial octet counts); -1 when absent. */
+    public long endByteOffset(Object node) {
+        long b = endBitOffset(node);
+        return b < 0 ? -1 : (b + 7) >>> 3;
+    }
+
+    /** Length in bits of the encoding of {@code node}; -1 when not recorded. A PER value can take 0 bits. */
+    public long sizeBits(Object node) {
+        Long s = bits.get(node);
+        Long e = ends.get(node);
+        return s == null || e == null ? -1 : e - s;
+    }
+
+    /** Bit offset where the contents octets of {@code node} start, plus this view's base; -1 when not recorded. */
+    public long contentsBitOffset(Object node) {
+        Long b = contents.get(node);
+        return b == null ? -1 : b + base;
+    }
+
+    /** Bit just after the contents octets of {@code node}, plus this view's base; -1 when not recorded. */
+    public long contentsEndBitOffset(Object node) {
+        Long b = contentsEnds.get(node);
+        return b == null ? -1 : b + base;
+    }
+
+    /** Length in bits of the contents octets of {@code node}; -1 when not recorded. */
+    public long contentsSizeBits(Object node) {
+        Long s = contents.get(node);
+        Long e = contentsEnds.get(node);
+        return s == null || e == null ? -1 : e - s;
     }
 
     /** Whether the decode recorded {@code node}. */
@@ -106,7 +198,7 @@ public final class Positions {
 
     /** The same positions with {@code baseBits} added to every offset. */
     public Positions withBase(long baseBits) {
-        return new Positions(bits, contents, base + baseBits);
+        return new Positions(bits, ends, contents, contentsEnds, placements, base + baseBits);
     }
 
     /** This view's base: what {@link #bitOffset} adds to the recorded offsets. */
