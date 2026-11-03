@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
@@ -11,10 +12,13 @@ import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
+import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.Decoded;
@@ -64,20 +68,83 @@ public final class BerObject {
         decode(v, new BerReader(data).withContained(opts));
     }
 
-    /**
-     * Decodes one value from {@code r} into {@code v}; the reader is left
-     * after it, so records can be read back to back.
-     */
-    public static void decode(AsMemberRef v, BerReader r) {
-        decodeMemberRef(v.asMemberRef(), v.berFraming(), r);
+    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        decode(v, new BerReader(data).withOptions(opts));
     }
 
     /**
-     * {@link #decode(AsMemberRef, byte[], ContainedOptions)} that also
-     * records where every decoded node starts. {@code opts} may be null.
+     * Decodes one value from {@code r} into {@code v}, under the reader's
+     * {@link DecodeOptions}; the reader is left after it, so records can
+     * be read back to back.
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        return decodeWithPositions(v, new BerReader(data).withContained(opts));
+    public static void decode(AsMemberRef v, BerReader r) {
+        DecodeOptions o = r.options();
+        MemberRef m = v.asMemberRef();
+        if (!o.checkConstraints() && !o.richErrors()) {
+            decodeMemberRef(m, v.berFraming(), r);
+            return;
+        }
+        try {
+            decodeChecked(m, v.berFraming(), v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED,
+                    o.checkConstraints(), r);
+        } catch (DecodeException e) {
+            if (!o.richErrors()) {
+                throw e;
+            }
+            throw e.within(typeName(m)).showing(r.source().octetsAt(e.position(), DecodeException.CONTEXT_OCTETS));
+        }
+    }
+
+    /** The ASN.1 name of {@code m}'s type, for an error path. */
+    private static String typeName(MemberRef m) {
+        return switch (m) {
+            case MemberRef.Composite(var s) -> s.spec().name();
+            case MemberRef.Choice(var c) -> c.spec().name();
+            case MemberRef.Primitive(var p) -> p.xerElementName();
+            case MemberRef.SeqOf(var q) -> q.ownXerName();
+            case MemberRef.Enumerated(var e, var spec) -> spec.name();
+            default -> m.getClass().getSimpleName();
+        };
+    }
+
+    /**
+     * {@link #decodeMemberRef}, then, when {@code check} is set, a check of
+     * the value against {@code c}; a violation is a {@link DecodeException}
+     * at the value's first octet.
+     */
+    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) {
+        int start = r.position();
+        decodeMemberRef(m, framing, r);
+        if (check) {
+            String why = ConstraintCheck.violation(m, c);
+            if (why != null) {
+                throw new DecodeException("constraint violated: " + why, start);
+            }
+        }
+    }
+
+    /**
+     * A member, alternative or element decoded under settings other than
+     * the defaults: checked against {@code c} when constraints are
+     * checked, and with {@code segment} added to the path of an error when
+     * errors are rich.
+     */
+    private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String segment, BerReader r) {
+        DecodeOptions o = r.options();
+        try {
+            decodeChecked(m, framing, c, o.checkConstraints(), r);
+        } catch (DecodeException e) {
+            throw o.richErrors() ? e.within(segment) : e;
+        }
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
+     * where every decoded node starts. {@code opts} may be null.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        return decodeWithPositions(v, new BerReader(data).withOptions(opts));
     }
 
     /**
@@ -317,6 +384,7 @@ public final class BerObject {
             r = setInTableOrder(s, r);
         }
         List<MemberMeta> rows = spec.members();
+        boolean plain = !r.options().checkConstraints() && !r.options().richErrors();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
             if (row.optional()) {
@@ -328,7 +396,11 @@ public final class BerObject {
             } else if (r.atEnd()) {
                 throw new DecodeException("SEQUENCE " + spec.name() + ": mandatory member '" + row.name() + "' missing", r.position());
             }
-            decodeMemberRef(s.presentMember(i), row.ber(), r);
+            if (plain) {
+                decodeMemberRef(s.presentMember(i), row.ber(), r);
+            } else {
+                decodePart(s.presentMember(i), row.ber(), row.constraints(), "." + row.name(), r);
+            }
         }
         if (!spec.containedMembers().isEmpty()) {
             ContainedValues.decodeMembers(s, ContainedEncoding.BER, r);
@@ -444,8 +516,18 @@ public final class BerObject {
     private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
         BerTagging framing = q.elemBerFraming();
         q.clear();
-        while (!r.atEnd()) {
-            decodeMemberRef(q.addDefault(), framing, r);
+        if (!r.options().richErrors()) {
+            while (!r.atEnd()) {
+                decodeMemberRef(q.addDefault(), framing, r);
+            }
+            return;
+        }
+        for (int i = 0; !r.atEnd(); i++) {
+            try {
+                decodeMemberRef(q.addDefault(), framing, r);
+            } catch (DecodeException e) {
+                throw e.within("[" + i + "]");
+            }
         }
     }
 
@@ -507,7 +589,12 @@ public final class BerObject {
         int alt = dispatch(spec.berTags(), tag);
         if (alt >= 0) {
             AltMeta row = spec.alternatives().get(alt);
-            decodeMemberRef(c.select(alt), row.ber(), r);
+            DecodeOptions o = r.options();
+            if (!o.checkConstraints() && !o.richErrors()) {
+                decodeMemberRef(c.select(alt), row.ber(), r);
+            } else {
+                decodePart(c.select(alt), row.ber(), row.constraints(), "." + row.name(), r);
+            }
             if (spec.hasContained()) {
                 ContainedValues.decodeAlternative(c, ContainedEncoding.BER, r);
             }

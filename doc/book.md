@@ -2216,7 +2216,7 @@ each decoded node starts in the input, as a `Decoded(bytesConsumed,
 positions)`:
 
 ```java
-Decoded d = BerObject.decodeWithPositions(pdu, bytes, null);   // null: default ContainedOptions
+Decoded d = BerObject.decodeWithPositions(pdu, bytes, null);   // null: default DecodeOptions
 long at = d.positions().byteOffset(pdu.payload());             // -1 when not decoded
 ```
 
@@ -2233,6 +2233,36 @@ contained value (`Containing`) is placed at the field's contents octets
 it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
 records nothing and costs one null check per node.
+
+**Decoder settings.** A `DecodeOptions` record holds the settings of a
+decoder. You make it once and pass it to any number of decodes:
+`BerObject.decode(v, data, opts)`, `BerObject.decodeWithPositions(v, data, opts)`,
+`new BerReader(data).withOptions(opts)` for records read back to back, and
+the same `PerObject` calls. Nested and contained decodes take the settings of
+the decode around them.
+
+```java
+DecodeOptions opts = DecodeOptions.DEFAULT
+        .withConstraintChecks(true)     // reject values outside their constraints
+        .withRichErrors(true)           // path and input octets in DecodeException
+        .withContained(containedOptions);
+```
+
+- **Constraint checks** (off by default): a decoded value that breaks its
+  type's constraints is a `DecodeException` ("constraint violated: INTEGER
+  300 outside 0..255"). The constraints checked are INTEGER and REAL value
+  ranges, SIZE of strings, BIT STRINGs and SEQUENCE OFs, and a string's
+  permitted alphabet. The rules are the C++ runtime's `validate()`: a
+  constraint with an extension marker admits every value, and a string's SIZE
+  counts its contents octets. With checks off, the default, a decode takes
+  any value the encoding can carry, which is what you want for hostile or
+  sloppy input. PER's own range and SIZE limits on the encoding apply either way.
+- **Rich errors** (off by default): a `DecodeException` also names the path
+  of the value that failed and shows up to 8 input octets from where decoding
+  stopped. `e.path()` gives the path, for example `Limits.byte` or
+  `PS_PDU.payload.iRIPayloadSequence[2].timeStamp`, and `e.reason()` gives the
+  bare reason. A PER error's offset is in the outer input, also inside an
+  open type.
 
 **Finding values by type.** `Extract.all(root, T.class)` (package `query`)
 returns every value of type `T` below a decoded `root`, and `root` itself when

@@ -1,9 +1,11 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.ber.Tag;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
@@ -11,6 +13,7 @@ import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
@@ -65,21 +68,64 @@ public final class PerObject {
 
     /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
-        PerReader r = new PerReader(data);
-        decodeValue(v.asMemberRef(), c, r);
-        boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
-        if (r.remaining() >= 8 && !emptyEncoding) {
-            throw r.error("PER: trailing data after the value");
-        }
+        decodeWhole(v, data, c, new PerReader(data));
     }
 
     /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; {@code opts} may be null. */
     public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        PerReader r = new PerReader(data).withContained(opts);
-        decodeValue(v.asMemberRef(), rootConstraints(v), r);
-        boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
-        if (r.remaining() >= 8 && !emptyEncoding) {
-            throw r.error("PER: trailing data after the value");
+        decodeWhole(v, data, rootConstraints(v), new PerReader(data).withContained(opts));
+    }
+
+    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        decodeWhole(v, data, rootConstraints(v), new PerReader(data).withOptions(opts));
+    }
+
+    /**
+     * Decodes {@code data}, one complete encoding, into {@code v}: after
+     * the value only the padding of its last octet may follow. With rich
+     * errors on, an error names the type and shows the input there.
+     */
+    private static void decodeWhole(AsMemberRef v, byte[] data, Constraints c, PerReader r) {
+        MemberRef m = v.asMemberRef();
+        try {
+            decodeValue(m, c, r);
+            boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
+            if (r.remaining() >= 8 && !emptyEncoding) {
+                throw r.error("PER: trailing data after the value");
+            }
+        } catch (DecodeException e) {
+            if (!r.options().richErrors()) {
+                throw e;
+            }
+            int at = Math.min(e.position(), data.length);
+            throw e.within(typeName(m)).showing(java.util.Arrays.copyOfRange(data, at,
+                    Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
+        }
+    }
+
+    /** The ASN.1 name of {@code m}'s type, for an error path. */
+    private static String typeName(MemberRef m) {
+        return switch (m) {
+            case MemberRef.Composite(var s) -> s.spec().name();
+            case MemberRef.Choice(var c) -> c.spec().name();
+            case MemberRef.Primitive(var p) -> p.xerElementName();
+            case MemberRef.SeqOf(var q) -> q.ownXerName();
+            case MemberRef.Enumerated(var e, var spec) -> spec.name();
+            default -> m.getClass().getSimpleName();
+        };
+    }
+
+    /** {@link #decodeValue} with {@code segment} added to the path of an error, when errors are rich. */
+    private static void decodePart(MemberRef m, Constraints c, String segment, PerReader r) {
+        if (!r.options().richErrors()) {
+            decodeValue(m, c, r);
+            return;
+        }
+        try {
+            decodeValue(m, c, r);
+        } catch (DecodeException e) {
+            throw e.within(segment);
         }
     }
 
@@ -96,18 +142,14 @@ public final class PerObject {
     }
 
     /**
-     * {@link #decode(AsMemberRef, byte[], ContainedOptions)} that also
-     * records where every decoded node starts, in bits from the start of
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
+     * where every decoded node starts, in bits from the start of
      * {@code data}. {@code opts} may be null.
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, ContainedOptions opts) {
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
         Positions p = Positions.recording();
-        PerReader r = new PerReader(data).withContained(opts).withPositions(p, 0);
-        decodeValue(v.asMemberRef(), rootConstraints(v), r);
-        boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
-        if (r.remaining() >= 8 && !emptyEncoding) {
-            throw r.error("PER: trailing data after the value");
-        }
+        PerReader r = new PerReader(data).withOptions(opts).withPositions(p, 0);
+        decodeWhole(v, data, rootConstraints(v), r);
         return new Decoded((int) Math.max(1, (r.bitPos() + 7) / 8), p);
     }
 
@@ -142,15 +184,23 @@ public final class PerObject {
                 r.markStart(node);
             }
         }
+        long start = r.bitPos();
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeLevel(m, c, r);
-            return;
+        } else {
+            r.enterLevel();
+            try {
+                decodeLevel(m, c, r);
+            } finally {
+                r.leaveLevel();
+            }
         }
-        r.enterLevel();
-        try {
-            decodeLevel(m, c, r);
-        } finally {
-            r.leaveLevel();
+        if (r.options().checkConstraints()) {
+            String why = ConstraintCheck.violation(m, c);
+            if (why != null) {
+                long at = r.absoluteBit(start);
+                throw new DecodeException("constraint violated: " + why + " (bit " + at + ")", (int) (at >>> 3));
+            }
         }
     }
 
@@ -319,7 +369,7 @@ public final class PerObject {
                 s.setDefault(i);
                 continue;
             }
-            decodeValue(s.presentMember(i), spec.members().get(i).constraints(), r);
+            decodePart(s.presentMember(i), spec.members().get(i).constraints(), "." + spec.members().get(i).name(), r);
         }
         List<Addition> additions = spec.extAt() >= 0 ? additions(spec) : List.of();
         boolean[] sent = new boolean[0];
@@ -342,7 +392,8 @@ public final class PerObject {
                 if (a.group()) {
                     decodeGroup(s, a, in);
                 } else {
-                    decodeValue(s.presentMember(a.begin()), spec.members().get(a.begin()).constraints(), in);
+                    decodePart(s.presentMember(a.begin()), spec.members().get(a.begin()).constraints(),
+                            "." + spec.members().get(a.begin()).name(), in);
                 }
             }
         }
@@ -364,7 +415,7 @@ public final class PerObject {
      * decode's nesting depth and contained-value settings.
      */
     private static BerReader berAnchor(PerReader r) {
-        BerReader b = new BerReader(new byte[0]).withContained(r.contained()).withPositions(r.positions());
+        BerReader b = new BerReader(new byte[0]).withOptions(r.options()).withPositions(r.positions());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
         }
@@ -379,7 +430,8 @@ public final class PerObject {
         }
         for (int i = a.begin(); i < a.end(); i++) {
             if (present[i - a.begin()]) {
-                decodeValue(s.presentMember(i), s.spec().members().get(i).constraints(), r);
+                decodePart(s.presentMember(i), s.spec().members().get(i).constraints(),
+                        "." + s.spec().members().get(i).name(), r);
             } else {
                 s.setDefault(i);
             }
@@ -435,7 +487,8 @@ public final class PerObject {
             if (i >= root) {
                 throw r.error("PER: CHOICE " + spec.name() + " index " + i + " outside its " + root + " root alternatives");
             }
-            decodeValue(ch.select((int) i), spec.alternatives().get((int) i).constraints(), r);
+            decodePart(ch.select((int) i), spec.alternatives().get((int) i).constraints(),
+                    "." + spec.alternatives().get((int) i).name(), r);
             decodeContainedAlternative(ch, r);
             return;
         }
@@ -449,7 +502,8 @@ public final class PerObject {
             return;
         }
         int i = root + (int) ext;
-        decodeValue(ch.select(i), spec.alternatives().get(i).constraints(), r.subJustRead(field));
+        decodePart(ch.select(i), spec.alternatives().get(i).constraints(), "." + spec.alternatives().get(i).name(),
+                r.subJustRead(field));
         decodeContainedAlternative(ch, r);
     }
 
@@ -517,7 +571,7 @@ public final class PerObject {
         q.clear();
         PerLength.getExtSize(r, c, (in, count) -> {
             for (int i = 0; i < count; i++) {
-                decodeValue(q.addDefault(), elem, in);
+                decodePart(q.addDefault(), elem, "[" + i + "]", in);
             }
         });
     }

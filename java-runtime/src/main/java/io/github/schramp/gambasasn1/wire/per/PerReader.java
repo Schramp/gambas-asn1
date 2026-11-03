@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
@@ -15,7 +16,7 @@ public final class PerReader {
     private final byte[] buf;
     private long pos;
     private int depth;
-    private ContainedOptions contained;
+    private DecodeOptions options = DecodeOptions.DEFAULT;
     private Positions positions;
     // Absolute bit, in the decode's input, of this reader's bit 0.
     private long baseBits;
@@ -26,12 +27,23 @@ public final class PerReader {
 
     /** Contained-value settings of this decode; null for the defaults. */
     public ContainedOptions contained() {
-        return contained;
+        return options.contained();
     }
 
     /** Sets the contained-value settings of this decode. */
-    public PerReader withContained(ContainedOptions options) {
-        contained = options;
+    public PerReader withContained(ContainedOptions c) {
+        options = options.withContained(c);
+        return this;
+    }
+
+    /** The decoder settings of this decode. */
+    public DecodeOptions options() {
+        return options;
+    }
+
+    /** Sets the decoder settings, contained-value settings included; null for the defaults. */
+    public PerReader withOptions(DecodeOptions o) {
+        options = DecodeOptions.orDefault(o);
         return this;
     }
 
@@ -50,9 +62,13 @@ public final class PerReader {
         return (int) (pos >>> 3);
     }
 
-    /** A decode error at the cursor, its bit offset in the message. */
+    /**
+     * A decode error at the cursor, its bit offset in the message. Both
+     * are offsets in the decode's input, also inside an open type.
+     */
     public DecodeException error(String message) {
-        return new DecodeException(message + " (bit " + pos + ")", position());
+        long at = absoluteBit(pos);
+        return new DecodeException(message + " (bit " + at + ")", (int) (at >>> 3));
     }
 
     /**
@@ -81,7 +97,7 @@ public final class PerReader {
     public PerReader sub(byte[] bytes) {
         PerReader r = new PerReader(bytes);
         r.depth = depth;
-        r.contained = contained;
+        r.options = options;
         return r;
     }
 
@@ -93,9 +109,7 @@ public final class PerReader {
      */
     public PerReader subJustRead(byte[] bytes) {
         PerReader r = sub(bytes);
-        if (positions != null) {
-            r.withPositions(positions, absoluteBit(pos) - 8L * bytes.length);
-        }
+        r.withPositions(positions, absoluteBit(pos) - 8L * bytes.length);
         return r;
     }
 
