@@ -33,4 +33,11 @@ class ModulePackagesTest {
         assertEquals(gen.etsi.Common_Parameters.GNSSLocation.class,
                 CPEProvidedLocationAttributes.class.getMethod("gNSSLocation").getReturnType());
     }
+
+    @Test
+    void anEnumeratedTypeNamedValueKeepsItsItemEnumApart() {
+        // The item enum may not share its class's simple name (JLS §8.1).
+        assertEquals("Value_", gen.modules.ModA.Value.Value_.class.getSimpleName());
+        assertEquals("gen.modules.ModA", gen.modules.ModA.Holder.class.getPackageName());
+    }
 }
