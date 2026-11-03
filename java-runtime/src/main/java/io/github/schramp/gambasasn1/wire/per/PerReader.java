@@ -3,6 +3,7 @@ package io.github.schramp.gambasasn1.wire.per;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 
 /**
  * Cursor over an unaligned PER encoding, reading bit-fields most
@@ -15,6 +16,9 @@ public final class PerReader {
     private long pos;
     private int depth;
     private ContainedOptions contained;
+    private Positions positions;
+    // Absolute bit, in the decode's input, of this reader's bit 0.
+    private long baseBits;
 
     public PerReader(byte[] buf) {
         this.buf = buf;
@@ -79,6 +83,48 @@ public final class PerReader {
         r.depth = depth;
         r.contained = contained;
         return r;
+    }
+
+    /**
+     * {@link #sub} over the octets this reader has just read, so the nested
+     * reader's positions are the octets' place in the input. For an open
+     * type below 16K octets (one length determinant, X.691 §11.9.3.8) that
+     * place is exact.
+     */
+    public PerReader subJustRead(byte[] bytes) {
+        PerReader r = sub(bytes);
+        if (positions != null) {
+            r.withPositions(positions, absoluteBit(pos) - 8L * bytes.length);
+        }
+        return r;
+    }
+
+    /** The positions this decode records into, or null when it records none. */
+    public Positions positions() {
+        return positions;
+    }
+
+    /**
+     * Records positions of the nodes decoded through this reader into
+     * {@code p}, this reader's bit 0 being absolute bit {@code baseBit};
+     * returns this reader.
+     */
+    public PerReader withPositions(Positions p, long baseBit) {
+        positions = p;
+        baseBits = baseBit;
+        return this;
+    }
+
+    /** Absolute bit, in the decode's input, of this reader's bit {@code local}. */
+    public long absoluteBit(long local) {
+        return baseBits + local;
+    }
+
+    /** Records that {@code node} starts at the reader's current bit, when positions are recorded. */
+    public void markStart(Object node) {
+        if (positions != null) {
+            positions.record(node, absoluteBit(pos));
+        }
     }
 
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */

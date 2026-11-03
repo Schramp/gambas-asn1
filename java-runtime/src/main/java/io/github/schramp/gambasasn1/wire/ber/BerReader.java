@@ -4,17 +4,26 @@ import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 
 /**
  * BER input: reads one TLV at a time from a {@link ByteSource}. Every
  * malformed input ends in a {@link DecodeException}. The reader also
  * carries the constructed nesting depth of the decode using it
- * ({@link Nesting}) and its contained-value settings.
+ * ({@link Nesting}), its contained-value settings and, when the decode
+ * records them, where its bytes sit in the decode's input ({@link Positions}).
  */
 public final class BerReader {
     private final ByteSource src;
     private int depth;
     private ContainedOptions contained;
+    private Positions positions;
+    // Absolute bit of local offset 0, for a reader over a copy of input bytes.
+    private long baseBits;
+    // A reader over SET components copied into table order: piece i starts
+    // at local offset pieceLocal[i] and came from absolute bit pieceAbs[i].
+    private int[] pieceLocal;
+    private long[] pieceAbs;
 
     public BerReader(ByteSource src) {
         this.src = src;
@@ -25,6 +34,10 @@ public final class BerReader {
         BerReader r = new BerReader(contents);
         r.depth = depth;
         r.contained = contained;
+        r.positions = positions;
+        r.baseBits = baseBits;
+        r.pieceLocal = pieceLocal;
+        r.pieceAbs = pieceAbs;
         return r;
     }
 
@@ -39,9 +52,67 @@ public final class BerReader {
         return this;
     }
 
-    /** {@link #nested(ByteSource)} over a copy of the given bytes. */
+    /**
+     * {@link #nested(ByteSource)} over a copy of the given bytes. Their place
+     * in the input is unknown, so the reader records no positions.
+     */
     public BerReader nested(byte[] contents) {
-        return nested(new ByteSource(contents));
+        BerReader r = nested(new ByteSource(contents));
+        r.positions = null;
+        r.pieceLocal = null;
+        r.pieceAbs = null;
+        return r;
+    }
+
+    /** {@link #nested(byte[])} over bytes that start at absolute bit {@code absBit} of the input. */
+    public BerReader nestedAt(byte[] contents, long absBit) {
+        BerReader r = nested(contents);
+        r.positions = positions;
+        r.baseBits = absBit;
+        return r;
+    }
+
+    /**
+     * {@link #nested(byte[])} over pieces of the input copied back to back:
+     * piece i starts at local offset {@code local[i]} and came from absolute
+     * bit {@code abs[i]}.
+     */
+    public BerReader nestedPieces(byte[] contents, int[] local, long[] abs) {
+        BerReader r = nested(contents);
+        r.positions = positions;
+        r.pieceLocal = local;
+        r.pieceAbs = abs;
+        return r;
+    }
+
+    /** The positions this decode records into, or null when it records none. */
+    public Positions positions() {
+        return positions;
+    }
+
+    /** Records positions of the nodes decoded through this reader into {@code p}; returns this reader. */
+    public BerReader withPositions(Positions p) {
+        positions = p;
+        return this;
+    }
+
+    /** Absolute bit, in the decode's input, of local offset {@code local} of this reader's bytes. */
+    public long absoluteBit(int local) {
+        if (pieceLocal == null) {
+            return baseBits + 8L * local;
+        }
+        int i = pieceLocal.length - 1;
+        while (i > 0 && pieceLocal[i] > local) {
+            i--;
+        }
+        return pieceAbs[i] + 8L * (local - pieceLocal[i]);
+    }
+
+    /** Records that {@code node} starts at the reader's current position, when positions are recorded. */
+    public void markStart(Object node) {
+        if (positions != null) {
+            positions.record(node, absoluteBit(src.position()));
+        }
     }
 
     /**

@@ -117,6 +117,10 @@ public final class ContainedValues {
                 r = ContainedResult.failed("unknown contained decoder '" + spec.decoder() + "'");
             } else {
                 inner = field.newInner();
+                if (parent.positions() != null && parent.positions().contentsBit(field) >= 0) {
+                    // The inner value is placed at the field's contents octets.
+                    parent.positions().recordContents(inner, parent.positions().contentsBit(field));
+                }
                 r = e.decode().decode(new ContainedDecodeArgs(field.rawOctets(), spec, inner, outer,
                         resolve(spec.encoding(), outerEncoding), reg, parent));
             }
