@@ -365,6 +365,14 @@ Shape ::= CHOICE {
 }
 ```
 
+A member whose type is written inline (`items SEQUENCE OF Item`,
+`pos SEQUENCE { ... }`, an inline ENUMERATED) gets a generated type of its own,
+named after its parent and the member: `items` of `Rec` becomes `RecItems`, the
+element of an unnamed inline collection `RecItemsAnon`, a promoted INTEGER
+element `RecItemsElem`. When the schema already assigns a type of that name,
+the generated one takes the next free numeric suffix (`RecItems_2`), so a
+generated type never replaces one of the schema's own.
+
 **ANY** holds a raw BER encoding whose type is not known at compile time. Used in
 extensibility points and algorithm identifier parameters. Decoded as a verbatim byte
 buffer (`asn1::AnyBer`).

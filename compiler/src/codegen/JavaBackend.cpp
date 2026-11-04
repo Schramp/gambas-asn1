@@ -425,7 +425,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         if (!a.tdref.empty()) return a.tdref + ".CONSTRAINTS";
         if (a.contained) return a.contained_base + ".CONSTRAINTS";
         if (a.seq_of_kind != SeqOfKind::None)
-            return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, a.asn1_name)));
+            return std::format("{}.CONSTRAINTS", escape(a.promoted_type));
         if (!a.mbuiltin && a.ref_is_seq_of) return std::format("{}.CONSTRAINTS", a.mtype);
         if (!a.mbuiltin && (a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || a.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", a.ref_constraints_owner.empty() ? a.mtype : a.ref_constraints_owner);
@@ -634,7 +634,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
             return m.contained_base + ".CONSTRAINTS";
         }
         if (m.seq_of_kind != SeqOfKind::None)
-            return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, m.asn1_name)));
+            return std::format("{}.CONSTRAINTS", escape(m.promoted_type));
         if (!m.mbuiltin && m.ref_is_seq_of) return std::format("{}.CONSTRAINTS", m.mtype);
         if (!m.mbuiltin && (m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || m.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", m.ref_constraints_owner.empty() ? m.mtype : m.ref_constraints_owner);

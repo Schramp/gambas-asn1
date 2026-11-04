@@ -1599,7 +1599,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // walker (`per::object`) reads this member's own
                     // `MemberMeta::constraints` for the collection's SIZE,
                     // not any per-element constraint.
-                    std::string synth = synthetic_name(spec.type_name, m.asn1_name);
+                    const std::string& synth = m.promoted_type;
                     constraints_ref = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
                 } else if (!m.mbuiltin && m.ref_is_seq_of) {
                     // Same rationale, for a *named* SEQUENCE OF/SET OF
@@ -1896,7 +1896,7 @@ void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///       a struct, a CHOICE has no natural default variant.
 void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
     auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
-        std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+        const std::string& synth = a.promoted_type;
         return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
     };
     // Variant names use variant_name(), not the raw
@@ -1969,7 +1969,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 /// @see X.680 §29 (CHOICE).
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
-        std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+        const std::string& synth = a.promoted_type;
         return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
     };
     std::string prefix = escape(to_snake_case(spec.type_name));
@@ -2177,7 +2177,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // synthetic type's `{Synth}_CONSTRAINTS`, which the PER
                 // SEQUENCE OF walker reads from this row — same as the
                 // SEQUENCE-member inline case.
-                std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+                const std::string& synth = a.promoted_type;
                 alt_constraints = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
             }
             meta_lines.push_back(std::format(

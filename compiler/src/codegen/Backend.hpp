@@ -633,6 +633,12 @@ struct TaggedMemberSpec {
     // the element's shape level by level. None for every other body.
     SeqOfKind   seq_of_kind = SeqOfKind::None;
     ElemShape   elem_shape;
+    // The generated name of the type an inline SEQUENCE OF/SET OF member
+    // or alternative is promoted to, as Generator chose it (unique among
+    // its siblings and the schema's own type assignments); empty for every
+    // other body. Backends name the collection type through this, never by
+    // recomputing synthetic_name(parent, member).
+    std::string promoted_type;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
