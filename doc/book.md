@@ -1123,7 +1123,12 @@ Output:
 
 In Debug builds, constraint validation runs automatically on encode and decode.
 Every `SIZE` form is checked, including one with only a lower bound (`SIZE (4..MAX)`
-rejects a 3-octet value). Violations increment a counter and (optionally) record a path:
+rejects a 3-octet value). On a character string, `SIZE` and `FROM` count characters
+(X.680 §51.5, §51.7), not stored bytes: `UTF8String (SIZE(1..4))` accepts "ÄÖÜß" (8 bytes
+of UTF-8), `BMPString (SIZE(1..2))` accepts "AB" (4 bytes), and `BMPString (FROM("A".."Z"))`
+checks each 2-byte character. A `FROM` alphabet covers code points 0..255, so a character
+above U+00FF never satisfies it. Both runtimes and both PER size modes count the same way.
+Violations increment a counter and (optionally) record a path:
 
 ```cpp
 #include <asn1cpp/Validate.hpp>
@@ -1890,7 +1895,8 @@ details.
 Constraint validation runs at encode and decode time in Debug builds. Supported:
 
 - Integer range constraints (inclusive bounds, root + extension)
-- Size constraints (OCTET STRING, BIT STRING, SEQUENCE OF, all string types)
+- Size constraints (OCTET STRING, BIT STRING, SEQUENCE OF, all string types; strings
+  count characters, not bytes)
 - FROM alphabet constraints (IA5String, PrintableString, VisibleString,
   NumericString, and custom alphabets)
 - Path tracking (`ValidationReport`) for locating violations in nested structures

@@ -928,6 +928,8 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
         HexDigit MidBlob MidList Name NegRange
         PercentInt PositiveInt ShortList SignedSmall Tariff
         TinyBlob Token Visi Vowels WideUnsigned YesNo
+        Umlauts Pair Caps Quad
+        HasUmlauts HasPair HasCaps HasQuad
         HasByteCount HasCode HasColor HasFixed HasFlagsByte HasFlagsRange
         HasHex HasMid HasMidList HasName HasNeg
         HasPct HasPos HasShortList HasSigned HasTariff

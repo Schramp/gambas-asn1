@@ -48,6 +48,10 @@
 #include "HasHex.hpp"
 #include "HasYesNo.hpp"
 #include "HasVowels.hpp"
+#include "HasUmlauts.hpp"
+#include "HasPair.hpp"
+#include "HasCaps.hpp"
+#include "HasQuad.hpp"
 
 using namespace asn1;
 static int failures = 0;
@@ -217,6 +221,21 @@ int main() {
     { HasVowels h{}; h.v = PrintableString{"aeioua"};  expect_delta("size 6 (over)       → fail", h, HasVowels::asn_DEF, 1); }
     { HasVowels h{}; h.v = PrintableString{"hello"};   expect_delta("'h','l' (FROM)      → fail", h, HasVowels::asn_DEF, 1); }
     { HasVowels h{}; h.v = PrintableString{"AEIOU"};   expect_delta("uppercase (FROM)    → fail", h, HasVowels::asn_DEF, 1); }
+
+    // --- Multi-byte storage: SIZE / FROM count characters (X.680 §51.5, §51.7)
+    std::printf("\nUmlauts UTF8String (SIZE 1..4)\n");
+    { HasUmlauts h{}; h.v = Utf8String{"\xC3\x84\xC3\x96\xC3\x9C\xC3\x9F"}; expect_delta("4 chars, 8 bytes   → pass", h, HasUmlauts::asn_DEF, 0); }
+    { HasUmlauts h{}; h.v = Utf8String{"\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC"}; expect_delta("5 chars (over)     → fail", h, HasUmlauts::asn_DEF, 1); }
+    std::printf("Pair BMPString (SIZE 1..2)\n");
+    { HasPair h{}; h.v = BmpString{std::string("\0A\0B", 4)};          expect_delta("2 chars, 4 bytes   → pass", h, HasPair::asn_DEF, 0); }
+    { HasPair h{}; h.v = BmpString{std::string("\0A\0B\0C", 6)};      expect_delta("3 chars (over)     → fail", h, HasPair::asn_DEF, 1); }
+    std::printf("Caps BMPString (FROM \"A\"..\"Z\")\n");
+    { HasCaps h{}; h.v = BmpString{std::string("\0A\0Z", 4)};          expect_delta("\"AZ\" (FROM)       → pass", h, HasCaps::asn_DEF, 0); }
+    { HasCaps h{}; h.v = BmpString{std::string("\0a", 2)};              expect_delta("'a' (FROM)         → fail", h, HasCaps::asn_DEF, 1); }
+    { HasCaps h{}; h.v = BmpString{std::string("\x01" "A", 2)};         expect_delta("U+0141 (FROM)      → fail", h, HasCaps::asn_DEF, 1); }
+    std::printf("Quad UniversalString (SIZE 1..2)\n");
+    { HasQuad h{}; h.v = UniversalString{std::string("\0\0\0A\0\0\0B", 8)}; expect_delta("2 chars, 8 bytes   → pass", h, HasQuad::asn_DEF, 0); }
+    { HasQuad h{}; h.v = UniversalString{std::string("\0\0\0A\0\0\0B\0\0\0C", 12)}; expect_delta("3 chars (over)     → fail", h, HasQuad::asn_DEF, 1); }
 
     // --- ENUMERATED ---------------------------------------------------------
     std::printf("\nColor ENUMERATED\n");
