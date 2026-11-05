@@ -9,6 +9,11 @@
 # IP packet (IPCCContents.iPPackets) from decode positions and checks that
 # the file holds the decoded packet there.
 #
+# The sample ../nested-decoder/pdu-00000001.etsi is synthetic: its field
+# values, iPPackets included, are random filler from gen-testdata.cpp, so
+# pdu-00000001.offsets.expected shows its one 5-octet packet as "not IPv4".
+# CcOffsetsTest (tests/java) covers real IPv4 packets.
+#
 # Usage:
 #   make          build classes/
 #   make test     run on ../nested-decoder/pdu-00000001.etsi and diff the

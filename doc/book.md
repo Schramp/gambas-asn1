@@ -2301,6 +2301,8 @@ Two worked examples. `CcOffsets.java` in
 IN=<file.etsi>`) prints the file byte range of every CC IP packet
 (`IPCCContents.iPPackets`, ETSI TS 102 232-3), also inside an
 `EncryptedPayload`, and checks the file bytes there are the decoded packet.
+The committed sample's field values are random, so its one packet prints as
+`not IPv4`; `CcOffsetsTest` checks ranges of real IPv4 packets.
 Under unaligned PER the offsets are exact bits: in an RRC
 `DownlinkDirectTransfer` (3GPP TS 25.331) the NAS message's octets start and
 end off a byte boundary, and its value span gives them:
