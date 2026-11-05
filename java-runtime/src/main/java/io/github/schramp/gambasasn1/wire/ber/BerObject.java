@@ -121,18 +121,26 @@ public final class BerObject {
     }
 
     /**
-     * A member, alternative or element decoded under settings other than
-     * the defaults: checked against {@code c} when constraints are
-     * checked, and with {@code segment} added to the path of an error when
-     * errors are rich.
+     * A member or alternative {@code name}, or when it is null element
+     * {@code index}, of the value being decoded: checked against {@code c}
+     * when constraints are checked, traced when tracing is on, and with its
+     * path segment added to an error when errors are rich. The segment is
+     * only built for a trace line or an error.
      */
-    private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String segment, BerReader r) {
+    private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String name, int index,
+            BerReader r) {
         DecodeOptions o = r.options();
-        trace(o, r, segment, m);
+        if (o.plain()) {
+            decodeMemberRef(m, framing, r);
+            return;
+        }
+        if (o.trace() != null) {
+            trace(o, r, DecodeException.segment(name, index), m);
+        }
         try {
             decodeChecked(m, framing, c, o.checkConstraints(), r);
         } catch (DecodeException e) {
-            throw o.richErrors() ? e.within(segment) : e;
+            throw o.richErrors() ? e.within(DecodeException.segment(name, index)) : e;
         }
     }
 
@@ -393,7 +401,6 @@ public final class BerObject {
             r = setInTableOrder(s, r);
         }
         List<MemberMeta> rows = spec.members();
-        boolean plain = r.options().plain();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
             if (row.optional()) {
@@ -405,11 +412,7 @@ public final class BerObject {
             } else if (r.atEnd()) {
                 throw new DecodeException("SEQUENCE " + spec.name() + ": mandatory member '" + row.name() + "' missing", r.position());
             }
-            if (plain) {
-                decodeMemberRef(s.presentMember(i), row.ber(), r);
-            } else {
-                decodePart(s.presentMember(i), row.ber(), row.constraints(), "." + row.name(), r);
-            }
+            decodePart(s.presentMember(i), row.ber(), row.constraints(), row.name(), i, r);
         }
         if (!spec.containedMembers().isEmpty()) {
             ContainedValues.decodeMembers(s, ContainedEncoding.BER, r);
@@ -526,14 +529,8 @@ public final class BerObject {
         r.markValue(q, r.position(), r.position() + r.source().remaining());
         BerTagging framing = q.elemBerFraming();
         q.clear();
-        if (r.options().plain()) {
-            while (!r.atEnd()) {
-                decodeMemberRef(q.addDefault(), framing, r);
-            }
-            return;
-        }
         for (int i = 0; !r.atEnd(); i++) {
-            decodePart(q.addDefault(), framing, Constraints.UNCONSTRAINED, "[" + i + "]", r);
+            decodePart(q.addDefault(), framing, Constraints.UNCONSTRAINED, null, i, r);
         }
     }
 
@@ -595,11 +592,7 @@ public final class BerObject {
         int alt = dispatch(spec.berTags(), tag);
         if (alt >= 0) {
             AltMeta row = spec.alternatives().get(alt);
-            if (r.options().plain()) {
-                decodeMemberRef(c.select(alt), row.ber(), r);
-            } else {
-                decodePart(c.select(alt), row.ber(), row.constraints(), "." + row.name(), r);
-            }
+            decodePart(c.select(alt), row.ber(), row.constraints(), row.name(), alt, r);
             if (spec.hasContained()) {
                 ContainedValues.decodeAlternative(c, ContainedEncoding.BER, r);
             }

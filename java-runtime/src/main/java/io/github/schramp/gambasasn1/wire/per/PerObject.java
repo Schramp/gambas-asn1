@@ -132,12 +132,15 @@ public final class PerObject {
     }
 
     /**
-     * {@link #decodeValue} as {@code segment} of its parent: traced when
-     * tracing is on, and with the segment added to the path of an error
-     * when errors are rich.
+     * {@link #decodeValue} as member or alternative {@code name}, or when it
+     * is null element {@code index}, of its parent: traced when tracing is
+     * on, and with its path segment added to an error when errors are rich.
+     * The segment is only built for a trace line or an error.
      */
-    private static void decodePart(MemberRef m, Constraints c, String segment, PerReader r) {
-        trace(r, segment, m);
+    private static void decodePart(MemberRef m, Constraints c, String name, int index, PerReader r) {
+        if (r.options().trace() != null) {
+            trace(r, DecodeException.segment(name, index), m);
+        }
         if (!r.options().richErrors()) {
             decodeValue(m, c, r);
             return;
@@ -145,7 +148,7 @@ public final class PerObject {
         try {
             decodeValue(m, c, r);
         } catch (DecodeException e) {
-            throw e.within(segment);
+            throw e.within(DecodeException.segment(name, index));
         }
     }
 
@@ -416,7 +419,7 @@ public final class PerObject {
                 s.setDefault(i);
                 continue;
             }
-            decodePart(s.presentMember(i), spec.members().get(i).constraints(), "." + spec.members().get(i).name(), r);
+            decodePart(s.presentMember(i), spec.members().get(i).constraints(), spec.members().get(i).name(), i, r);
         }
         List<Addition> additions = spec.extAt() >= 0 ? additions(spec) : List.of();
         boolean[] sent = new boolean[0];
@@ -440,7 +443,7 @@ public final class PerObject {
                     decodeGroup(s, a, in);
                 } else {
                     decodePart(s.presentMember(a.begin()), spec.members().get(a.begin()).constraints(),
-                            "." + spec.members().get(a.begin()).name(), in);
+                            spec.members().get(a.begin()).name(), a.begin(), in);
                 }
             }
         }
@@ -478,7 +481,7 @@ public final class PerObject {
         for (int i = a.begin(); i < a.end(); i++) {
             if (present[i - a.begin()]) {
                 decodePart(s.presentMember(i), s.spec().members().get(i).constraints(),
-                        "." + s.spec().members().get(i).name(), r);
+                        s.spec().members().get(i).name(), i, r);
             } else {
                 s.setDefault(i);
             }
@@ -535,7 +538,7 @@ public final class PerObject {
                 throw r.error("PER: CHOICE " + spec.name() + " index " + i + " outside its " + root + " root alternatives");
             }
             decodePart(ch.select((int) i), spec.alternatives().get((int) i).constraints(),
-                    "." + spec.alternatives().get((int) i).name(), r);
+                    spec.alternatives().get((int) i).name(), (int) i, r);
             decodeContainedAlternative(ch, r);
             return;
         }
@@ -549,7 +552,7 @@ public final class PerObject {
             return;
         }
         int i = root + (int) ext;
-        decodePart(ch.select(i), spec.alternatives().get(i).constraints(), "." + spec.alternatives().get(i).name(),
+        decodePart(ch.select(i), spec.alternatives().get(i).constraints(), spec.alternatives().get(i).name(), i,
                 r.subJustRead(field));
         decodeContainedAlternative(ch, r);
     }
@@ -618,7 +621,7 @@ public final class PerObject {
         q.clear();
         PerLength.getExtSize(r, c, (in, count) -> {
             for (int i = 0; i < count; i++) {
-                decodePart(q.addDefault(), elem, "[" + i + "]", in);
+                decodePart(q.addDefault(), elem, null, i, in);
             }
         });
     }

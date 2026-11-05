@@ -62,6 +62,15 @@ public final class DecodeException extends RuntimeException {
     }
 
     /**
+     * The path segment of a member or alternative {@code name}
+     * ({@code ".name"}), or, when it is null, of element {@code index}
+     * ({@code "[i]"}).
+     */
+    public static String segment(String name, int index) {
+        return name != null ? "." + name : "[" + index + "]";
+    }
+
+    /**
      * This error showing {@code octets}, the input from its offset on (up
      * to {@link #CONTEXT_OCTETS}; empty at the end of the input).
      */
