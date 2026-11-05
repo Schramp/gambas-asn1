@@ -1,0 +1,27 @@
+-- Types promoted out of an inline member or collection element take the
+-- name synthetic_name(parent, member) would give them only when no type
+-- assignment of the schema has it already: every assignment below is
+-- named exactly as one promoted type would be.
+
+PromotedNameClashTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    Rec ::= SEQUENCE {
+        parties SEQUENCE (SIZE (1..4)) OF INTEGER,
+        items   SEQUENCE OF SEQUENCE { a INTEGER },
+        nums    SEQUENCE OF INTEGER (0..9),
+        n       INTEGER
+    }
+
+    RecParties   ::= INTEGER (0..10)
+    RecItemsAnon ::= INTEGER
+    RecNumsElem  ::= BOOLEAN
+
+    Pick ::= CHOICE {
+        list  SEQUENCE OF INTEGER,
+        inner SEQUENCE { b BOOLEAN }
+    }
+
+    PickList  ::= INTEGER
+    PickInner ::= INTEGER
+
+END

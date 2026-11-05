@@ -193,3 +193,7 @@ tests/asn1/xer_alt_instruction_test.asn1   Holder
 # BMPString / UniversalString members: their XER and JER are the characters
 # (X.697 §38.1 for JER), escaped for XML or JSON respectively.
 tests/asn1/jer_escape_test.asn1   JeWide
+# Promoted inline-member and element types whose natural names are taken by
+# type assignments of the same schema.
+tests/asn1/promoted_name_clash_test.asn1   Rec
+tests/asn1/promoted_name_clash_test.asn1   Pick

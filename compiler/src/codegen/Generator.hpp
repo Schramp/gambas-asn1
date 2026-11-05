@@ -109,6 +109,7 @@ class Generator {
     // a contained field's `when` sibling to its table index.
     const std::vector<const ast::TypeDef*>* current_member_order_ = nullptr;
     std::set<std::string>   generated_names_;
+    std::set<std::string>   top_level_names_;     // generated name of every type assignment, all modules
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
     // OF element (generate_inline_types) — needed because
     // type_descriptor_ref_spec_for's own TypeRef-fallback branch (reached when
@@ -196,6 +197,14 @@ public:
                     if (!inserted && it->second != mod->name)
                         collision_types_.insert(cpp);
                 }
+
+        // Every type assignment's generated name, reserved before any type
+        // is promoted from an inline member, so a promoted name never
+        // takes one regardless of the order the types are generated in.
+        for (const auto& mod : pr.modules)
+            for (const auto& def : mod->assignments)
+                if (!def->name.empty() && !def->is_extension_marker && !def->is_parameterized)
+                    top_level_names_.insert(effective_type_name(def->name, mod->name));
 
         if (!pdu_roots_.empty())
             compute_reachable(pr);
@@ -393,8 +402,8 @@ private:
     bool        member_type_is_untagged_choice(const ast::TypeDef& m) const;
     bool        member_type_is_any(const ast::TypeDef& m) const;
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
-    std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
-                                            const std::string& mname, TypeOutputSession& session);
+    TypeDescriptorRefSpec emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
+                                                      const std::string& mname, TypeOutputSession& session);
     /// @brief Contained-field fact for a member/alternative, when the
     ///        backend stores contained values (else nullptr).
     const sema::ContainedField* contained_for(const ast::TypeDef& m) const;
@@ -437,6 +446,7 @@ private:
     /// @param parent_cname  Parent type's C++/Rust name (fallback formula's parent).
     /// @param default_name  Raw ASN.1 name to style if `m` isn't in the map
     ///                       (m.name, or a fixed placeholder for anonymous members).
+    std::string promoted_name(const std::string& scope, const std::string& suffix) const;
     std::string member_synth_name(const ast::TypeDef& m, const std::string& parent_cname,
                                    const std::string& default_name) const;
     // SEQUENCE OF / SET OF element naming by nesting depth — see the
