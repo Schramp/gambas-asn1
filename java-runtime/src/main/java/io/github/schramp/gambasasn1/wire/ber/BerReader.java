@@ -146,12 +146,11 @@ public final class BerReader {
         return new long[] {a, to == from ? a : absoluteEndBit(to)};
     }
 
-    /** Records local octets {@code from} up to {@code to} as the contents and the value of {@code node}. */
+    /** Records local octets {@code from} up to {@code to} as the contents of {@code node} (its value too, unless recorded apart). */
     public void markContents(Object node, int from, int to) {
         if (positions != null) {
             long[] s = span(from, to);
             positions.recordContents(node, s[0], s[1]);
-            positions.recordValue(node, s[0], s[1]);
         }
     }
 

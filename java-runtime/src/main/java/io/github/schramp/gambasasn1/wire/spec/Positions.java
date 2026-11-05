@@ -131,7 +131,11 @@ public final class Positions {
 
     /**
      * Records that the decoded value of {@code node} is held by absolute bits
-     * {@code bit} up to {@code endBit} (exclusive). Called by the decoders.
+     * {@code bit} up to {@code endBit} (exclusive), where that differs from
+     * its contents octets (a BIT STRING, a SEQUENCE's contents without
+     * end-of-contents octets, a PER string after its length). A node with
+     * contents and no value of its own has its contents as its value.
+     * Called by the decoders.
      */
     public void recordValue(Object node, long bit, long endBit) {
         Span s = span(node);
@@ -158,12 +162,6 @@ public final class Positions {
     public long contentsBit(Object node) {
         Span s = find(node);
         return s == null ? -1 : s.contents;
-    }
-
-    /** Absolute bit just after the contents of {@code node}, or -1. Used by the decoders. */
-    public long contentsEndBit(Object node) {
-        Span s = find(node);
-        return s == null ? -1 : s.contentsEnd;
     }
 
     private long shifted(long bit) {
@@ -222,35 +220,42 @@ public final class Positions {
         return s == null ? -1 : length(s.contents, s.contentsEnd);
     }
 
-    /** The span holding the decoded value of {@code node}, following a CHOICE to its alternative. */
-    private Span valueSpan(Object node) {
+    /**
+     * The absolute bits {start, end} holding the decoded value of {@code
+     * node}: its recorded value, else its contents, following a CHOICE to
+     * its alternative; null when neither was recorded.
+     */
+    private long[] valueBits(Object node) {
         Span s = find(node);
         if (s != null && s.value >= 0) {
-            return s;
+            return new long[] {s.value, s.valueEnd};
+        }
+        if (s != null && s.contents >= 0) {
+            return new long[] {s.contents, s.contentsEnd};
         }
         if (node instanceof Asn1Choice c && c.activeIndex() >= 0) {
             Object alt = nodeOf(c.getActive());
-            return alt == null ? null : valueSpan(alt);
+            return alt == null ? null : valueBits(alt);
         }
         return null;
     }
 
     /** Bit offset where the decoded value of {@code node} starts, plus this view's base; -1 when not recorded. */
     public long valueBitOffset(Object node) {
-        Span s = valueSpan(node);
-        return s == null ? -1 : shifted(s.value);
+        long[] v = valueBits(node);
+        return v == null ? -1 : shifted(v[0]);
     }
 
     /** Bit just after the decoded value of {@code node}, plus this view's base; -1 when not recorded. */
     public long valueEndBitOffset(Object node) {
-        Span s = valueSpan(node);
-        return s == null ? -1 : shifted(s.valueEnd);
+        long[] v = valueBits(node);
+        return v == null ? -1 : shifted(v[1]);
     }
 
     /** Length in bits of the decoded value of {@code node}; -1 when not recorded. */
     public long valueSizeBits(Object node) {
-        Span s = valueSpan(node);
-        return s == null ? -1 : length(s.value, s.valueEnd);
+        long[] v = valueBits(node);
+        return v == null ? -1 : length(v[0], v[1]);
     }
 
     /** Whether the decode recorded {@code node}. */

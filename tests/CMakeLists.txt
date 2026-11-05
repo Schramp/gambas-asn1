@@ -2135,6 +2135,22 @@ add_custom_command(
     COMMENT "Generating Java from the ETSI LI PS-PDU schemas"
 )
 list(APPEND java_leg_outputs ${java_etsi_gen}/.stamp)
+
+# One RRC message (3GPP TS 25.331) into gen.rrc, for the UPER bit-position
+# test: an OCTET STRING value that starts and ends off a byte boundary.
+set(JAVA_RRC_ASN1 ${CMAKE_SOURCE_DIR}/examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1)
+set(java_rrc_gen ${JAVA_LEGS_GEN_DIR}/gen/rrc)
+add_custom_command(
+    OUTPUT  ${java_rrc_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_rrc_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_rrc_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.rrc --flat-package
+            -pdu=DownlinkDirectTransfer ${JAVA_RRC_ASN1} -o ${java_rrc_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_rrc_gen}/.stamp
+    DEPENDS asn1cpp ${JAVA_RRC_ASN1}
+    COMMENT "Generating Java for the RRC DownlinkDirectTransfer message"
+)
+list(APPEND java_leg_outputs ${java_rrc_gen}/.stamp)
 add_custom_target(gen_java_legs ALL DEPENDS ${java_leg_outputs})
 
 if(WITH_JAVA_RUNTIME_TEST)

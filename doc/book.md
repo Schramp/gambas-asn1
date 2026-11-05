@@ -2296,6 +2296,25 @@ it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
 records nothing and costs one null check per node.
 
+Two worked examples. `CcOffsets.java` in
+`examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/` (`make offsets
+IN=<file.etsi>`) prints the file byte range of every CC IP packet
+(`IPCCContents.iPPackets`, ETSI TS 102 232-3), also inside an
+`EncryptedPayload`, and checks the file bytes there are the decoded packet.
+Under unaligned PER the offsets are exact bits: in an RRC
+`DownlinkDirectTransfer` (3GPP TS 25.331) the NAS message's octets start and
+end off a byte boundary, and its value span gives them:
+
+```java
+Positions p = PerObject.decodeWithPositions(msg, uper, null).positions();
+NAS_Message nas = msg.r3().downlinkDirectTransfer_r3().nas_Message();
+long from = p.valueBitOffset(nas);      // 17: after a 12-bit length determinant
+long to = p.valueEndBitOffset(nas);     // 33: also p.endBitOffset(msg)
+```
+
+The ctest legs `java_example_nested_decoder` and `java_legs`
+(`CcOffsetsTest`, `RrcNasBitsTest`) run both.
+
 **Decoder settings.** A `DecodeOptions` record holds the settings of a
 decoder. You make it once and pass it to any number of decodes:
 `BerObject.decode(v, data, opts)`, `BerObject.decodeWithPositions(v, data, opts)`,
