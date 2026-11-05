@@ -223,6 +223,9 @@ int main() {
     { HasVowels h{}; h.v = PrintableString{"AEIOU"};   expect_delta("uppercase (FROM)    → fail", h, HasVowels::asn_DEF, 1); }
 
     // --- Multi-byte storage: SIZE / FROM count characters (X.680 §51.5, §51.7)
+    // Stored as on the wire: UTF-8 (1..4 bytes/char, X.690 §8.23.10), BMPString
+    // 2 bytes/char big-endian (§8.23.8), UniversalString 4 bytes/char big-endian
+    // (§8.23.7) — "\0\0\0A" is the 4 bytes 00 00 00 41, i.e. one character 'A'.
     std::printf("\nUmlauts UTF8String (SIZE 1..4)\n");
     { HasUmlauts h{}; h.v = Utf8String{"\xC3\x84\xC3\x96\xC3\x9C\xC3\x9F"}; expect_delta("4 chars, 8 bytes   → pass", h, HasUmlauts::asn_DEF, 0); }
     { HasUmlauts h{}; h.v = Utf8String{"\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC"}; expect_delta("5 chars (over)     → fail", h, HasUmlauts::asn_DEF, 1); }
