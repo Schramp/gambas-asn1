@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import gen.choice_ber.Plain;
 import gen.constraints_ber.Limits;
+import gen.seqof_ber.Ints;
 import gen.sequence_ber.Outer;
 import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
@@ -12,6 +14,7 @@ import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
+import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -176,6 +179,58 @@ class DecodeOptionsTest {
                 () -> PerObject.decode(new Outer(), cut, DecodeOptions.DEFAULT.withRichErrors(true)));
         assertEquals(plain.reason(), rich.reason());
         assertTrue(rich.path().startsWith("Outer."), rich.path());
+    }
+
+    private static Ints ints(int n) {
+        Ints v = new Ints();
+        for (int i = 0; i < n; i++) {
+            v.add(new Asn1Integer(i % 100));
+        }
+        return v;
+    }
+
+    @Test
+    void richErrorsNameTheFailingElementAndAlternative() {
+        // Ints: 30 09 | 02 01 00 | 02 01 01 | 02 01 02, element 2 claiming 2 octets.
+        byte[] der = BerObject.encode(ints(3));
+        der[der.length - 2] = 2;
+        assertEquals("Ints[2]", assertThrows(DecodeException.class,
+                () -> BerObject.decode(new Ints(), der, RICH)).path());
+        byte[] uper = PerObject.encode(ints(3));
+        byte[] cutUper = Arrays.copyOf(uper, uper.length - 1);
+        assertEquals("Ints[2]", assertThrows(DecodeException.class,
+                () -> PerObject.decode(new Ints(), cutUper, RICH)).path());
+
+        // Plain ::= CHOICE { num, flag, text UTF8String }: text of length 5 holding 1 octet.
+        byte[] text = hex("0C0561");
+        assertEquals("Plain.text", assertThrows(DecodeException.class,
+                () -> BerObject.decode(new Plain(), text, RICH)).path());
+    }
+
+    @Test
+    void perElementIndexCountsOnAcrossLengthFragments() {
+        // 16385 elements: a 16K fragment, then a length of 1 (X.691 §11.9.3.8).
+        byte[] uper = PerObject.encode(ints(16385));
+        byte[] cut = Arrays.copyOf(uper, uper.length - 1);
+        assertEquals("Ints[16384]", assertThrows(DecodeException.class,
+                () -> PerObject.decode(new Ints(), cut, RICH)).path());
+    }
+
+    @Test
+    void traceNamesEachElement() {
+        for (boolean per : new boolean[] {false, true}) {
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            DecodeOptions o = DecodeOptions.DEFAULT.withTrace(lines::add);
+            if (per) {
+                PerObject.decode(new Ints(), PerObject.encode(ints(3)), o);
+            } else {
+                BerObject.decode(new Ints(), BerObject.encode(ints(3)), o);
+            }
+            assertEquals(4, lines.size(), lines.toString());
+            for (int i = 0; i < 3; i++) {
+                assertTrue(lines.get(i + 1).contains(" [" + i + "] "), lines.toString());
+            }
+        }
     }
 
     @Test

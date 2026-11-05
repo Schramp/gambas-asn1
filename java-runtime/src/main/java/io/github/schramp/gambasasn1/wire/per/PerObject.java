@@ -96,7 +96,9 @@ public final class PerObject {
     private static void decodeWhole(AsMemberRef v, byte[] data, Constraints c, PerReader r) {
         MemberRef m = v.asMemberRef();
         try {
-            trace(r, typeName(m), m);
+            if (r.options().trace() != null) {
+                trace(r, typeName(m), m);
+            }
             decodeValue(m, c, r);
             boolean emptyEncoding = r.bitPos() == 0 && data.length == 1 && data[0] == 0;
             if (r.remaining() >= 8 && !emptyEncoding && !r.options().relaxed()) {
@@ -112,11 +114,9 @@ public final class PerObject {
         }
     }
 
-    /** A trace line for {@code m}, about to be decoded as {@code segment}, when tracing is on. */
+    /** Writes the trace line for {@code m}, about to be decoded as {@code segment}; tracing must be on. */
     private static void trace(PerReader r, String segment, MemberRef m) {
-        if (r.options().trace() != null) {
-            r.options().trace().accept("PER bit " + r.absoluteBit(r.bitPos()) + " " + segment + " " + typeName(m));
-        }
+        r.options().trace().accept("PER bit " + r.absoluteBit(r.bitPos()) + " " + segment + " " + typeName(m));
     }
 
     /** The ASN.1 name of {@code m}'s type, for an error path. */
@@ -132,24 +132,37 @@ public final class PerObject {
     }
 
     /**
-     * {@link #decodeValue} as member or alternative {@code name}, or when it
-     * is null element {@code index}, of its parent: traced when tracing is
-     * on, and with its path segment added to an error when errors are rich.
-     * The segment is only built for a trace line or an error.
+     * Decodes one member, alternative or element of the value being
+     * decoded ({@link #decodeValue}): traced when tracing is on, and with
+     * its path segment added to an error when errors are rich. The segment
+     * is only built for a trace line or an error.
+     *
+     * @param m     the part to fill
+     * @param c     the part's constraints
+     * @param name  the member or alternative name; null for an element
+     * @param index the element's index, when {@code name} is null
+     * @param r     the reader at the part's first bit
      */
     private static void decodePart(MemberRef m, Constraints c, String name, int index, PerReader r) {
         if (r.options().trace() != null) {
-            trace(r, DecodeException.segment(name, index), m);
-        }
-        if (!r.options().richErrors()) {
-            decodeValue(m, c, r);
-            return;
+            trace(r, segment(name, index), m);
         }
         try {
             decodeValue(m, c, r);
         } catch (DecodeException e) {
-            throw e.within(DecodeException.segment(name, index));
+            throw r.options().richErrors() ? e.within(segment(name, index)) : e;
         }
+    }
+
+    /**
+     * The path segment of a part, as {@link DecodeException#path()} shows it.
+     *
+     * @param name  the member or alternative name; null for an element
+     * @param index the element's index, when {@code name} is null
+     * @return {@code ".name"} or {@code "[index]"}
+     */
+    private static String segment(String name, int index) {
+        return name != null ? "." + name : "[" + index + "]";
     }
 
     /**
@@ -472,6 +485,16 @@ public final class PerObject {
         return b;
     }
 
+    /**
+     * Decodes an extension addition group from its open type: a presence
+     * bit for each optional member, then the present members in order;
+     * absent ones take their default.
+     *
+     * @param s the SEQUENCE being decoded
+     * @param a the group's members
+     * @param r a reader over the group's open-type octets
+     * @see "X.691 §19.9"
+     */
     private static void decodeGroup(Asn1Seq s, Addition a, PerReader r) {
         List<Boolean> optional = s.spec().groupMemberOptional();
         boolean[] present = new boolean[a.end() - a.begin()];
@@ -619,9 +642,12 @@ public final class PerObject {
     static void decodeSeqOf(Asn1SeqOf q, Constraints c, PerReader r) {
         Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
         q.clear();
+        // A length of 16K items or more comes in fragments (X.691 §11.9.3.8),
+        // each handed over on its own, so an element's index is the count so far.
         PerLength.getExtSize(r, c, (in, count) -> {
             for (int i = 0; i < count; i++) {
-                decodePart(q.addDefault(), elem, null, i, in);
+                int index = q.size();
+                decodePart(q.addDefault(), elem, null, index, in);
             }
         });
     }

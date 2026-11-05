@@ -80,7 +80,9 @@ public final class BerObject {
             decodeMemberRef(m, v.berFraming(), r);
             return;
         }
-        trace(o, r, typeName(m), m);
+        if (o.trace() != null) {
+            trace(o, r, typeName(m), m);
+        }
         try {
             decodeChecked(m, v.berFraming(), v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED,
                     o.checkConstraints(), r);
@@ -121,34 +123,46 @@ public final class BerObject {
     }
 
     /**
-     * A member or alternative {@code name}, or when it is null element
-     * {@code index}, of the value being decoded: checked against {@code c}
-     * when constraints are checked, traced when tracing is on, and with its
-     * path segment added to an error when errors are rich. The segment is
-     * only built for a trace line or an error.
+     * Decodes one member, alternative or element of the value being
+     * decoded, under the reader's {@link DecodeOptions}: traced when tracing
+     * is on, checked against {@code c} when constraints are checked, and
+     * with its path segment added to an error when errors are rich. The
+     * segment is only built for a trace line or an error.
+     *
+     * @param m       the part to fill
+     * @param framing the part's tagging
+     * @param c       the part's constraints
+     * @param name    the member or alternative name; null for an element
+     * @param index   the element's index, when {@code name} is null
+     * @param r       the reader at the part's first octet
      */
     private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String name, int index,
             BerReader r) {
         DecodeOptions o = r.options();
-        if (o.plain()) {
-            decodeMemberRef(m, framing, r);
-            return;
-        }
         if (o.trace() != null) {
-            trace(o, r, DecodeException.segment(name, index), m);
+            trace(o, r, segment(name, index), m);
         }
         try {
             decodeChecked(m, framing, c, o.checkConstraints(), r);
         } catch (DecodeException e) {
-            throw o.richErrors() ? e.within(DecodeException.segment(name, index)) : e;
+            throw o.richErrors() ? e.within(segment(name, index)) : e;
         }
     }
 
-    /** A trace line for {@code m}, about to be decoded as {@code segment}, when tracing is on. */
+    /**
+     * The path segment of a part, as {@link DecodeException#path()} shows it.
+     *
+     * @param name  the member or alternative name; null for an element
+     * @param index the element's index, when {@code name} is null
+     * @return {@code ".name"} or {@code "[index]"}
+     */
+    private static String segment(String name, int index) {
+        return name != null ? "." + name : "[" + index + "]";
+    }
+
+    /** Writes the trace line for {@code m}, about to be decoded as {@code segment}; tracing must be on. */
     private static void trace(DecodeOptions o, BerReader r, String segment, MemberRef m) {
-        if (o.trace() != null) {
-            o.trace().accept("BER byte " + r.absoluteBit(r.position()) / 8 + " " + segment + " " + typeName(m));
-        }
+        o.trace().accept("BER byte " + r.absoluteBit(r.position()) / 8 + " " + segment + " " + typeName(m));
     }
 
     /**
