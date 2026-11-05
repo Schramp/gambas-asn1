@@ -182,9 +182,8 @@ public:
     // trailing raw name with no recasing, matching
     // `emit_integer_definition`/`emit_builtin_alias_definition`'s own
     // `{tname}_CONSTRAINTS` (unscreamed) naming for a real top-level type's
-    // static. The other two tdref consumers (`SequenceMemberSpec`/
-    // `ChoiceAlternativeSpec` own-table checks) only ever see FreeStanding
-    // when `mbuiltin` is unset, so this new non-empty text is inert there.
+    // static. Member and alternative rows read their `tdref` decision
+    // (TaggedMemberSpec) directly, not this text.
     std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override {
         if (spec.kind == TypeDescriptorRefKind::MemberOwnTable) return spec.name;
         if (spec.kind == TypeDescriptorRefKind::FreeStanding)

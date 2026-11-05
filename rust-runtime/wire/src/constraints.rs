@@ -291,6 +291,70 @@ pub fn validate_string(s: &str, c: &Constraints) -> i64 {
     validate_alphabet(s, c)
 }
 
+/// Calls `f` with each character's code point of a stored string value, in
+/// order. Stored bytes are the type's own encoding: UTF-8 for UTF8String,
+/// UCS-2 big-endian for BMPString, UCS-4 big-endian for UniversalString,
+/// one byte per character otherwise (X.680 §41). A malformed UTF-8 byte
+/// counts as one character; trailing bytes of an incomplete wide unit are
+/// not a character. Mirrors `for_each_code_point`
+/// (`runtime/include/asn1cpp/types/Strings.hpp`).
+pub fn for_each_code_point(tag_num: u32, bytes: &[u8], mut f: impl FnMut(u32)) {
+    use crate::ber::tag::universal::{BMP_STRING, UNIVERSAL_STRING, UTF8_STRING};
+    match tag_num {
+        BMP_STRING | UNIVERSAL_STRING => {
+            let w = if tag_num == BMP_STRING { 2 } else { 4 };
+            for unit in bytes.chunks_exact(w) {
+                f(unit.iter().fold(0u32, |cp, &b| (cp << 8) | b as u32));
+            }
+        }
+        UTF8_STRING => {
+            let mut i = 0;
+            while i < bytes.len() {
+                let lead = bytes[i];
+                let mut len = if lead < 0x80 { 1 } else if lead >> 5 == 0x6 { 2 } else if lead >> 4 == 0xE { 3 } else if lead >> 3 == 0x1E { 4 } else { 1 };
+                if i + len > bytes.len() || bytes[i + 1..i + len].iter().any(|&b| b & 0xC0 != 0x80) {
+                    len = 1;
+                }
+                let mut cp = if len == 1 { lead as u32 } else { (lead & (0x7F >> len)) as u32 };
+                for &b in &bytes[i + 1..i + len] {
+                    cp = (cp << 6) | (b & 0x3F) as u32;
+                }
+                f(cp);
+                i += len;
+            }
+        }
+        _ => bytes.iter().for_each(|&b| f(b as u32)),
+    }
+}
+
+/// Number of characters in a stored string value, as X.680 §51.5 SIZE
+/// counts them; `bytes.len()` for the one-byte-per-character kinds.
+pub fn string_char_count(tag_num: u32, bytes: &[u8]) -> usize {
+    let mut n = 0;
+    for_each_code_point(tag_num, bytes, |_| n += 1);
+    n
+}
+
+/// Combined SIZE + FROM check (X.680 §51.5, §51.7) of a character string
+/// whose storage is more than one byte per character for some characters
+/// (UTF8String, BMPString, UniversalString): both count code points, not
+/// bytes. The alphabet table covers code points 0..255; a character above
+/// that is never in it. Mirrors `AsnString<N>::validate`.
+pub fn validate_multibyte_string(tag_num: u32, bytes: &[u8], c: &Constraints) -> i64 {
+    let delta = validate_size(string_char_count(tag_num, bytes), c);
+    if delta != 0 {
+        return delta;
+    }
+    if let Some(table) = c.encode_table {
+        let mut bad = false;
+        for_each_code_point(tag_num, bytes, |cp| bad |= cp > 0xFF || table[cp as usize] == 0xFFFF);
+        if bad {
+            return 1;
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +469,35 @@ mod tests {
 
     fn ca(table: &'static [u16; 256]) -> Constraints {
         Constraints { encode_table: Some(table), ..Default::default() }
+    }
+
+    #[test]
+    fn multibyte_size_counts_characters() {
+        use crate::ber::tag::universal::{BMP_STRING, UNIVERSAL_STRING, UTF8_STRING};
+        let sized = |lo, hi| Constraints { flags: SIZE_CONSTRAINED, size_lower: lo, size_upper: hi, ..Default::default() };
+        assert_eq!(validate_multibyte_string(UTF8_STRING, "ÄÖÜß".as_bytes(), &sized(1, 4)), 0);
+        assert_eq!(validate_multibyte_string(UTF8_STRING, "€€€€€".as_bytes(), &sized(1, 4)), -1);
+        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0B", &sized(1, 2)), 0);
+        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0B\0C", &sized(1, 2)), -1);
+        assert_eq!(validate_multibyte_string(UNIVERSAL_STRING, b"\0\0\0A\0\0\0B", &sized(1, 2)), 0);
+    }
+
+    #[test]
+    fn multibyte_alphabet_checks_code_points() {
+        use crate::ber::tag::universal::BMP_STRING;
+        static TABLE: [u16; 256] = {
+            let mut t = [0xFFFFu16; 256];
+            let mut b = b'A';
+            while b <= b'Z' {
+                t[b as usize] = (b - b'A') as u16;
+                b += 1;
+            }
+            t
+        };
+        let c = ca(&TABLE);
+        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0Z", &c), 0);
+        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0a", &c), 1);
+        assert_eq!(validate_multibyte_string(BMP_STRING, b"\x01A", &c), 1);
     }
 
     #[test]

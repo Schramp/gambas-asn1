@@ -722,18 +722,24 @@ public:
             // still bound the values of the type, and a conforming sender does
             // not send a value that violates them (X.691 §10.3, note), so such
             // a value is rejected rather than written in the general form.
+            const uint32_t tag = builtin_tag(def).number;
+            const std::size_t chars = string_char_count(tag, str);
             if ((pc.flags & Constraints::SIZE_CONSTRAINED) && !(pc.flags & Constraints::EXTENSIBLE) &&
-                (str.size() < static_cast<std::size_t>(pc.size_lower) ||
-                 str.size() > static_cast<std::size_t>(pc.size_upper))) {
+                (chars < static_cast<std::size_t>(pc.size_lower) ||
+                 chars > static_cast<std::size_t>(pc.size_upper))) {
                 stream.set_encode_failed("string length violates SIZE constraint");
                 return;
             }
-            if (pc.alphabet_bits > 0 && pc.encode_table)
-                for (unsigned char c : str)
-                    if (pc.encode_table[c] == 0xFFFFu) {
-                        stream.set_encode_failed("character not in FROM alphabet");
-                        return;
-                    }
+            if (pc.alphabet_bits > 0 && pc.encode_table) {
+                bool in_alphabet = true;
+                for_each_code_point(tag, str, [&](uint32_t cp) {
+                    if (cp > 0xFF || pc.encode_table[cp] == 0xFFFFu) in_alphabet = false;
+                });
+                if (!in_alphabet) {
+                    stream.set_encode_failed("character not in FROM alphabet");
+                    return;
+                }
+            }
             TypeDescriptor plain = def;
             plain.constraints = Constraints{};
             encode(codec, stream, plain, src);
