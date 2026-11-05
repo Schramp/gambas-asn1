@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include "../TypeDescriptor.hpp"
 
@@ -8,6 +9,21 @@ namespace asn1 {
 ///        real schema's depth, well below what an 8 MiB stack survives.
 ///        The Rust runtime uses the same limit (`nesting::MAX_DECODE_DEPTH`).
 inline constexpr int kMaxDecodeDepth = 256;
+
+#ifndef ASN1CPP_MAX_ZERO_WIDTH_ITEMS
+#define ASN1CPP_MAX_ZERO_WIDTH_ITEMS 200
+#endif
+
+/// @brief Item count above which a PER SEQUENCE OF/SET OF may not hold an
+///        element encoded in zero bits (NULL, X.691 §18; an INTEGER or
+///        ENUMERATED with a single value, §11.1.3). Such elements cost no
+///        input, so a few octets of length determinant (X.691 §11.9.3.8)
+///        would otherwise allocate millions of them. asn1c applies the same rule with 200
+///        (constr_SET_OF_uper.c). Set at build time with
+///        \c -DASN1CPP_MAX_ZERO_WIDTH_ITEMS=N. The Rust and Java runtimes use
+///        the same limit (\c nesting::MAX_ZERO_WIDTH_ITEMS,
+///        \c Nesting.MAX_ZERO_WIDTH_ITEMS).
+inline constexpr std::size_t kMaxZeroWidthItems = ASN1CPP_MAX_ZERO_WIDTH_ITEMS;
 
 /// @brief Constructed levels the decode holding this reader has descended.
 ///        Each codec's reader or decode stream carries one (\c BerReader,

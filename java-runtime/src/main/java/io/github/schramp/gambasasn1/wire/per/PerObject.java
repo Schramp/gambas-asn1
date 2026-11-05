@@ -7,6 +7,7 @@ import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
+import io.github.schramp.gambasasn1.wire.io.Nesting;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
@@ -638,7 +639,17 @@ public final class PerObject {
         return parts;
     }
 
-    /** Decode counterpart of {@link #encodeSeqOf}; a SET OF is taken in any order. */
+    /**
+     * Decode counterpart of {@link #encodeSeqOf}; a SET OF is taken in any
+     * order. A list counting more than {@link Nesting#MAX_ZERO_WIDTH_ITEMS}
+     * items fails on the first element encoded in zero bits.
+     *
+     * @param q the collection the elements are appended to, emptied first
+     * @param c the list's constraints, its element constraints included
+     * @param r the reader at the length determinant
+     * @throws DecodeException for a malformed or bomb-sized list
+     * @see "X.691 §20.6, §11.9.3.8"
+     */
     static void decodeSeqOf(Asn1SeqOf q, Constraints c, PerReader r) {
         Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
         q.clear();
@@ -647,7 +658,11 @@ public final class PerObject {
         PerLength.getExtSize(r, c, (in, count) -> {
             for (int i = 0; i < count; i++) {
                 int index = q.size();
+                long before = in.bitPos();
                 decodePart(q.addDefault(), elem, null, index, in);
+                if (count > Nesting.MAX_ZERO_WIDTH_ITEMS && in.bitPos() == before) {
+                    throw in.error("PER: more than " + Nesting.MAX_ZERO_WIDTH_ITEMS + " items encoded in zero bits");
+                }
             }
         });
     }

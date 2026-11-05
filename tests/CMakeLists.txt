@@ -445,6 +445,25 @@ target_include_directories(test_size_lower_bound PRIVATE ${SIZE_LB_GEN_DIR})
 target_link_libraries(test_size_lower_bound PRIVATE asn1cpp_runtime)
 add_test(NAME size_lower_bound COMMAND test_size_lower_bound)
 
+# ---- PER SEQUENCE OF items encoded in zero bits (X.691 §18, §11.9.3.8):
+# kMaxZeroWidthItems; Rust leg: rust/zero_width_items, Java: ZeroWidthItemsTest
+set(ZW_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_zero_width_items_test)
+set(ZW_SRCS Nulls Fives Flags Rows)
+list(TRANSFORM ZW_SRCS PREPEND ${ZW_GEN_DIR}/)
+list(TRANSFORM ZW_SRCS APPEND .cpp)
+add_custom_command(
+    OUTPUT  ${ZW_SRCS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ZW_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/zero_width_items_test.asn1
+            -o ${ZW_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/zero_width_items_test.asn1
+    COMMENT "Generating C++ from zero_width_items_test.asn1"
+)
+add_executable(test_zero_width_items per/test_zero_width_items.cpp ${ZW_SRCS})
+target_include_directories(test_zero_width_items PRIVATE ${ZW_GEN_DIR})
+target_link_libraries(test_zero_width_items PRIVATE asn1cpp_runtime)
+add_test(NAME zero_width_items COMMAND test_zero_width_items)
+
 # ---- REAL JER base constraints (X.697 §23.1.4); Rust leg: rust/real_jer_base
 set(REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_jer_base_test)
 add_custom_command(
@@ -2078,10 +2097,12 @@ set(java_leg_size_lower_bound_PDUS
     Probe Ub65535 Ub65536 Lb10Ub70k Lb10Max)
 set(java_leg_promoted_name_clash_PDUS
     Rec Pick RecParties PickList)
+set(java_leg_zero_width_items_PDUS
+    Nulls Fives Flags Rows)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent
-        per_nkm_size size_lower_bound promoted_name_clash)
+        per_nkm_size size_lower_bound promoted_name_clash zero_width_items)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
@@ -2608,6 +2629,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_size_lower_bound PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIZE_LB_GEN_DIR}")
+endif()
+
+# Rust leg of the PER zero-width SEQUENCE OF items test — see
+# tests/rust/zero_width_items/src/main.rs (C++ leg: test_zero_width_items).
+set(RUST_ZW_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_zero_width_items)
+add_custom_command(
+    OUTPUT  ${RUST_ZW_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_ZW_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/zero_width_items_test.asn1
+            -o ${RUST_ZW_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/zero_width_items_test.asn1
+    COMMENT "Generating Rust from zero_width_items_test.asn1"
+)
+add_custom_target(gen_rust_zero_width_items ALL DEPENDS ${RUST_ZW_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_zero_width_items
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/zero_width_items/Cargo.toml)
+    set_tests_properties(rust_zero_width_items PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_ZW_GEN_DIR}")
 endif()
 
 # Rust OPTIONAL untagged-CHOICE member test — see tests/rust/optional_untagged_choice/src/main.rs.
