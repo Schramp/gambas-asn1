@@ -1725,11 +1725,12 @@ void Generator::fill_contained_descriptor(MemberTypeDescriptorSpec& spec, const 
 /// @param parent_cname  Name of the enclosing SEQUENCE/SET/CHOICE type.
 /// @param mname         Sanitised member name (descriptor name suffix).
 /// @param session       Output session the descriptor is written to.
-/// @return Reference expression to the member's descriptor.
+/// @return The member's descriptor reference: MemberOwnTable when an own
+///         table was emitted, else `type_descriptor_ref_spec_for(m)`.
 /// @see X.691 §17 — a contained field keeps the SIZE constraint of the
 ///      OCTET STRING type it is declared with, including through an alias;
 ///      X.691 §26.5 (character string constraints).
-std::string Generator::emit_member_type_descriptor(
+TypeDescriptorRefSpec Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, TypeOutputSession& session)
 {
@@ -1763,11 +1764,10 @@ std::string Generator::emit_member_type_descriptor(
                 }
             }
     }
-    if (!spec) return type_descriptor_ref_for(m);
+    if (!spec) return type_descriptor_ref_spec_for(m);
     backend_.emit_member_type_descriptor(*spec, session);
-    return backend_.format_type_descriptor_ref(
-        TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {},
-            backend_.member_descriptor_base_name(spec->parent_cname, spec->mname)});
+    return TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {},
+        backend_.member_descriptor_base_name(spec->parent_cname, spec->mname)};
 }
 
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
@@ -2429,14 +2429,12 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
-            row.promoted_type = member_synth_name(m, current_type_, m.name);
             row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element,
-                                              row.promoted_type, true);
+                                              member_synth_name(m, current_type_, m.name), true);
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
-            row.promoted_type = member_synth_name(m, current_type_, m.name);
             row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element,
-                                              row.promoted_type, true);
+                                              member_synth_name(m, current_type_, m.name), true);
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
@@ -2768,7 +2766,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, tdref, alt_type, accessor_name, pr_name;
+            std::string name;
+            TypeDescriptorRefSpec tdref;
+            std::string alt_type, accessor_name, pr_name;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             std::optional<ast::BuiltinType> mbuiltin;
@@ -2784,7 +2784,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string contained_base;
             bool boxed = false;
             SeqOfKind seq_of_kind = SeqOfKind::None;
-            std::string promoted_type;
             ElemShape elem_shape;
             ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
             ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
@@ -2829,7 +2828,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
           for (const auto* m : canon_members) {
             std::string mname = mname_of.at(m);
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
-            std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
+            TypeDescriptorRefSpec tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = native_member_type_for(*m);
             int tag_ctx_num = -1;
             if (apply_auto_tags && !m->tag.present()) {
@@ -2902,14 +2901,12 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             // as a SEQUENCE member's row carries them.
             if (m->is_seq_of()) {
                 rows.back().seq_of_kind = SeqOfKind::SeqOf;
-                rows.back().promoted_type = member_synth_name(*m, current_type_, m->name);
                 rows.back().elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m->body).element,
-                                                          rows.back().promoted_type, true);
+                                                          rows.back().tdref.name, true);
             } else if (m->is_set_of()) {
                 rows.back().seq_of_kind = SeqOfKind::SetOf;
-                rows.back().promoted_type = member_synth_name(*m, current_type_, m->name);
                 rows.back().elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m->body).element,
-                                                          rows.back().promoted_type, true);
+                                                          rows.back().tdref.name, true);
             }
             rows.back().xer_encoding = m->xer_encoding;
             rows.back().ref_xer_encoding = alt_ref_xer_encoding;
@@ -2939,7 +2936,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             if (r.contained) alt.contained_inner = contained_inner_native(*r.contained);
             alt.boxed = r.boxed;
             alt.seq_of_kind = r.seq_of_kind;
-            alt.promoted_type = r.promoted_type;
             alt.elem_shape = r.elem_shape;
             alt.xer_encoding = r.xer_encoding;
             alt.ref_xer_encoding = r.ref_xer_encoding;
@@ -3462,7 +3458,8 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
-    spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
+    spec.elem_ref = backend_.format_type_descriptor_ref(
+        emit_member_type_descriptor(elem_node, cname, "elem", session));
     spec.elem_tdref = type_descriptor_ref_spec_for(elem_node);
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.

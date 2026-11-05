@@ -998,7 +998,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
                 offset_expr,
-                r.tdref, ops,
+                format_type_descriptor_ref(r.tdref), ops,
                 r.is_explicit ? "true" : "false",
                 (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false",
                 def_setter, def_cmp);
@@ -1072,9 +1072,10 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
     for (const auto& r : spec.members) {
         auto si = resolve_setter_info(r);
         if (si.param_type.empty()) continue;
-        // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
-        std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
-            ? r.tdref.substr(1) : r.tdref;
+        // tdref renders as "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
+        std::string tdtext = format_type_descriptor_ref(r.tdref);
+        std::string tdname = (tdtext.size() > 1 && tdtext[0] == '&')
+            ? tdtext.substr(1) : tdtext;
         std::string assign = si.is_move
             ? std::format("{} = std::move(val);", r.mname)
             : (si.is_int_alias || si.is_uint_alias
@@ -1248,7 +1249,7 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
             bool boxed = r.boxed;
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, {}, nullptr, nullptr,\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
-                r.tdref, r.is_explicit ? "true" : "false",
+                format_type_descriptor_ref(r.tdref), r.is_explicit ? "true" : "false",
                 (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false");
             if (boxed) {
                 os << std::format(

@@ -916,7 +916,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // FROM-alphabet-only or custom-XER-only member with no SIZE constraint
     // (Generator::build_member_type_descriptor_spec's Sizeable branch:
     // `if (sr || !alphabet.empty() || needs_xer)`), and RustBackend's own
-    // member-row loop only has `tdref` being non-empty to tell
+    // member-row loop only has `tdref` being MemberOwnTable to tell
     // whether *some* spec was built for this member — not whether the
     // SIZE constraint within it is real. Keeping this table unconditional
     // (flags=0 when unconstrained, same as `Constraints::default()`) keeps
@@ -1553,7 +1553,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // UNCONSTRAINED for a composite member (it owns its own
                 // constraint internally).
                 std::string constraints_ref = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-                bool own_table = !m.tdref.empty();
+                bool own_table = m.tdref.kind == TypeDescriptorRefKind::MemberOwnTable;
                 bool is_integer_narrow = m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Integer &&
                     (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64);
                 bool is_octet_or_bit_or_string = m.mbuiltin &&
@@ -1599,7 +1599,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // walker (`per::object`) reads this member's own
                     // `MemberMeta::constraints` for the collection's SIZE,
                     // not any per-element constraint.
-                    const std::string& synth = m.promoted_type;
+                    const std::string& synth = m.tdref.name;
                     constraints_ref = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
                 } else if (!m.mbuiltin && m.ref_is_seq_of) {
                     // Same rationale, for a *named* SEQUENCE OF/SET OF
@@ -1896,7 +1896,7 @@ void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///       a struct, a CHOICE has no natural default variant.
 void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
     auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
-        const std::string& synth = a.promoted_type;
+        const std::string& synth = a.tdref.name;
         return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
     };
     // Variant names use variant_name(), not the raw
@@ -1969,7 +1969,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 /// @see X.680 §29 (CHOICE).
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
-        const std::string& synth = a.promoted_type;
+        const std::string& synth = a.tdref.name;
         return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
     };
     std::string prefix = escape(to_snake_case(spec.type_name));
@@ -2149,7 +2149,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 ber = "asn1cpp_wire::spec::choice::BerTagging::Delegate";
             }
             std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-            if (a.mbuiltin && !a.tdref.empty()) {
+            if (a.mbuiltin && a.tdref.kind == TypeDescriptorRefKind::MemberOwnTable) {
                 alt_constraints = "&" + to_screaming_snake_case(member_descriptor_base_name(spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
             } else if (!a.mbuiltin && a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias &&
                        (a.ref_storage_kind == IntStorageKind::S64 || a.ref_storage_kind == IntStorageKind::U64)) {
@@ -2177,7 +2177,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // synthetic type's `{Synth}_CONSTRAINTS`, which the PER
                 // SEQUENCE OF walker reads from this row — same as the
                 // SEQUENCE-member inline case.
-                const std::string& synth = a.promoted_type;
+                const std::string& synth = a.tdref.name;
                 alt_constraints = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
             }
             meta_lines.push_back(std::format(

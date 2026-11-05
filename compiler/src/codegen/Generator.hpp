@@ -402,8 +402,8 @@ private:
     bool        member_type_is_untagged_choice(const ast::TypeDef& m) const;
     bool        member_type_is_any(const ast::TypeDef& m) const;
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
-    std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
-                                            const std::string& mname, TypeOutputSession& session);
+    TypeDescriptorRefSpec emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
+                                                      const std::string& mname, TypeOutputSession& session);
     /// @brief Contained-field fact for a member/alternative, when the
     ///        backend stores contained values (else nullptr).
     const sema::ContainedField* contained_for(const ast::TypeDef& m) const;

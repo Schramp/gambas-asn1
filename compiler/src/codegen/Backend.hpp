@@ -633,26 +633,28 @@ struct TaggedMemberSpec {
     // the element's shape level by level. None for every other body.
     SeqOfKind   seq_of_kind = SeqOfKind::None;
     ElemShape   elem_shape;
-    // The generated name of the type an inline SEQUENCE OF/SET OF member
-    // or alternative is promoted to, as Generator chose it (unique among
-    // its siblings and the schema's own type assignments); empty for every
-    // other body. Backends name the collection type through this, never by
-    // recomputing synthetic_name(parent, member).
-    std::string promoted_type;
+    // The member's or alternative's type-descriptor reference, as Generator
+    // decided it (`type_descriptor_ref_spec_for`, or MemberOwnTable when
+    // `emit_member_type_descriptor` emitted an own constraint table). Each
+    // backend renders it with its own `format_type_descriptor_ref`. For an
+    // inline SEQUENCE OF/SET OF it is FreeStanding and `name` is the
+    // promoted collection type's generated name (unique among its siblings
+    // and the schema's own type assignments): backends name that type
+    // through it, never by recomputing synthetic_name(parent, member).
+    TypeDescriptorRefSpec tdref;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
 ///        `offset_expr` are not struct fields at all — both are derivable
 ///        by CppBackend alone from `mname`/`optional`/the enclosing type
 ///        name (SequenceSpec::type_name), computed at emission time rather
-///        than carried as pre-formatted C++ expression text. `tdref` is
-///        split the "real" way: `Generator::type_descriptor_ref_spec_for`
-///        decides the reference *kind* (needs Generator-private
-///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
-///        `effective_type_name` — Backend has no access to), and
-///        `Backend::format_type_descriptor_ref` renders the actual syntax,
-///        so `tdref` is real per-backend text (empty/unused on RustBackend
-///        today), not a C++-only assumption baked into this field.
+///        than carried as pre-formatted C++ expression text. `tdref`
+///        (TaggedMemberSpec) is split the same way:
+///        `Generator::type_descriptor_ref_spec_for` decides the reference
+///        (needs Generator-private resolver/collision-tracking state —
+///        `resolver_`, `collision_types_`, `effective_type_name` — Backend
+///        has no access to), and each backend renders it with
+///        `Backend::format_type_descriptor_ref`.
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
 ///       the rest default-constructed (never read by emit_sequence_declaration).
@@ -747,7 +749,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // row (the enclosing type name is on SequenceSpec::type_name,
     // `mname`/`optional` are right here), so CppBackend computes them
     // itself at emission time instead.
-    std::string tdref;          // reference expression to the member's TypeDescriptor
     // True iff Generator::emit_default_setter actually emitted a
     // `_default()` function for this member's DEFAULT value (some DEFAULT
     // kinds it can't represent leave this false even when has_default is
@@ -793,7 +794,6 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     std::string pr_name;
 
     std::string asn1_name;
-    std::string tdref;
     // The alternative's type reaches this CHOICE again (X.680 §3.6.55):
     // the CHOICE itself, or a SEQUENCE/SET/CHOICE that refers back to it.
     // Its value cannot be held inline in the CHOICE's own storage, where

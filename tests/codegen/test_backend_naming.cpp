@@ -380,7 +380,7 @@ int main() {
         req.mname = "count";
         req.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 2, false}, false };
         req.optional = false;
-        req.tdref = "&asn_DEF_MyInt";
+        req.tdref = {TypeDescriptorRefKind::FreeStanding, {}, "MyInt"};
         spec.members.push_back(req);
 
         SequenceMemberSpec opt;
@@ -389,7 +389,7 @@ int main() {
         opt.mname = "label";
         opt.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 12, false}, false };
         opt.optional = true;
-        opt.tdref = "&asn_DEF_Utf8String";
+        opt.tdref = {TypeDescriptorRefKind::Builtin, asn1::ast::BuiltinType::Utf8String, {}};
         spec.members.push_back(opt);
 
         TypeOutputSession cpp_session, rust_session;
@@ -433,7 +433,7 @@ int main() {
         num.pr_name = "Num";
         num.asn1_name = "num";
         num.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 2, false}, false };
-        num.tdref = "&asn_DEF_MyInt";
+        num.tdref = {TypeDescriptorRefKind::FreeStanding, {}, "MyInt"};
         spec.alternatives.push_back(num);
 
         ChoiceAlternativeSpec label;
@@ -442,7 +442,7 @@ int main() {
         label.pr_name = "Label";
         label.asn1_name = "label";
         label.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 12, false}, false };
-        label.tdref = "&asn_DEF_Utf8String";
+        label.tdref = {TypeDescriptorRefKind::Builtin, asn1::ast::BuiltinType::Utf8String, {}};
         spec.alternatives.push_back(label);
 
         TypeOutputSession cpp_session, rust_session;

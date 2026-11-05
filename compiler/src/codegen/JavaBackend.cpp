@@ -422,10 +422,10 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     // An inline constraint is the alternative's own table, emitted by
     // emit_member_type_descriptor; a reference uses its type's table.
     auto constraints = [&](const ChoiceAlternativeSpec& a) {
-        if (!a.tdref.empty()) return a.tdref + ".CONSTRAINTS";
+        if (a.tdref.kind == TypeDescriptorRefKind::MemberOwnTable) return a.tdref.name + ".CONSTRAINTS";
         if (a.contained) return a.contained_base + ".CONSTRAINTS";
         if (a.seq_of_kind != SeqOfKind::None)
-            return std::format("{}.CONSTRAINTS", escape(a.promoted_type));
+            return std::format("{}.CONSTRAINTS", escape(a.tdref.name));
         if (!a.mbuiltin && a.ref_is_seq_of) return std::format("{}.CONSTRAINTS", a.mtype);
         if (!a.mbuiltin && (a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || a.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", a.ref_constraints_owner.empty() ? a.mtype : a.ref_constraints_owner);
@@ -627,14 +627,14 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     // referenced one, or the synthetic type an inline collection member
     // is promoted to.
     auto constraints = [&](const SequenceMemberSpec& m) {
-        if (!m.tdref.empty()) return m.tdref + ".CONSTRAINTS";
+        if (m.tdref.kind == TypeDescriptorRefKind::MemberOwnTable) return m.tdref.name + ".CONSTRAINTS";
         if (m.contained) {
             if (!m.mbuiltin && m.ref_builtin_alias && !m.ref_constraints_owner.empty())
                 return m.ref_constraints_owner + ".CONSTRAINTS";
             return m.contained_base + ".CONSTRAINTS";
         }
         if (m.seq_of_kind != SeqOfKind::None)
-            return std::format("{}.CONSTRAINTS", escape(m.promoted_type));
+            return std::format("{}.CONSTRAINTS", escape(m.tdref.name));
         if (!m.mbuiltin && m.ref_is_seq_of) return std::format("{}.CONSTRAINTS", m.mtype);
         if (!m.mbuiltin && (m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || m.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", m.ref_constraints_owner.empty() ? m.mtype : m.ref_constraints_owner);
