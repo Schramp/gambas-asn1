@@ -6,12 +6,18 @@
 
 ZeroWidthItemsTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
+    -- A NULL takes zero bits (X.691 §18): limited.
     Nulls ::= SEQUENCE OF NULL
 
+    -- A single-value INTEGER takes zero bits too (§11.1.3): limited.
     Fives ::= SEQUENCE (SIZE(0..60000)) OF INTEGER (5..5)
 
+    -- Control case: a BOOLEAN takes one bit (§12.1), so any count is
+    -- backed by input: not limited.
     Flags ::= SEQUENCE OF BOOLEAN
 
+    -- Control case: a nested list takes at least its length octet, so many
+    -- short lists of NULLs are not limited.
     Rows ::= SEQUENCE OF Nulls
 
 END

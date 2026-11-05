@@ -1055,8 +1055,8 @@ public:
     }
     /// @brief Decodes a SEQUENCE OF/SET OF: its SIZE length, fragmented
     ///        from 16K items on, then each element. A list counting more
-    ///        than \c kMaxZeroWidthItems items fails on the first element
-    ///        encoded in zero bits.
+    ///        than \c kMaxZeroWidthItems items fails when its first element
+    ///        is encoded in zero bits (checked once per length fragment).
     /// @param codec  The codec decoding the elements.
     /// @param stream The stream at the length determinant.
     /// @param def    The SEQUENCE OF/SET OF type.
@@ -1075,15 +1075,19 @@ public:
         const auto& edef = *spec.element;
         IDecodeStream& ds = stream;
         auto count_r = decode_ext_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
+            if (m == 0) return decode_ok();
             std::size_t start = seq.count();
             seq.resize(start + m);
-            for (std::size_t i = start; i < start + m; ++i) {
-                int before = PerCodec::stream_bit_pos(stream);
+            // Only a type with a single value encodes in zero bits, so the
+            // first element tells for all of them.
+            int before = PerCodec::stream_bit_pos(stream);
+            if (auto r = codec.decode(ds, edef, seq.get_mut(start)); !r) return r;
+            if (m > kMaxZeroWidthItems && PerCodec::stream_bit_pos(stream) == before)
+                return decode_err(DecodeError(std::string(def.name) + ": more than "
+                    + std::to_string(kMaxZeroWidthItems) + " items encoded in zero bits"));
+            for (std::size_t i = start + 1; i < start + m; ++i) {
                 auto r = codec.decode(ds, edef, seq.get_mut(i));
                 if (!r) return r;
-                if (m > kMaxZeroWidthItems && PerCodec::stream_bit_pos(stream) == before)
-                    return decode_err(DecodeError(std::string(def.name) + ": more than "
-                        + std::to_string(kMaxZeroWidthItems) + " items encoded in zero bits"));
             }
             return decode_ok();
         });
