@@ -1624,9 +1624,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::BitString) {
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_bit_string(&{}, {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && is_sizeable_string_kind(*m.mbuiltin)) {
-                    bool wide = *m.mbuiltin == ast::BuiltinType::BmpString || *m.mbuiltin == ast::BuiltinType::UniversalString;
-                    if (wide) {
-                        validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.len(), {}))", field_place(), constraints_ref);
+                    // SIZE and FROM count characters (X.680 §51.5, §51.7); these kinds
+                    // store some characters in more than one byte.
+                    const char* multibyte_tag =
+                        *m.mbuiltin == ast::BuiltinType::BmpString       ? "BMP_STRING" :
+                        *m.mbuiltin == ast::BuiltinType::UniversalString ? "UNIVERSAL_STRING" :
+                        *m.mbuiltin == ast::BuiltinType::Utf8String      ? "UTF8_STRING" : nullptr;
+                    if (multibyte_tag) {
+                        validate_expr = std::format(
+                            "Some(|v| asn1cpp_wire::constraints::validate_multibyte_string(asn1cpp_wire::ber::tag::universal::{}, {}.as_ref(), {}))",
+                            multibyte_tag, field_place(), constraints_ref);
                     } else {
                         std::string str_ref = m.optional ? field_place() : std::format("&v.{}", m.mname);
                         validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_string({}, {}))", str_ref, constraints_ref);

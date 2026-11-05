@@ -116,12 +116,14 @@ fn has_alphabet(pc: &Constraints) -> bool {
 /// it, X.691 §10.3 note).
 pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Result<(), EncodeError> {
     if pc.flags & crate::constraints::PER_SIZE_INVISIBLE != 0 {
-        if crate::constraints::validate_size(bytes.len(), pc) != 0 {
+        if crate::constraints::validate_size(crate::constraints::string_char_count(tag_num, bytes), pc) != 0 {
             return Err(EncodeError::new("string length violates SIZE constraint"));
         }
         if has_alphabet(pc) {
             let table = pc.encode_table.expect("has_alphabet already checked encode_table.is_some()");
-            if bytes.iter().any(|&b| table[b as usize] == 0xFFFF) {
+            let mut bad = false;
+            crate::constraints::for_each_code_point(tag_num, bytes, |cp| bad |= cp > 0xFF || table[cp as usize] == 0xFFFF);
+            if bad {
                 return Err(EncodeError::new("character not in FROM alphabet"));
             }
         }
