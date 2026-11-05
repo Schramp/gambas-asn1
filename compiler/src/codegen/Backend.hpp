@@ -1186,6 +1186,38 @@ public:
         throw std::logic_error("emit_declaration_preamble: not implemented for this backend");
     }
 
+    /// @brief File preamble, for a backend that also needs the defining
+    ///        ASN.1 module's own name (X.680 §12.5 modulereference).
+    /// @param module_comment As for the two-argument form.
+    /// @param module_name    The module's name as written in the ASN.1 source.
+    /// @param session        Per-type output session.
+    /// @note Default forwards to the two-argument form.
+    virtual void emit_declaration_preamble(const std::string& module_comment, const std::string& module_name,
+                                           TypeOutputSession& session) const {
+        (void)module_name;
+        emit_declaration_preamble(module_comment, session);
+    }
+
+    /// @brief The generated name of type `type_name` (already passed
+    ///        through `type_name()`) of ASN.1 module `module_name`, for a
+    ///        backend that gives each module its own namespace; this name
+    ///        is then used for the type throughout code generation.
+    /// @return Empty when the backend puts every type of a run in one
+    ///         namespace; Generator then prefixes the module's name only
+    ///         to a type name that occurs in more than one module.
+    /// @note Default: one namespace.
+    virtual std::string module_scoped_type_name(const std::string& module_name, const std::string& type_name) const {
+        (void)module_name; (void)type_name;
+        return {};
+    }
+
+    /// @brief Where a type's output files go below the output directory,
+    ///        without extension, given its generated name.
+    /// @note Default: the name itself, directly in the output directory.
+    virtual std::string output_stem(const std::string& type_name) const {
+        return type_name;
+    }
+
     /// @brief Emit the file preamble for a generated implementation file.
     /// @param declaration_filename The corresponding declaration file's filename, without extension.
     /// @param session Per-type output session — writes into

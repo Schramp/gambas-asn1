@@ -33,6 +33,7 @@ static const struct option long_opts[] = {
     {"container-config",     required_argument, nullptr, 'C'},
     {"list-contained",       no_argument,       nullptr, 'L'},
     {"package",              required_argument, nullptr, 'J'},
+    {"flat-package",         no_argument,       nullptr, 'F'},
     {"per-nkm-size",         required_argument, nullptr, 'N'},
     {"list-per-nkm-size",    no_argument,       nullptr, 'Z'},
     {nullptr, 0, nullptr, 0}
@@ -99,8 +100,12 @@ static void print_help(const char* prog) {
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
         "  --target=<lang>             Output language: cpp (default), rust or java (WIP).\n"
-        "  --package=<name>            (java) Package every generated class declares,\n"
-        "                              e.g. com.example.asn1. Default: the unnamed package.\n"
+        "  --package=<name>            (java) Root package, e.g. com.example.asn1. Each\n"
+        "                              ASN.1 module's types go in a sub-package named\n"
+        "                              after the module (<name>.<Module>). Required\n"
+        "                              unless --flat-package is given.\n"
+        "  --flat-package              (java) Put every type in the --package itself\n"
+        "                              (default there: the unnamed package).\n"
         "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
         "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
         "                              EXTERNAL, auto-included in every module).\n"
@@ -112,7 +117,7 @@ static void usage(const char* prog) {
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
-                 " [--target=cpp|rust|java] [--package=<name>] [--stdlib-dir=<dir>]"
+                 " [--target=cpp|rust|java] [--package=<name>] [--flat-package] [--stdlib-dir=<dir>]"
                  " [--container-config=<file>] [--per-nkm-size=strict|visible]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
@@ -160,6 +165,7 @@ int main(int argc, char** argv) {
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::string target = "cpp";
     std::string java_package;
+    bool java_flat = false;
     std::string stdlib_dir = ASN1CPP_STDLIB_DIR;
     std::vector<std::string> input_files;
     std::string container_config;
@@ -214,6 +220,7 @@ int main(int argc, char** argv) {
         case 'C': container_config = optarg; break;
         case 'L': list_contained = true; break;
         case 'J': java_package = optarg; break;
+        case 'F': java_flat = true; break;
         case 'N':
             if (!asn1::sema::parse_nkm_size_mode(optarg, nkm_size_mode)) {
                 std::cerr << "error: unknown --per-nkm-size value '" << optarg
@@ -252,6 +259,16 @@ int main(int argc, char** argv) {
             std::cerr << "error: --package value '" << java_package << "' is not a valid Java package name\n";
             return 1;
         }
+    }
+    if (target == "java" && !java_flat) {
+        if (auto why = asn1::codegen::JavaBackend::module_layout_problem(java_package); !why.empty()) {
+            std::cerr << "error: " << why << "\n";
+            return 1;
+        }
+    }
+    if (java_flat && target != "java") {
+        std::cerr << "error: --flat-package applies to --target=java only\n";
+        return 1;
     }
     // A Java compilation unit cannot nest its class in a namespace the way
     // -fprefix wraps C++ and Rust output; --package is Java's equivalent.
@@ -384,7 +401,7 @@ int main(int argc, char** argv) {
 
     asn1::codegen::CppBackend cpp_backend;
     asn1::codegen::RustBackend rust_backend;
-    asn1::codegen::JavaBackend java_backend(java_package);
+    asn1::codegen::JavaBackend java_backend(java_package, !java_flat);
     asn1::codegen::Backend& backend = (target == "rust") ? static_cast<asn1::codegen::Backend&>(rust_backend)
                                     : (target == "java") ? static_cast<asn1::codegen::Backend&>(java_backend)
                                                          : static_cast<asn1::codegen::Backend&>(cpp_backend);

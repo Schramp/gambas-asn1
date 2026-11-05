@@ -1,0 +1,42 @@
+-- Java per-module package layout (Java target, no flat-package option):
+-- each module's types in their own package, names that only a qualified
+-- reference tells apart. javac over the generated tree is the test.
+
+ModA DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- An ENUMERATED type whose own name is the one its item enum would take.
+    Value ::= ENUMERATED { red, green }
+
+    Holder ::= SEQUENCE { v Value, w Value DEFAULT green }
+
+END
+
+-- A type named like another module it imports from, and a type named
+-- like its own module: an unrooted Beta.Item or Foo.Foo would resolve
+-- Beta or Foo to the class, not the package.
+Alpha DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Item FROM Beta;
+
+    Beta ::= INTEGER
+
+    Rec ::= SEQUENCE { i Item, b Beta }
+
+    -- Members named like the root package and the runtime's packages.
+    Roots ::= SEQUENCE { gen INTEGER, io BOOLEAN, java Item }
+END
+
+Beta DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Item ::= INTEGER (0..10)
+END
+
+Foo DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Item FROM Beta;
+
+    Foo ::= SEQUENCE { item Item }
+END
+
+-- A type name short enough to keep whole as a class name, in a module
+-- whose package directory would push module path plus name past the bound.
+Some-Long-Module-Name DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Lxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ::= INTEGER
+END

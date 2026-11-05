@@ -88,7 +88,7 @@ public final class TableDump {
                         .append(String.join(",", entries)).append("]");
             }
             // A builtin's tables carry no name of its own.
-            case MemberRef.Primitive(Asn1Primitive p) -> out.append("{\"kind\":\"").append(primitiveKind(p)).append("\"");
+            case MemberRef.Primitive(Asn1Primitive p, var owner) -> out.append("{\"kind\":\"").append(primitiveKind(p)).append("\"");
             case MemberRef.Contained c -> out.append("{\"name\":").append(jstr(name)).append(",\"kind\":\"OCTET_STRING\"");
             case MemberRef.Absent a -> out.append("{\"name\":").append(jstr(name)).append(",\"kind\":\"UNSUPPORTED\"");
             case MemberRef.Unsupported u -> out.append("{\"name\":").append(jstr(name)).append(",\"kind\":\"UNSUPPORTED\"");

@@ -10,6 +10,7 @@ import gen.containing.Holder;
 import gen.containing.Inner;
 import gen.containing.Kind;
 import gen.containing.Pick;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
@@ -87,7 +88,7 @@ class ContainingTest {
     void decodesNothingWhenContainedDecodingIsOff() {
         Holder h = new Holder();
         byte[] der = row("Holder", "<plain/>").der();
-        BerObject.decode(h, der, new ContainedOptions(null, true));
+        BerObject.decode(h, der, DecodeOptions.DEFAULT.withContained(new ContainedOptions(null, true)));
         assertEquals(ContainedStatus.SKIPPED, h.viaConstraint().status());
         assertNull(h.viaAlias().value());
         assertArrayEquals(der, BerObject.encode(h));

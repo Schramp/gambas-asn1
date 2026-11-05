@@ -37,10 +37,14 @@ Generator::Generator(fs::path out_dir, sema::Resolver& res)
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Write content to path only if it differs from the existing file.
-// Uses a .tmp sidecar: write there, compare, then rename or remove.
-// Avoids bumping mtime on unchanged generated files → fewer downstream recompiles.
+/// @brief Write a generated file only when its content changed, so an
+///        unchanged file keeps its mtime and downstream builds skip it.
+///        Creates the file's directory, which a backend's `output_stem`
+///        can place below the output directory.
+/// @param path    The file to write.
+/// @param content Its new content.
 static void write_if_changed(const fs::path& path, const std::string& content) {
+    fs::create_directories(path.parent_path());
     fs::path tmp = path; tmp += ".tmp";
     { std::ofstream out(tmp, std::ios::binary); out << content; }
     if (fs::exists(path)) {
@@ -3049,7 +3053,14 @@ void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session)
 ///       one file. Revisit if/when that combination occurs.
 void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
                                  const ast::Module& mod) {
-    std::string base = filename_for(name);
+    // Bound only the file name: the directories output_stem puts in front
+    // (a Java module package) are not part of the name a type's own
+    // declaration must match (JLS §7.6).
+    std::string stem = backend_.output_stem(name);
+    auto slash = stem.rfind('/');
+    std::string base = slash == std::string::npos
+        ? bounded_file_stem(stem)
+        : stem.substr(0, slash + 1) + bounded_file_stem(stem.substr(slash + 1));
     emitted_type_refs_.clear();
     TypeOutputSession session;
     emit_type_body(def, mod, session);
@@ -3101,7 +3112,7 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
         }
         module_comment += " }";
     }
-    backend_.emit_declaration_preamble(module_comment, session);
+    backend_.emit_declaration_preamble(module_comment, mod.name, session);
 
     // A top-level type alias that also carries its own [n] tag override
     // (`Label2 ::= [1] Label`) needs a real descriptor, not a bare `using`
@@ -3843,6 +3854,50 @@ void Generator::compute_reachable(const ast::ParseResult& pr) {
     for (const auto& root : pdu_roots_)
         if (!reachable_asn_names_.count(root))
             std::cerr << "warning: -pdu type '" << root << "' not found in input\n";
+}
+
+/// Name of the file in the output directory listing, one relative path per
+/// line, every file the last run wrote.
+static constexpr const char* kGeneratedManifest = ".asn1cpp-generated";
+
+void Generator::remove_stale_files() const {
+    if (!fs::exists(out_dir_)) return;
+    std::set<std::string> exts{"." + backend_.declaration_extension(),
+                               "." + backend_.definition_extension()};
+    std::set<fs::path> stale;
+    std::set<fs::path> dirs{out_dir_};
+    for (const auto& f : known_files_) dirs.insert(f.parent_path());
+    for (const auto& dir : dirs)
+        for (const auto& entry : fs::directory_iterator(dir))
+            if (entry.is_regular_file()) stale.insert(entry.path());
+    const fs::path manifest = out_dir_ / kGeneratedManifest;
+    if (std::ifstream in(manifest); in)
+        for (std::string line; std::getline(in, line);) {
+            fs::path rel(line);
+            // Only paths below out_dir_: the manifest is ordinary text a user can edit.
+            bool below = !line.empty() && rel.is_relative() &&
+                         std::none_of(rel.begin(), rel.end(), [](const fs::path& p) { return p == ".."; });
+            if (below) stale.insert(out_dir_ / rel);
+        }
+
+    std::set<fs::path> emptied;
+    for (const auto& path : stale) {
+        if (known_files_.count(path) || !exts.count(path.extension().string())) continue;
+        if (!fs::is_regular_file(path)) continue;
+        fs::remove(path);
+        emptied.insert(path.parent_path());
+    }
+    // Deepest first, so a module directory goes before its parent.
+    for (auto it = emptied.rbegin(); it != emptied.rend(); ++it)
+        for (fs::path d = *it; d != out_dir_ && d.native().starts_with(out_dir_.native())
+                               && fs::is_directory(d) && fs::is_empty(d); d = d.parent_path())
+            fs::remove(d);
+
+    std::set<std::string> rel;
+    for (const auto& f : known_files_) rel.insert(fs::relative(f, out_dir_).generic_string());
+    std::string listing;
+    for (const auto& r : rel) listing += r + "\n";
+    write_if_changed(manifest, listing);
 }
 
 } // namespace asn1::codegen

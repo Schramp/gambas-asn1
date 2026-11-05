@@ -52,31 +52,59 @@ inline std::string java_escape(std::string n,
 /// schema using one fails loudly naming the missing construct.
 class JavaBackend : public Backend {
 public:
-    /// @param package Java package every generated compilation unit
-    ///                declares (`--package`); empty for the unnamed package.
-    explicit JavaBackend(std::string package = {}) : package_(std::move(package)) {}
+    /// @param package   Java package every generated compilation unit
+    ///                  declares (`--package`); empty for the unnamed package.
+    /// @param by_module Put each ASN.1 module's types in a sub-package of
+    ///                  `package` named after the module; false for one
+    ///                  package (`--flat-package`).
+    explicit JavaBackend(std::string package = {}, bool by_module = false)
+        : package_(std::move(package)), by_module_(by_module),
+          root_(by_module_ ? package_.substr(0, package_.find('.')) : std::string{}) {}
+
+    /// @brief A type's fully qualified class name in its module's package,
+    ///        `<package>.<Module>.<Type>`, when types go in per-module
+    ///        packages; empty otherwise.
+    std::string module_scoped_type_name(const std::string& module_name, const std::string& type_name) const override;
+
+    /// @brief The file of a class: below the output directory, one
+    ///        directory per package part after `package` (JLS §7.2).
+    std::string output_stem(const std::string& type_name) const override;
+
+    void emit_declaration_preamble(const std::string& module_comment, const std::string& module_name,
+                                   TypeOutputSession& session) const override;
 
     /// @brief A public class must live in the file of its own name (JLS
     ///        §7.6), so an overlong name is shortened as its file is
     ///        (bounded_file_stem); every reference goes through here.
     std::string type_name(std::string_view asn1_name) const override {
-        return bounded_file_stem(java_escape(to_cpp_name(asn1_name)));
+        return bounded_file_stem(escape(to_cpp_name(asn1_name)));
     }
 
     std::string member_name(std::string_view asn1_name,
                              std::initializer_list<std::string_view> extra = {}) const override {
         auto n = to_cpp_name(asn1_name);
         if (!n.empty()) n[0] = (char)std::tolower((unsigned char)n[0]);
-        return java_escape(std::move(n), extra);
+        return escape(std::move(n), extra);
     }
 
     std::string value_name(std::string_view asn1_name) const override {
-        return java_escape(to_value_name(asn1_name));
+        return escape(to_value_name(asn1_name));
     }
 
+    /// @brief `java_escape`, also escaping the first segment of every
+    ///        qualified name generated code writes (`io`, `java`, and the
+    ///        root package in the per-module layout): a variable or type of
+    ///        that simple name in scope would obscure the package
+    ///        (JLS §6.4.2), so `io.github...` or `gen.Mod.Type` would no
+    ///        longer resolve.
+    /// @param name  Transliterated ASN.1 name.
+    /// @param extra Additional reserved names, as for `java_escape`.
+    /// @return The name as generated code declares it.
     std::string escape(std::string name,
                         std::initializer_list<std::string_view> extra = {}) const override {
-        return java_escape(std::move(name), extra);
+        name = java_escape(std::move(name), extra);
+        if (name == "io" || name == "java" || (!root_.empty() && name == root_)) name += "_";
+        return name;
     }
 
     std::string synthetic_name(const std::string& parent,
@@ -116,9 +144,12 @@ public:
         return spec.kind == TypeDescriptorRefKind::MemberOwnTable ? spec.name : std::string{};
     }
 
-    /// @brief The runtime's SEQUENCE OF collection around `elem_type`. A
-    ///        member's real collection classes, SET OF included, come from
-    ///        its ElemShape (see java_collection_type).
+    /// @brief The runtime's SEQUENCE OF collection around `elem_type`. An
+    ///        inline SEQUENCE OF / SET OF member or alternative is declared
+    ///        with the class generated for its promoted collection type
+    ///        instead, named by its `tdref` (emit_sequence / emit_choice).
+    /// @param elem_type  Native element type.
+    /// @return The generic collection type text.
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("io.github.schramp.gambasasn1.wire.spec.SeqOf<{}>", elem_type);
     }
@@ -153,8 +184,23 @@ public:
     ///        Java identifiers, none of them a keyword (JLS §7.4.1).
     static bool valid_package(std::string_view pkg);
 
+    /// @brief Why `pkg` cannot root the per-module layout, or empty when it
+    ///        can: the layout writes every cross-module reference as
+    ///        `<root>.<Module>.<Type>`, so the root must exist (an unrooted
+    ///        `Module.Type` is obscured by any type named like the module)
+    ///        and its first segment must not be a field or local variable
+    ///        that generated code declares (JLS §6.4.2).
+    /// @param pkg The `--package` value.
+    /// @return An error message, or empty.
+    static std::string module_layout_problem(std::string_view pkg);
+
 private:
     std::string package_;
+    bool by_module_;
+    std::string root_;  // first segment of package_ in the per-module layout, else empty
+
+    /// @brief The package of the types of ASN.1 module `module_name`.
+    std::string module_package(const std::string& module_name) const;
 
     /// @brief The `BER_FRAMING` constant of a type assignment whose own
     ///        tag is not its builtin's universal tag (X.680 §31.2).

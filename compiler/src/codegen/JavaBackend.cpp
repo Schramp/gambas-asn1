@@ -12,6 +12,13 @@ namespace asn1::codegen {
 // Generated code names every runtime and java.lang type by its fully
 // qualified name, so a generated type called String, Override or
 // Asn1Boolean in the same package cannot shadow it.
+/// @brief The simple name of a class given by its generated name, which
+///        is fully qualified when types go in per-module packages (JLS §6.7).
+static std::string simple_name(const std::string& name) {
+    auto dot = name.rfind('.');
+    return dot == std::string::npos ? name : name.substr(dot + 1);
+}
+
 static constexpr const char* kWire = "io.github.schramp.gambasasn1.wire";
 
 /// @brief The runtime wrapper class for a builtin a type assignment
@@ -184,8 +191,21 @@ static std::string java_member_xer_instruction(const TaggedMemberSpec& m) {
     return std::format("{}.spec.XerInstruction.{}", kWire, name);
 }
 
+/// @brief The `toString()` override of a generated value class: the
+///        runtime's `ValuePrinter` text, so a test failure shows the value
+///        (display only, never parsed back).
+static std::string java_to_string_method() {
+    return std::format("\n    @java.lang.Override\n"
+                       "    public java.lang.String toString() {{\n"
+                       "        return {}.print.ValuePrinter.print(this);\n"
+                       "    }}\n", kWire);
+}
+
 /// @brief Emit the members every value-holding generated class shares:
-///        the `AsMemberRef` answers for a builtin wrapped in `value`.
+///        the `AsMemberRef` answers for a builtin wrapped in `value`. The
+///        member reference names the class's own object as the builtin's
+///        owner, so finding nodes by type and source positions see the
+///        alias class as well as the builtin the codecs walk.
 /// @param os       The `.java` buffer.
 /// @param cls      Fully qualified runtime wrapper class.
 /// @param xer_name The type's own XER element name (X.693 §12).
@@ -195,7 +215,7 @@ static void emit_primitive_holder(std::ostream& os, const std::string& cls, cons
     os << std::format("    public final {0} value = new {0}();\n\n", cls);
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n", kWire);
-    os << std::format("        return new {}.spec.MemberRef.Primitive(value);\n", kWire);
+    os << std::format("        return new {}.spec.MemberRef.Primitive(value, this);\n", kWire);
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public java.lang.String ownElementXerName() {\n";
@@ -222,7 +242,7 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
                                            spec.asn1_name.empty() ? spec.type_name : spec.asn1_name));
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", simple_name(spec.type_name), kWire);
     using BT = ast::BuiltinType;
     // SIZE applies to the string kinds (X.680 §51.5): OCTET STRING, BIT
     // STRING and every restricted character string.
@@ -233,7 +253,7 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
     else if (spec.builtin_type == BT::Real) constraints = java_real_constraints(spec.real_range);
     os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {1};\n", kWire, constraints);
     os << ber_framing_field(spec) << "\n";
-    emit_primitive_holder(os, cls, spec.xer_name, java_xer_instruction(spec.xer_encoding) + ber_framing_method(spec));
+    emit_primitive_holder(os, cls, simple_name(spec.xer_name), java_xer_instruction(spec.xer_encoding) + ber_framing_method(spec));
 }
 
 /// @brief Emit an INTEGER type assignment (X.680 §19) as a class holding
@@ -255,7 +275,7 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
     uint64_t upper_u64 = spec.semi_constrained ? std::numeric_limits<uint64_t>::max() : spec.upper_u64;
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", simple_name(spec.type_name), kWire);
     os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire,
                       java_int_constraints(flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64,
                                            u64 ? spec.lower_u64 : 0, u64 ? upper_u64 : 0));
@@ -266,14 +286,15 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
                           escape(value_name(nv.asn1_name), {"value", "CONSTRAINTS", "BER_FRAMING"}), java_long(nv.value));
     }
     os << "\n";
-    emit_primitive_holder(os, std::format("{}.types.{}", kWire, u64 ? "Asn1UInteger" : "Asn1Integer"), spec.xer_name,
+    emit_primitive_holder(os, std::format("{}.types.{}", kWire, u64 ? "Asn1UInteger" : "Asn1Integer"), simple_name(spec.xer_name),
                           ber_framing_method(spec));
 }
 
 /// @brief Emit an ENUMERATED type assignment (X.680 §20) as a class whose
 ///        nested Java enum names the items in declaration order, with the
 ///        `ENUM_SPEC` table (items sorted by value, X.691 §11.4) and the
-///        `EnumSlot` mapping between items and their values.
+///        `EnumSlot` mapping between items and their values, and a
+///        `toString()` through the runtime's `ValuePrinter`.
 /// @param spec    Resolved items, extensibility and tag.
 /// @param session Per-type output session; writes the `.java` buffer.
 void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -281,16 +302,16 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
         throw std::logic_error(std::format("emit_enumerated: {} has no items", spec.type_name));
     const std::string& t = spec.type_name;
     // A member type may not share its enclosing class's simple name (JLS §8.1).
-    std::string item_type = escape("Value", {t});
+    std::string item_type = escape("Value", {simple_name(t)});
     size_t root_count = spec.root_count > 0 ? static_cast<size_t>(spec.root_count) : spec.sorted_values.size();
     unsigned root_bits = 0;
     for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {} implements {}.spec.AsMemberRef, {}.spec.EnumSlot {{\n", t, kWire, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef, {}.spec.EnumSlot {{\n", simple_name(t), kWire, kWire);
     os << std::format("    public static final {0}.spec.EnumSpec ENUM_SPEC = new {0}.spec.EnumSpec(\"{1}\", java.util.List.of(\n",
-                      kWire, spec.xer_name);
+                      kWire, simple_name(spec.xer_name));
     for (size_t i = 0; i < spec.sorted_values.size(); ++i) {
         const auto& v = spec.sorted_values[i];
         os << std::format("            new {}.spec.EnumEntry({}, \"{}\"){}\n", kWire, java_long(v.value), v.asn1_name,
@@ -331,7 +352,7 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public java.lang.String ownElementXerName() {\n";
-    os << std::format("        return \"{}\";\n", spec.xer_name);
+    os << std::format("        return \"{}\";\n", simple_name(spec.xer_name));
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public boolean equals(java.lang.Object o) {\n";
@@ -339,6 +360,7 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public int hashCode() {\n        return value.hashCode();\n    }\n";
+    os << java_to_string_method();
     os << ber_framing_method(spec);
     os << "}\n";
 }
@@ -364,25 +386,6 @@ std::string JavaBackend::native_builtin_type(ast::BuiltinType bt) const {
     return cls;
 }
 
-/// @brief The Java type of a SEQUENCE OF / SET OF member, level by level
-///        from its ElemShape: `SeqOf` or `SetOf` (X.680 §25, §27) around
-///        the element type.
-/// @param kind  The collection kind at this level.
-/// @param elem  The element's shape.
-static std::string java_collection_type(SeqOfKind kind, const ElemShape& elem) {
-    std::string inner = elem.kind == SeqOfKind::None ? elem.leaf_native_type
-                                                     : java_collection_type(elem.kind, *elem.nested);
-    return std::format("{}.spec.{}<{}>", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", inner);
-}
-
-/// @brief A new, empty collection of a SEQUENCE OF / SET OF member, with
-///        the factory of its elements (nested collections included).
-static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
-    std::string factory = elem.kind == SeqOfKind::None ? elem.leaf_native_type + "::new"
-                                                       : "() -> " + java_collection_new(elem.kind, *elem.nested);
-    return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
-}
-
 /// @brief Emit a CHOICE type assignment (X.680 §28) as a class holding the
 ///        selected alternative's index and value, and the `SPEC` table:
 ///        one `AltMeta` row per alternative in Generator's canonical
@@ -392,7 +395,7 @@ static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
 ///        §31.2.7), `extAt` and `rangeBits` (X.691 §23.6). Each
 ///        alternative gets a getter (its value, or null when another is
 ///        selected) and a setter that selects it, both named after the
-///        alternative.
+///        alternative. `toString()` goes through the runtime's `ValuePrinter`.
 /// @param spec    Resolved alternatives, tags and dispatch table.
 /// @param session Per-type output session; writes the `.java` buffer.
 /// @throws std::logic_error for an alternative shape this backend does
@@ -456,23 +459,22 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         return n;
     };
     bool extensible = spec.ext_at >= 0;
-    // An inline collection alternative's SeqOf/SetOf type and factory
-    // come from its ElemShape, as for a SEQUENCE member.
+    // An inline collection alternative has the class generated for its
+    // collection type, as a SEQUENCE member has.
     auto alt_type = [&](const ChoiceAlternativeSpec& a) {
-        return a.seq_of_kind != SeqOfKind::None ? java_collection_type(a.seq_of_kind, a.elem_shape) : a.mtype;
+        return a.seq_of_kind != SeqOfKind::None ? escape(a.tdref.name) : a.mtype;
     };
     auto alt_factory = [&](const ChoiceAlternativeSpec& a) {
         if (a.contained)
             return std::format("() -> new {}({}::new, {}.CONTAINED)", a.mtype, a.contained_inner, a.contained_base);
-        return a.seq_of_kind != SeqOfKind::None ? "() -> " + java_collection_new(a.seq_of_kind, a.elem_shape)
-                                                : a.mtype + "::new";
+        return alt_type(a) + "::new";
     };
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {0} implements {1}.spec.Asn1Choice, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("public class {0} implements {1}.spec.Asn1Choice, {1}.spec.Asn1Pdu {{\n", simple_name(t), kWire);
     os << std::format("    public static final {0}.spec.ChoiceSpec SPEC = new {0}.spec.ChoiceSpec(\"{1}\", java.util.List.of(\n",
-                      kWire, spec.xer_name);
+                      kWire, simple_name(spec.xer_name));
     for (size_t i = 0; i < spec.alternatives.size(); ++i) {
         const auto& a = spec.alternatives[i];
         os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, {}, {}){}\n", kWire, a.asn1_name, framing(a),
@@ -500,9 +502,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         const auto& a = spec.alternatives[i];
         std::string n = accessor(a);
         os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
-        // An inline collection or contained value has a generic type, so the cast from the
-        // stored Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
-        if (a.seq_of_kind != SeqOfKind::None || a.contained) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
+        // A contained value has a generic type, so the cast from the stored
+        // Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
+        if (a.contained) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
         os << std::format("    public {} {}() {{\n", alt_type(a), n);
         os << std::format("        return index == {} ? ({}) value : null;\n", i, alt_type(a));
         os << "    }\n\n";
@@ -521,7 +523,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef getActive() {{\n", kWire);
     os << std::format("        return index < 0 ? new {}.spec.MemberRef.Unsupported(\"CHOICE {}: no alternative selected\") : value.asMemberRef();\n",
-                      kWire, spec.xer_name);
+                      kWire, simple_name(spec.xer_name));
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef select(int i) {{\n", kWire);
@@ -537,7 +539,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         os << "        value = null;\n";
         os << "        unknown = java.util.Objects.requireNonNull(ext);\n";
     } else {
-        os << std::format("        throw new java.lang.IllegalStateException(\"CHOICE {} is not extensible\");\n", spec.xer_name);
+        os << std::format("        throw new java.lang.IllegalStateException(\"CHOICE {} is not extensible\");\n", simple_name(spec.xer_name));
     }
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
@@ -550,7 +552,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public java.lang.String ownElementXerName() {\n";
-    os << std::format("        return \"{}\";\n", spec.xer_name);
+    os << std::format("        return \"{}\";\n", simple_name(spec.xer_name));
     os << "    }\n\n";
     // Equality is by the selected alternative's value, seen through its
     // MemberRef so a builtin alias compares by the builtin it holds.
@@ -572,6 +574,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "    public int hashCode() {\n";
     os << "        return index < 0 ? -1 : 31 * index + value.asMemberRef().hashCode();\n";
     os << "    }\n";
+    os << java_to_string_method();
     os << "}\n";
 }
 
@@ -583,7 +586,8 @@ static std::string default_class(const std::string& base) {
 /// @brief Emit one SEQUENCE or SET type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
-///        (`BerObject`) reads. The class holds no codec code.
+///        (`BerObject`) reads, and a `toString()` through the runtime's
+///        `ValuePrinter`. The class holds no codec code.
 /// @param spec    Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param session Per-type output session.
 /// @see X.680 §25 (SEQUENCE), §27 (SET; members in canonical tag order,
@@ -652,9 +656,11 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     std::vector<std::string> names, types, news;
     for (const auto& m : spec.members) {
         names.push_back(accessor(m));
-        bool coll = m.seq_of_kind != SeqOfKind::None;
-        types.push_back(coll ? java_collection_type(m.seq_of_kind, m.elem_shape) : m.mtype);
-        news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape)
+        // An inline SEQUENCE OF / SET OF member has the class generated for
+        // its collection type, so finding values by class sees that type.
+        std::string coll = m.seq_of_kind != SeqOfKind::None ? escape(m.tdref.name) : "";
+        types.push_back(!coll.empty() ? coll : m.mtype);
+        news.push_back(!coll.empty() ? std::format("new {}()", coll)
                             : m.contained ? std::format("new {}({}::new, {}.CONTAINED)", m.mtype, m.contained_inner, m.contained_base)
                             : m.has_default_setter ? std::format("{}.make()", default_class(member_descriptor_base_name(t, m.mname)))
                             : std::format("new {}()", m.mtype));
@@ -662,9 +668,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("public class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", simple_name(t), kWire);
     os << std::format("    public static final {0}.spec.SequenceSpec SPEC = new {0}.spec.SequenceSpec(\"{1}\", {2}, java.util.List.of(",
-                      kWire, spec.xer_name,
+                      kWire, simple_name(spec.xer_name),
                       spec.tag ? format_tag_literal(*spec.tag)
                                : std::format("{}.ber.Tag.universal({}, true)", kWire, spec.is_set ? 17 : 16));
     for (size_t i = 0; i < spec.members.size(); ++i) {
@@ -763,7 +769,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n        return new {0}.spec.MemberRef.Composite(this);\n    }}\n\n", kWire);
     os << "    @java.lang.Override\n";
-    os << std::format("    public java.lang.String ownElementXerName() {{\n        return \"{}\";\n    }}\n\n", spec.xer_name);
+    os << std::format("    public java.lang.String ownElementXerName() {{\n        return \"{}\";\n    }}\n\n", simple_name(spec.xer_name));
     // Equality is member by member, seen through each member's MemberRef
     // so a builtin alias compares by the builtin it holds.
     os << "    @java.lang.Override\n";
@@ -776,6 +782,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "    public int hashCode() {\n        int h = 1;\n";
     os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n            h = 31 * h + getMember(i).hashCode();\n        }\n";
     os << "        return h;\n    }\n";
+    os << java_to_string_method();
     os << "}\n";
 }
 
@@ -816,7 +823,7 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         os << std::format("/** Contained value of {{@code {}.{}}} (X.682 §11). */\n", spec.parent_cname, spec.mname);
     else
         os << std::format("/** Inline constraint of {{@code {}.{}}} (X.680 §51). */\n", spec.parent_cname, spec.mname);
-    os << std::format("final class {} {{\n", name);
+    os << std::format("final class {} {{\n", simple_name(name));
     os << std::format("    static final {}.spec.Constraints CONSTRAINTS = {};\n\n", kWire, constraints);
     if (const auto* f = spec.contained) {
         auto enc = [](sema::ContentsEncoding e) {
@@ -851,7 +858,7 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                               kWire, spec.contained_is_explicit ? "Explicit" : "Implicit",
                               format_tag_literal(*spec.contained_tag));
     }
-    os << std::format("    private {}() {{\n    }}\n}}\n\n", name);
+    os << std::format("    private {}() {{\n    }}\n}}\n\n", simple_name(name));
 }
 
 /// @brief Emit a member's DEFAULT value (X.680 §25.6) as a package-private
@@ -890,7 +897,7 @@ void JavaBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         set = std::format("{}.set(\"{}\")", prim("Asn1CharString"), escape_string_literal(spec.string_val));
         break;
     case Kind::EnumRef:
-        set = std::format("v.set({}.{}.{})", type_name, escape("Value", {type_name}), escape(value_name(spec.enum_name)));
+        set = std::format("v.set({}.{}.{})", type_name, escape("Value", {simple_name(type_name)}), escape(value_name(spec.enum_name)));
         break;
     case Kind::Real: {
         // The exact bits, so infinities and -0 (X.680 §21) need no literal form.
@@ -904,18 +911,19 @@ void JavaBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
     }
     std::string cls = default_class(member_descriptor_base_name(parent_name, member_name));
     auto& os = session.buffer(declaration_extension());
-    os << std::format("/** DEFAULT of {{@code {}.{}}} (X.680 §25.6). */\n", parent_name, member_name);
-    os << std::format("final class {} {{\n", cls);
+    os << std::format("/** DEFAULT of {{@code {}.{}}} (X.680 §25.6). */\n", simple_name(parent_name), member_name);
+    os << std::format("final class {} {{\n", simple_name(cls));
     os << std::format("    static {} make() {{\n        {} v = new {}();\n        {};\n        return v;\n    }}\n\n",
                       type_name, type_name, type_name, set);
-    os << std::format("    private {}() {{\n    }}\n}}\n\n", cls);
+    os << std::format("    private {}() {{\n    }}\n}}\n\n", simple_name(cls));
 }
 
 /// @brief Emit one named SEQUENCE OF / SET OF type as a Java class that
 ///        extends the runtime's `SeqOf` / `SetOf` collection: its own XER
 ///        names (X.693 §12), its SIZE constraint (X.680 §51.5) and its
 ///        BER framing when the type assignment has a tag of its own
-///        (X.680 §31.2). The class holds no codec code.
+///        (X.680 §31.2), and a `toString()` through the runtime's
+///        `ValuePrinter`. The class holds no codec code.
 /// @param spec    Resolved, backend-agnostic decision (see SeqOfSpec).
 /// @param session Per-type output session.
 void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
@@ -942,19 +950,20 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public class {} extends {} implements {}.spec.Asn1Pdu {{\n", t, base, kWire);
+    os << std::format("public class {} extends {} implements {}.spec.Asn1Pdu {{\n", simple_name(t), base, kWire);
     os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire, constraints);
     os << ber_framing_field(spec);
     os << "\n";
-    os << std::format("    public {}() {{\n        super({}::new);\n    }}\n\n", t, spec.elem_type);
+    os << std::format("    public {}() {{\n        super({}::new);\n    }}\n\n", simple_name(t), spec.elem_type);
     os << "    @java.lang.Override\n";
-    os << std::format("    public java.lang.String ownXerName() {{\n        return \"{}\";\n    }}\n\n", spec.xer_name);
+    os << std::format("    public java.lang.String ownXerName() {{\n        return \"{}\";\n    }}\n\n", simple_name(spec.xer_name));
     if (spec.elem_xer_name) {
         os << "    @java.lang.Override\n";
-        os << std::format("    public java.lang.String elemXerName() {{\n        return \"{}\";\n    }}\n\n", *spec.elem_xer_name);
+        os << std::format("    public java.lang.String elemXerName() {{\n        return \"{}\";\n    }}\n\n", simple_name(*spec.elem_xer_name));
     }
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.Constraints pduConstraints() {{\n        return CONSTRAINTS;\n    }}\n", kWire);
+    os << java_to_string_method();
     os << ber_framing_method(spec);
     os << "}\n";
 }
@@ -971,12 +980,14 @@ void JavaBackend::emit_typeref_alias_declaration(const std::string& type_name, c
                                                  TypeOutputSession& session) const {
     auto& os = session.buffer(declaration_extension());
     os << std::format("/** ASN.1: {{@code {} ::= {}}} */\n", type_name, target_type);
-    os << std::format("public class {} extends {} {{\n}}\n", type_name, target_type);
+    os << std::format("public class {} extends {} {{\n}}\n", simple_name(type_name), target_type);
 }
 
-/// @brief Emit a reference to another generated type: nothing, since every
-///        generated class of a run shares one package (JLS §7.4) and is
-///        visible by its simple name.
+/// @brief Emit a reference to another generated type: nothing. A class
+///        in the same package is visible by its simple name (JLS §7.4),
+///        and one in another module's package is named by its fully
+///        qualified name (`module_scoped_type_name`), so no import is
+///        needed and two modules' types of one name never clash.
 /// @param type_name Unused.
 /// @param filename  Unused.
 /// @param session   Unused.
@@ -995,6 +1006,56 @@ void JavaBackend::emit_declaration_preamble(const std::string& module_comment, T
     auto& os = session.buffer(declaration_extension());
     os << "// Module: " << module_comment << "\n\n";
     if (!package_.empty()) os << "package " << package_ << ";\n\n";
+}
+
+/// @brief Emit a generated compilation unit's header, with the package of
+///        the type's ASN.1 module when types go in per-module packages.
+/// @param module_comment ASN.1 module name, with its OID when it has one.
+/// @param module_name    The module's name (X.680 §12.5 modulereference).
+/// @param session        Per-type output session; writes the `.java` buffer.
+void JavaBackend::emit_declaration_preamble(const std::string& module_comment, const std::string& module_name,
+                                            TypeOutputSession& session) const {
+    if (!by_module_) {
+        emit_declaration_preamble(module_comment, session);
+        return;
+    }
+    auto& os = session.buffer(declaration_extension());
+    os << "// Module: " << module_comment << "\n\n";
+    os << "package " << module_package(module_name) << ";\n\n";
+}
+
+/// @brief The package of an ASN.1 module's types: `package_` plus the
+///        module name, transliterated like a type name and never recased.
+/// @param module_name The module's name (X.680 §12.5).
+std::string JavaBackend::module_package(const std::string& module_name) const {
+    std::string seg = java_escape(to_cpp_name(module_name));
+    return package_.empty() ? seg : package_ + "." + seg;
+}
+
+/// @brief A type's generated name in per-module mode: its module's
+///        package and its own name, so a reference from any package names
+///        it fully (JLS §6.7).
+/// @param module_name The defining ASN.1 module.
+/// @param type_name   The type's name, through `type_name()`.
+/// @return Empty in one-package mode.
+std::string JavaBackend::module_scoped_type_name(const std::string& module_name, const std::string& type_name) const {
+    if (!by_module_) return {};
+    // An ASN.1 name has no '.' (X.680 §12.2), so a dotted name is one
+    // this already qualified, reached again through a promoted type.
+    if (type_name.find('.') != std::string::npos) return type_name;
+    return module_package(module_name) + "." + type_name;
+}
+
+/// @brief The file a class's compilation unit goes in, below the output
+///        directory (the directory of `package_`): one directory per
+///        further package part, then the class's simple name (JLS §7.2).
+/// @param type_name The class's generated name.
+std::string JavaBackend::output_stem(const std::string& type_name) const {
+    if (!by_module_) return type_name;
+    std::string rel = type_name;
+    if (!package_.empty() && rel.starts_with(package_ + ".")) rel = rel.substr(package_.size() + 1);
+    std::replace(rel.begin(), rel.end(), '.', '/');
+    return rel;
 }
 
 /// @brief Emit the implementation-half preamble: nothing, since the
@@ -1026,6 +1087,20 @@ bool JavaBackend::valid_package(std::string_view pkg) {
         if (dot == std::string_view::npos) return true;
         start = dot + 1;
     }
+}
+
+std::string JavaBackend::module_layout_problem(std::string_view pkg) {
+    if (pkg.empty())
+        return "the per-module layout needs --package=<root> (or use --flat-package)";
+    // Fields and local variables generated classes declare themselves.
+    static const std::unordered_set<std::string_view> generated = {
+        "value", "index", "unknown", "code", "ext", "i", "item", "o", "other", "v",
+    };
+    auto root = pkg.substr(0, pkg.find('.'));
+    if (generated.count(root))
+        return std::format("--package root '{}' is a name generated classes declare, which would "
+                           "hide the package; choose another root", root);
+    return {};
 }
 
 } // namespace asn1::codegen

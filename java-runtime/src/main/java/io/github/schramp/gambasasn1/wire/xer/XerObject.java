@@ -1,21 +1,25 @@
 package io.github.schramp.gambasasn1.wire.xer;
 
-import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
-import io.github.schramp.gambasasn1.wire.io.DecodeException;
-import io.github.schramp.gambasasn1.wire.io.EncodeException;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.ber.UniversalTag;
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+import io.github.schramp.gambasasn1.wire.io.EncodeException;
+import io.github.schramp.gambasasn1.wire.spec.AltMeta;
+import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
+import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedText;
-import io.github.schramp.gambasasn1.wire.spec.AltMeta;
-import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
-import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
-import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
-import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
@@ -56,9 +60,34 @@ public final class XerObject {
         decode(v, new XerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        decode(v, new XerReader(data).withContained(opts));
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings
+     * {@code opts} (null for the defaults): relaxed accepts the asn1c
+     * extensions as {@link #decodeLenient} does, constraint checks run over
+     * the decoded value, and rich errors name the failing value's type and
+     * show the input there.
+     */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        XerReader r = new XerReader(data).withOptions(opts);
+        DecodeOptions o = r.options();
+        try {
+            decode(v, r);
+            if (o.checkConstraints()) {
+                ConstraintCheck.Violation bad = ConstraintCheck.firstViolation(v.asMemberRef(),
+                        v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED, "");
+                if (bad != null) {
+                    DecodeException e = new DecodeException("constraint violated: " + bad.reason(), r.position());
+                    throw o.richErrors() ? e.within(v.ownElementXerName() + bad.path()) : e;
+                }
+            }
+        } catch (DecodeException e) {
+            if (!o.richErrors() || !e.path().isEmpty()) {
+                throw e;
+            }
+            int at = Math.min(Math.max(e.position(), 0), data.length);
+            throw e.within(v.ownElementXerName()).showing(java.util.Arrays.copyOfRange(data, at,
+                    Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
+        }
     }
 
     /**
@@ -85,7 +114,7 @@ public final class XerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> {
+            case MemberRef.Primitive(var p, var owner) -> {
                 w.open(name);
                 if (p instanceof Asn1OctetString o) {
                     XerPrimitive.encodeOctets(o.get(), ins, w);
@@ -193,8 +222,8 @@ public final class XerObject {
 
     private static boolean isValueList(MemberRef el) {
         return el instanceof MemberRef.Enumerated
-                || el instanceof MemberRef.Primitive(Asn1Boolean b)
-                || el instanceof MemberRef.Primitive(Asn1Null n);
+                || el instanceof MemberRef.Primitive(Asn1Boolean b, var owner)
+                || el instanceof MemberRef.Primitive(Asn1Null n, var owner2);
     }
 
     /**
@@ -206,13 +235,13 @@ public final class XerObject {
         boolean setOf = q.naturalTag().number() == UniversalTag.SET;
         for (int i = 0; i < q.size(); i++) {
             MemberRef el = q.get(i);
-            boolean isNull = el instanceof MemberRef.Primitive(Asn1Null n);
+            boolean isNull = el instanceof MemberRef.Primitive(Asn1Null n, var owner);
             if (isNull || setOf) {
                 w.ascii("\n").indent(depth + 2);
             }
             switch (el) {
                 case MemberRef.Enumerated(EnumSlot slot, EnumSpec spec) -> encodeEnumerated(slot, spec, w);
-                case MemberRef.Primitive(Asn1Boolean b) -> w.empty(b.get() ? "true" : "false");
+                case MemberRef.Primitive(Asn1Boolean b, var owner) -> w.empty(b.get() ? "true" : "false");
                 default -> w.empty(q.elemNaturalXerName(i));
             }
         }
@@ -236,9 +265,9 @@ public final class XerObject {
         int at = r.position();
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, at);
-            case MemberRef.Primitive(var p) -> {
+            case MemberRef.Primitive(var p, var owner) -> {
                 boolean empty = r.consumeOpenOrEmptyTag(name);
-                XerReader content = empty ? new XerReader(new byte[0], r.lenient()) : r;
+                XerReader content = empty ? new XerReader(new byte[0], r.lenient()).withOptions(r.options()) : r;
                 if (p instanceof Asn1OctetString o) {
                     o.set(XerPrimitive.decodeOctets(ins, content));
                 } else {
@@ -335,7 +364,7 @@ public final class XerObject {
             MemberRef el = q.addDefault();
             switch (el) {
                 case MemberRef.Enumerated(EnumSlot slot, EnumSpec spec) -> decodeEnumerated(slot, spec, r);
-                case MemberRef.Primitive(Asn1Boolean b) when peek.name().equals("true") || peek.name().equals("false") -> {
+                case MemberRef.Primitive(Asn1Boolean b, var owner) when peek.name().equals("true") || peek.name().equals("false") -> {
                     r.consumeTag();
                     b.set(peek.name().equals("true"));
                 }
@@ -411,7 +440,7 @@ public final class XerObject {
      * decoders: no bytes of its own, the same nesting depth and settings.
      */
     private static BerReader berAnchor(XerReader r) {
-        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        BerReader b = new BerReader(new byte[0]).withOptions(r.options());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
         }

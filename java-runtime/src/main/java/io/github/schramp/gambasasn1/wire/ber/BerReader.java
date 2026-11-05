@@ -1,47 +1,173 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 
 /**
  * BER input: reads one TLV at a time from a {@link ByteSource}. Every
  * malformed input ends in a {@link DecodeException}. The reader also
  * carries the constructed nesting depth of the decode using it
- * ({@link Nesting}) and its contained-value settings.
+ * ({@link Nesting}), its {@link DecodeOptions} and, when the decode
+ * records them, where its bytes sit in the decode's input ({@link Positions}).
  */
 public final class BerReader {
     private final ByteSource src;
     private int depth;
-    private ContainedOptions contained;
+    private DecodeOptions options = DecodeOptions.DEFAULT;
+    private Positions positions;
+    // Absolute bit of local offset 0, for a reader over a copy of input bytes.
+    private long baseBits;
+    // A reader over SET components copied into table order: piece i starts
+    // at local offset pieceLocal[i] and came from absolute bit pieceAbs[i].
+    private int[] pieceLocal;
+    private long[] pieceAbs;
 
     public BerReader(ByteSource src) {
         this.src = src;
     }
 
-    /** A reader over a nested value's bytes, at this reader's depth and with its contained-value settings. */
+    /** A reader over a nested value's bytes, at this reader's depth and with its settings. */
     public BerReader nested(ByteSource contents) {
         BerReader r = new BerReader(contents);
         r.depth = depth;
-        r.contained = contained;
+        r.options = options;
+        r.positions = positions;
+        r.baseBits = baseBits;
+        r.pieceLocal = pieceLocal;
+        r.pieceAbs = pieceAbs;
         return r;
     }
 
     /** Contained-value settings of this decode; null means the defaults. */
     public ContainedOptions contained() {
-        return contained;
+        return options.contained();
     }
 
     /** Sets the contained-value settings; returns this reader. */
-    public BerReader withContained(ContainedOptions options) {
-        contained = options;
+    public BerReader withContained(ContainedOptions c) {
+        options = options.withContained(c);
         return this;
     }
 
-    /** {@link #nested(ByteSource)} over a copy of the given bytes. */
+    /** The decoder settings of this decode. */
+    public DecodeOptions options() {
+        return options;
+    }
+
+    /** Sets the decoder settings, contained-value settings included; null for the defaults. Returns this reader. */
+    public BerReader withOptions(DecodeOptions o) {
+        options = DecodeOptions.orDefault(o);
+        return this;
+    }
+
+    /**
+     * {@link #nested(ByteSource)} over a copy of the given bytes. Their place
+     * in the input is unknown, so the reader records no positions.
+     */
     public BerReader nested(byte[] contents) {
-        return nested(new ByteSource(contents));
+        BerReader r = nested(new ByteSource(contents));
+        r.positions = null;
+        r.pieceLocal = null;
+        r.pieceAbs = null;
+        return r;
+    }
+
+    /** {@link #nested(byte[])} over bytes that start at absolute bit {@code absBit} of the input. */
+    public BerReader nestedAt(byte[] contents, long absBit) {
+        BerReader r = nested(contents);
+        r.positions = positions;
+        r.baseBits = absBit;
+        return r;
+    }
+
+    /**
+     * {@link #nested(byte[])} over pieces of the input copied back to back:
+     * piece i starts at local offset {@code local[i]} and came from absolute
+     * bit {@code abs[i]}.
+     */
+    public BerReader nestedPieces(byte[] contents, int[] local, long[] abs) {
+        BerReader r = nested(contents);
+        r.positions = positions;
+        r.pieceLocal = local;
+        r.pieceAbs = abs;
+        return r;
+    }
+
+    /** The positions this decode records into, or null when it records none. */
+    public Positions positions() {
+        return positions;
+    }
+
+    /** Records positions of the nodes decoded through this reader into {@code p}; returns this reader. */
+    public BerReader withPositions(Positions p) {
+        positions = p;
+        return this;
+    }
+
+    /** Absolute bit, in the decode's input, of local offset {@code local} of this reader's bytes. */
+    public long absoluteBit(int local) {
+        if (pieceLocal == null) {
+            return baseBits + 8L * local;
+        }
+        int i = pieceLocal.length - 1;
+        while (i > 0 && pieceLocal[i] > local) {
+            i--;
+        }
+        return pieceAbs[i] + 8L * (local - pieceLocal[i]);
+    }
+
+    /**
+     * Absolute bit just after the octet before local offset {@code local}:
+     * the end of a value that finishes there. Differs from
+     * {@link #absoluteBit} where a SET's components were reordered, since the
+     * next octet can then come from a different place in the input.
+     */
+    public long absoluteEndBit(int local) {
+        return local == 0 ? absoluteBit(0) : absoluteBit(local - 1) + 8;
+    }
+
+    /** Records that {@code node} starts at the reader's current position, when positions are recorded. */
+    public void markStart(Object node) {
+        if (positions != null) {
+            positions.record(node, absoluteBit(src.position()));
+        }
+    }
+
+    /**
+     * Absolute bits of local octets {@code from} up to {@code to}
+     * (exclusive), as {start, end}.
+     */
+    private long[] span(int from, int to) {
+        long a = absoluteBit(from);
+        return new long[] {a, to == from ? a : absoluteEndBit(to)};
+    }
+
+    /** Records local octets {@code from} up to {@code to} as the contents and the value of {@code node}. */
+    public void markContents(Object node, int from, int to) {
+        if (positions != null) {
+            long[] s = span(from, to);
+            positions.recordContents(node, s[0], s[1]);
+            positions.recordValue(node, s[0], s[1]);
+        }
+    }
+
+    /** Records local octets {@code from} up to {@code to} as the value of {@code node}. */
+    public void markValue(Object node, int from, int to) {
+        if (positions != null) {
+            long[] s = span(from, to);
+            positions.recordValue(node, s[0], s[1]);
+        }
+    }
+
+    /** Records that {@code node} ends at the reader's current position, when positions are recorded. */
+    public void markEnd(Object node) {
+        if (positions != null) {
+            positions.recordEnd(node, absoluteEndBit(src.position()));
+        }
     }
 
     /**

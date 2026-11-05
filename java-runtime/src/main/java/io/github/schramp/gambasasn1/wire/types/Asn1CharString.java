@@ -61,6 +61,64 @@ public abstract sealed class Asn1CharString implements Asn1Primitive
         return get();
     }
 
+    /**
+     * The value's characters as code points, read from the contents octets
+     * in the kind's own form (X.690 §8.23): UTF-8 for UTF8String, 2 octets
+     * per character for BMPString, 4 for UniversalString, one octet
+     * otherwise. A malformed UTF-8 octet counts as one character; trailing
+     * octets of an incomplete wide character are not a character. SIZE and
+     * FROM constraints count these (X.680 §51.5, §51.7).
+     */
+    public int[] codePoints() {
+        return codePoints(octets, universalTagNumber());
+    }
+
+    /** {@link #codePoints()} of {@code octets} stored as the kind with universal tag {@code tag}. */
+    public static int[] codePoints(byte[] octets, int tag) {
+        int n = octets.length;
+        if (tag == 30 || tag == 28) {
+            int w = tag == 30 ? 2 : 4;
+            int[] cps = new int[n / w];
+            for (int c = 0; c < cps.length; c++) {
+                int cp = 0;
+                for (int k = 0; k < w; k++) {
+                    cp = cp << 8 | (octets[c * w + k] & 0xFF);
+                }
+                cps[c] = cp;
+            }
+            return cps;
+        }
+        if (tag != 12) {
+            int[] cps = new int[n];
+            for (int i = 0; i < n; i++) {
+                cps[i] = octets[i] & 0xFF;
+            }
+            return cps;
+        }
+        int[] cps = new int[n];
+        int c = 0;
+        for (int i = 0; i < n;) {
+            int lead = octets[i] & 0xFF;
+            int len = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
+            if (i + len > n) {
+                len = 1;
+            }
+            for (int k = 1; k < len; k++) {
+                if ((octets[i + k] & 0xC0) != 0x80) {
+                    len = 1;
+                    break;
+                }
+            }
+            int cp = len == 1 ? lead : lead & (0x7F >> len);
+            for (int k = 1; k < len; k++) {
+                cp = cp << 6 | (octets[i + k] & 0x3F);
+            }
+            cps[c++] = cp;
+            i += len;
+        }
+        return Arrays.copyOf(cps, c);
+    }
+
     /** BMPString / UniversalString octets (big-endian, {@code width} per character) as UTF-8. */
     public static byte[] wideToUtf8(byte[] octets, int width) {
         StringBuilder s = new StringBuilder();

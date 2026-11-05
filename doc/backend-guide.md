@@ -157,6 +157,15 @@ Generated types implement only the small reflective interface (spec plus indexed
 
 Generate a builtin-typed member as the runtime's wrapper type, such as `Integer` or `Ia5String`, never as a bare host type like a 64-bit integer, a string or a byte array (`715146f`). A bare alias loses the type's identity: an alias of a list of integers can no longer carry its declared XER element name (`4a0f805`). Wrappers can still expose the host value directly.
 
+### Finding nodes in a decoded value
+
+Finding the values of a type below a decoded value is a runtime query, not application code walking the tables. It is the canonical way to find nodes, and it has two parts:
+
+- **The plan,** compiled once per root type and set of target types from the tables. It is the root's member graph (members, alternatives, elements, the inner type of a contained field), with named types shared so recursion closes into a cycle. Members whose subtree cannot hold a target are cut away. Several targets share one plan, so one pass finds them all. Compile the plan with no input data, and cache it. A member's type can be read from a default value of its parent made for that purpose; never read it from the value being searched, because a query must not change it.
+- **The run,** over a decoded value. It visits present members, the selected alternative, each element and the value of a contained field that was decoded. It does not visit absent members, unknown extensions, ANY or contents that were not decoded. It returns hits in depth-first order, each with its source position when the decode recorded positions.
+
+Test the run against a plain walk of the whole value over a real module set: both must return the same nodes (by identity) in the same order. The Java runtime's `query.ExtractPlan` is the reference.
+
 ### Errors, never aborts
 
 Malformed input must give a decode error, never a crash, panic, uncaught exception or assertion (`6fa607f`, `6da3f85`, `48cc667`). This includes:

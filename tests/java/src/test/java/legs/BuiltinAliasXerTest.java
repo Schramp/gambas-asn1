@@ -54,7 +54,7 @@ class BuiltinAliasXerTest {
         XerObject.decode(v, text);
         AsMemberRef expected = fromDer(vec);
         String number = vec.asn1cXer().replaceAll("<[^>]*>", "").strip();
-        if (expected.asMemberRef() instanceof MemberRef.Primitive(Asn1Real r) && !number.isEmpty()
+        if (expected.asMemberRef() instanceof MemberRef.Primitive(Asn1Real r, var owner) && !number.isEmpty()
                 && Double.compare(r.value(), Double.parseDouble(number)) != 0) {
             assertEquals(new MemberRef.Primitive(new Asn1Real(Double.parseDouble(number))), v.asMemberRef());
             return;

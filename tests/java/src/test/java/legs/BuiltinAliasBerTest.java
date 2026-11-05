@@ -176,25 +176,25 @@ class BuiltinAliasBerTest {
         }
         String inner = xer.substring(xer.indexOf('>') + 1, xer.lastIndexOf('<'));
         switch (v.asMemberRef()) {
-            case MemberRef.Primitive(Asn1Boolean b) -> b.set(inner.equals("<true/>"));
-            case MemberRef.Primitive(Asn1Integer i) -> i.set(Long.parseLong(inner));
-            case MemberRef.Primitive(Asn1UInteger u) -> u.set(Long.parseUnsignedLong(inner));
-            case MemberRef.Primitive(Asn1Any any) -> any.set(HexFormat.of().parseHex(inner));
-            case MemberRef.Primitive(Asn1OctetString o) -> o.set(HexFormat.of().parseHex(inner));
+            case MemberRef.Primitive(Asn1Boolean b, var owner) -> b.set(inner.equals("<true/>"));
+            case MemberRef.Primitive(Asn1Integer i, var owner) -> i.set(Long.parseLong(inner));
+            case MemberRef.Primitive(Asn1UInteger u, var owner) -> u.set(Long.parseUnsignedLong(inner));
+            case MemberRef.Primitive(Asn1Any any, var owner) -> any.set(HexFormat.of().parseHex(inner));
+            case MemberRef.Primitive(Asn1OctetString o, var owner) -> o.set(HexFormat.of().parseHex(inner));
             // asn1c writes these kinds' XER as hex digits, like an OCTET STRING.
-            case MemberRef.Primitive(Asn1CharString c) when c instanceof Asn1T61String || c instanceof Asn1VideotexString
+            case MemberRef.Primitive(Asn1CharString c, var owner) when c instanceof Asn1T61String || c instanceof Asn1VideotexString
                     || c instanceof Asn1GraphicString || c instanceof Asn1GeneralString ->
                 c.setOctets(HexFormat.of().parseHex(inner));
-            case MemberRef.Primitive(Asn1CharString c) -> c.set(inner);
-            case MemberRef.Primitive(Asn1Real r) -> r.set(switch (inner) {
+            case MemberRef.Primitive(Asn1CharString c, var owner) -> c.set(inner);
+            case MemberRef.Primitive(Asn1Real r, var owner) -> r.set(switch (inner) {
                 case "<PLUS-INFINITY/>" -> Double.POSITIVE_INFINITY;
                 case "<MINUS-INFINITY/>" -> Double.NEGATIVE_INFINITY;
                 case "<NOT-A-NUMBER/>" -> Double.NaN;
                 default -> Double.parseDouble(inner);
             });
-            case MemberRef.Primitive(Asn1Arcs a) ->
+            case MemberRef.Primitive(Asn1Arcs a, var owner) ->
                 a.set(java.util.Arrays.stream(inner.split("\\.")).mapToLong(Long::parseLong).toArray());
-            case MemberRef.Primitive(Asn1BitString b) -> {
+            case MemberRef.Primitive(Asn1BitString b, var owner) -> {
                 byte[] packed = new byte[(inner.length() + 7) / 8];
                 for (int k = 0; k < inner.length(); k++) {
                     if (inner.charAt(k) == '1') {

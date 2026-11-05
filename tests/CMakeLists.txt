@@ -1895,6 +1895,16 @@ add_test(NAME pdu_filter_absent
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
+# Stale generated files: a module dropped between runs, or a layout switch,
+# leaves no files behind (Generator::remove_stale_files and its manifest).
+add_test(NAME stale_files
+    COMMAND ${CMAKE_COMMAND}
+            -DCOMPILER=$<TARGET_FILE:asn1cpp>
+            -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/asn1/stale
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/stale_files_out
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_stale_files.cmake)
+set_tests_properties(stale_files PROPERTIES TIMEOUT 60)
+
 # ---- JER basic-type unit test (#156) ----------------------------------------
 add_executable(test_jer_basic jer/test_jer_basic.cpp)
 target_link_libraries(test_jer_basic PRIVATE asn1cpp_runtime)
@@ -2066,10 +2076,12 @@ set(java_leg_per_nkm_size_PDUS
     Rec)
 set(java_leg_size_lower_bound_PDUS
     Probe Ub65535 Ub65536 Lb10Ub70k Lb10Max)
+set(java_leg_promoted_name_clash_PDUS
+    Rec Pick RecParties PickList)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent
-        per_nkm_size size_lower_bound)
+        per_nkm_size size_lower_bound promoted_name_clash)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
@@ -2079,7 +2091,8 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
         OUTPUT  ${gen_dir}/.stamp
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
-        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags} ${java_leg_${leg}_FLAGS}
+        # One module per leg schema: its classes go straight into gen.<leg>.
+        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} --flat-package ${pdu_flags} ${java_leg_${leg}_FLAGS}
                 ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 -o ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E touch ${gen_dir}/.stamp
         DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 ${java_leg_${leg}_DEPS}
@@ -2087,9 +2100,25 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
     )
     list(APPEND java_leg_outputs ${gen_dir}/.stamp)
 endforeach()
+# Per-module layout probe: java_modules_test.asn1 holds several modules,
+# generated without --flat-package into gen.modules.<Module>, so javac
+# checks the names that only the package layout keeps apart.
+set(java_modules_gen ${JAVA_LEGS_GEN_DIR}/gen/modules)
+add_custom_command(
+    OUTPUT  ${java_modules_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_modules_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_modules_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.modules
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/java_modules_test.asn1 -o ${java_modules_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_modules_gen}/.stamp
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/java_modules_test.asn1
+    COMMENT "Generating Java from java_modules_test.asn1 (per-module layout)"
+)
+list(APPEND java_leg_outputs ${java_modules_gen}/.stamp)
 # Real-schema build probe: the ETSI LI PS-PDU module set, generated whole
-# (no -pdu filtering beyond the two message roots) into gen.etsi, so the
-# java_legs Gradle run compiles it under -Xlint:all -Werror.
+# (no -pdu filtering beyond the two message roots) into gen.etsi, one
+# sub-package per ASN.1 module, so the java_legs Gradle run compiles it
+# under -Xlint:all -Werror.
 set(JAVA_ETSI_DIR ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU)
 file(GLOB_RECURSE java_etsi_asn1 ${JAVA_ETSI_DIR}/asn1-files/*.asn ${JAVA_ETSI_DIR}/asn1-files/*.asn1)
 list(SORT java_etsi_asn1)
@@ -2933,6 +2962,17 @@ if(WITH_JAVA_RUNTIME_TEST)
         COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder test
                 ASNCPP=$<TARGET_FILE:asn1cpp>)
     set_tests_properties(java_example_nested_decoder PROPERTIES TIMEOUT 600 LABELS "java")
+    # The published-artifact path: java-runtime as a Maven dependency
+    # (gambasasn1-wire, from a private local repository) of a Maven build of
+    # generated code. Needs mvn and, on first run, network for Maven's plugins.
+    find_program(MVN_EXECUTABLE mvn)
+    if(MVN_EXECUTABLE)
+        add_test(NAME java_example_maven
+            COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/contact-book/maven test
+                    ASNCPP=$<TARGET_FILE:asn1cpp> MVN=${MVN_EXECUTABLE})
+        set_tests_properties(java_example_maven PROPERTIES TIMEOUT 600 LABELS "java"
+            RESOURCE_LOCK java_runtime_build)
+    endif()
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------

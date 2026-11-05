@@ -1135,7 +1135,7 @@ rejects a 3-octet value). On a character string, `SIZE` and `FROM` count charact
 (X.680 §51.5, §51.7), not stored bytes: `UTF8String (SIZE(1..4))` accepts "ÄÖÜß" (8 bytes
 of UTF-8), `BMPString (SIZE(1..2))` accepts "AB" (4 bytes), and `BMPString (FROM("A".."Z"))`
 checks each 2-byte character. A `FROM` alphabet covers code points 0..255 only (see
-Known Limitations). Both runtimes and both PER size modes count the same way.
+Known Limitations). The C++, Rust and Java runtimes and both PER size modes count the same way.
 Violations increment a counter and (optionally) record a path:
 
 ```cpp
@@ -1294,13 +1294,14 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 |------|--------|
 | `-h`, `--help` | Print option summary and exit. |
 | `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
-| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`) |
+| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`). Each run lists the files it wrote in `<dir>/.asn1cpp-generated` and removes the generated files of the previous run that it no longer writes, in sub-directories too (a module dropped from the input, a switch to `--flat-package`); files no run generated are left alone. |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
 | `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
-| `--package=<name>` | `--target=java` only: the Java package every generated class declares (e.g. `com.example.asn1`). Default: the unnamed package. Files are written flat into `-o <dir>`; point `-o` at the matching source directory. `-fprefix` is rejected with `--target=java`. |
+| `--package=<name>` | `--target=java` only: the root Java package (e.g. `com.example.asn1`); required unless `--flat-package` is given, where it defaults to the unnamed package. Each ASN.1 module's types go in a sub-package named after the module, transliterated like a type name (`-` becomes `_`) and never recased: `MicroSecondTimeStamp` of module `LI-PS-PDU` is `com.example.asn1.LI_PS_PDU.MicroSecondTimeStamp`, in `-o <dir>/LI_PS_PDU/`. Point `-o` at the source directory of `<name>`. This layout needs `--package`, and its first segment may not be `value`, `index`, `unknown`, `code`, `ext`, `i`, `item`, `o`, `other` or `v`, names generated classes declare themselves. A type name defined in several modules keeps its ASN.1 name in each module's package, and a reference to another module's type uses its fully qualified name, so no imports are needed. `-fprefix` is rejected with `--target=java`. |
+| `--flat-package` | `--target=java` only: put every class directly in `--package`, files flat in `-o <dir>`. A type name defined in more than one module then gets its module's name in front (`EpsHI2OperationsIRI_Parameters`), as in C++ and Rust. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 | `--per-nkm-size=strict\|visible` | PER handling of `SIZE` on UTF8String, TeletexString/T61String, VideotexString, GraphicString, GeneralString and ObjectDescriptor. `strict` (default): not PER-visible (X.691 §10.3.18, §30.6), matching Erlang/OTP, asn1tools and Wireshark. `visible`: encoded as if PER-visible, matching asn1c (not X.691-conformant). Only PER changes. Can be overridden per type or member with the sidecar's `per_nkm_size` entries. See [SIZE on non-known-multiplier strings](#size-on-non-known-multiplier-strings---per-nkm-size). |
@@ -1917,7 +1918,7 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 |------|-----------|
 | **WITH COMPONENTS / PATTERN** | WITH COMPONENTS and PATTERN constraints are not enforced by the validator. Neither is PER-visible, so PER encoding is unaffected. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. A constrained INTEGER must fit int64 (−2^63..2^63−1) or, when its lower bound is non-negative, uint64 (0..2^64−1). Anything else — a bound below −2^63 (e.g. `INTEGER (-2^64..2^64-1)`) or a range mixing negative values with values above 2^63−1 (e.g. `INTEGER (-1..2^64-1)`) — is deliberately not implemented; supporting it would mean promoting such a member to a big-integer type with its own PER path ([Issue #754](https://github.com/Schramp/gambas-asn1/issues/754)). Full 64-bit ranges such as `(0..2^64-1)` and `(-2^63..2^63-1)` are encoded as 64-bit constrained whole numbers in PER. |
-| **FROM alphabet: one-byte characters only** | The generated `FROM` alphabet table has 256 entries indexed by code point, so it covers only U+0000..U+00FF, and code generation only reads one-character literals (`"A"`) and one-character ranges (`"A".."Z"`). A character above U+00FF in a UTF8String, BMPString or UniversalString value never satisfies a `FROM`, so `validate()` and PER encode reject it in both runtimes; the PER encoder has always behaved this way. Code generation also drops some `FROM` entries without a warning: a non-ASCII literal such as `"Ä"` (more than one byte of UTF-8) is left out of the alphabet, so values containing it are rejected; a multi-character string such as `FROM ("ABC")`, or Quadruple / Tuple endpoints (X.680 §41.8) such as `FROM ({0,0,3,145}..{0,0,3,169})`, leave the type with no `FROM` constraint at all, so every character is accepted and PER does not use the alphabet ([Issue #1132](https://github.com/Schramp/gambas-asn1/issues/1132)). |
+| **FROM alphabet: one-byte characters only** | The generated `FROM` alphabet table has 256 entries indexed by code point, so it covers only U+0000..U+00FF, and code generation only reads one-character literals (`"A"`) and one-character ranges (`"A".."Z"`). A character above U+00FF in a UTF8String, BMPString or UniversalString value never satisfies a `FROM`, so `validate()` (Java: constraint checks) and PER encode reject it in the C++, Rust and Java runtimes; the PER encoder has always behaved this way. Code generation also drops some `FROM` entries without a warning: a non-ASCII literal such as `"Ä"` (more than one byte of UTF-8) is left out of the alphabet, so values containing it are rejected; a multi-character string such as `FROM ("ABC")`, or Quadruple / Tuple endpoints (X.680 §41.8) such as `FROM ({0,0,3,145}..{0,0,3,169})`, leave the type with no `FROM` constraint at all, so every character is accepted and PER does not use the alphabet ([Issue #1132](https://github.com/Schramp/gambas-asn1/issues/1132)). |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
@@ -2044,7 +2045,11 @@ the test dependencies.
 The Java backend (`--target=java`) keeps ASN.1 names as the other backends
 do (hyphen to underscore, no recasing). A name that is a Java keyword,
 literal (`true`, `false`, `null`) or contextual keyword (`record`, `var`,
-`yield`, ...) gets a trailing underscore: `class` becomes `class_`.
+`yield`, ...) gets a trailing underscore: `class` becomes `class_`. So does a
+name equal to the first segment of a package that generated code names in
+full: `io` and `java` always, and in the per-module layout the root of
+`--package` (with `--package=gen.etsi`, a member `gen` becomes `gen_`). A
+field or type of that name would otherwise hide the package (JLS §6.4.2).
 
 A builtin type assignment (`Flag ::= BOOLEAN`) becomes a class holding the
 runtime's builtin wrapper in its `value` field; `BerObject.encode`/`decode`
@@ -2162,8 +2167,10 @@ byte. Decode fills `value()` and `status()` (`DECODED`, `SKIPPED` when a
 reason in `error()`; `on_error: fail` makes it a decode error instead). `set(v)`
 or a change through `edit()` makes encode write the inner value's encoding.
 The contained members are decoded after the others, so a `when` condition sees
-the sibling member it names. Contained settings for one call go in
-`BerObject.decode(v, der, new ContainedOptions(registry, off))`; a
+the sibling member it names. Contained settings for one call go in the decoder
+settings,
+`BerObject.decode(v, der, DecodeOptions.DEFAULT.withContained(new ContainedOptions(registry, off)))`
+(the same for PER, XER and JER); a
 `ContainedDecoders` registry adds custom decoders by name beside the built-in
 `plain`, `zero_padding`, `pkcs7` and `none`. An OPTIONAL contained member is
 made with its row: `new Containing<>(Inner::new, Outer.SPEC.members().get(i).contained())`.
@@ -2178,8 +2185,13 @@ yet. A collection member's SIZE is its collection type's `CONSTRAINTS`.
 A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
 `spec`). `items()` is the element list, which can be changed in place, and
 `add(v)` appends an element. A named SEQUENCE OF / SET OF type is a class that
-extends one of these. An inline collection member uses them directly; a
-nested one is a collection of collections. Decoding replaces the elements a
+extends one of these. An inline collection member or alternative
+(`parties [9] SET SIZE(1..10) OF Party` in `Rec`) has a class generated for
+it too, named after its type and member (`RecParties extends SetOf<Party>`),
+and the field has that class as its type, so `Extract.all(v, RecParties.class)`
+finds it; to set the member, pass a `new RecParties()`. A nested inline
+collection's elements have generated classes of their own as well
+(`HolderNested extends SeqOf<HolderNestedAnon>`). Decoding replaces the elements a
 collection held. A SET OF keeps the order its elements were added or decoded
 in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
 
@@ -2197,8 +2209,9 @@ the ASN.1 name and shares B's tables, as the C++ alias does. Generated
 classes are therefore not `final`.
 
 The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
--Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
-table diff covers it.
+-Werror`); `java_legs` compiles it under `--package=gen.etsi`, one package per
+module (`gen.etsi.LI_PS_PDU.PS_PDU`), and the cpp/java table diff covers it
+(under `--flat-package`, so its class names line up with the C++ ones).
 
 **Java examples.** Two examples build with plain `javac` (no Gradle) against
 the `java-runtime` sources and the compiler in the tree:
@@ -2224,6 +2237,265 @@ expected output of the C++ example (`nested-decoder/pdu-00000001.expected`
 and `.inline.expected` for the nested decoder); ctest runs both as
 `java_example_contact_book` and `java_example_nested_decoder` when a JDK is
 found.
+
+**Source positions.** `BerObject.decodeWithPositions` and
+`PerObject.decodeWithPositions` decode like `decode` and also return where
+each decoded node starts in the input, as a `Decoded(bytesConsumed,
+positions)`:
+
+```java
+Decoded d = BerObject.decodeWithPositions(pdu, bytes, null);   // null: default DecodeOptions
+long at = d.positions().byteOffset(pdu.payload());             // -1 when not decoded
+```
+
+A node is any value object of the decoded tree (a SEQUENCE, CHOICE, SEQUENCE
+OF element or primitive), looked up by identity. Offsets are in bits from the
+start of the input (`bitOffset`; `byteOffset` divides by 8): for BER the first
+tag octet of the node's TLV (the outer tag of an EXPLICIT member), for
+unaligned PER the node's first bit. SET components keep their wire positions
+after the reorder into table order, and an extension addition or CHOICE
+extension decoded from its open type keeps its place in the outer input. A
+contained value (`Containing`) is placed at the field's contents octets,
+and the inner value's own nodes from there on. A builtin alias class
+(`LIID ::= OCTET STRING`) and the builtin in its `value` field are the same
+node: `p.bitOffset(liid)` and `p.bitOffset(liid.value)` agree.
+
+Each node also has an end: `endBitOffset` is the bit just after its encoding
+(`endByteOffset` rounds up), and `sizeBits` is the length of its whole
+encoding, header included, and for an indefinite length the end-of-contents
+octets too. A BER primitive value and a contained field also have a contents
+span, their contents octets alone (X.690 §8.1.1; inside an EXPLICIT tag the
+inner TLV's): `contentsBitOffset`, `contentsEndBitOffset`, `contentsSizeBits`.
+Under PER only a contained field has one, its octets after the length
+determinant. This gives the byte range of, say, a captured packet:
+
+```java
+Positions p = d.positions().withBase(8L * recordStart);
+long from = p.contentsBitOffset(packet) / 8;    // packet: an OCTET STRING node
+long to = p.contentsEndBitOffset(packet) / 8;   // exclusive
+```
+
+The inner value of a contained field ends where its own encoding ends, so
+padding stripped by the contained-value decoder lies between its end and the
+field's contents end.
+
+The value span (`valueBitOffset`, `valueEndBitOffset`, `valueSizeBits`) is
+where the decoded value itself lies, without any encoding rule to apply:
+
+| Node | Value span |
+|---|---|
+| BER primitive, ENUMERATED, contained field | its contents octets |
+| BER BIT STRING | its contents without the unused-bits octet and the unused bits (`valueSizeBits` = `bitCount()`) |
+| BER SEQUENCE, SET, SEQUENCE OF, SET OF | its contents octets, without end-of-contents octets |
+| CHOICE | its chosen alternative's value span |
+| PER OCTET STRING, BIT STRING, contained field | the octets or bits after the length determinant, unless the length is 16K or more (fragmented, X.691 §11.9.3.8) |
+
+Every other node reports -1.
+`decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
+it after that record; its offsets are from the record's own first octet, and
+`positions().withBase(bits)` shifts them to a file offset. A plain `decode`
+records nothing and costs one null check per node.
+
+**Decoder settings.** A `DecodeOptions` record holds the settings of a
+decoder. You make it once and pass it to any number of decodes:
+`BerObject.decode(v, data, opts)`, `BerObject.decodeWithPositions(v, data, opts)`,
+`new BerReader(data).withOptions(opts)` for records read back to back, the
+same `PerObject` calls, and `XerObject.decode(v, data, opts)` and
+`JerObject.decode(v, data, opts)`. Nested and contained decodes take the
+settings of the decode around them.
+
+```java
+DecodeOptions opts = DecodeOptions.DEFAULT
+        .withConstraintChecks(true)     // reject values outside their constraints
+        .withRichErrors(true)           // path and input octets in DecodeException
+        .withRelaxed(true)              // tolerate off-standard input with a clear meaning
+        .withTrace(System.err::println) // one line per member decoded
+        .withContained(containedOptions);
+```
+
+- **Constraint checks** (off by default): a decoded value that breaks its
+  type's constraints is a `DecodeException` ("constraint violated: INTEGER
+  300 outside 0..255"). The constraints checked are INTEGER and REAL value
+  ranges, SIZE of strings, BIT STRINGs and SEQUENCE OFs, and a string's
+  permitted alphabet. The rules are the C++ runtime's `validate()`: a
+  constraint with an extension marker admits every value, and a string's SIZE
+  and permitted alphabet count characters, not contents octets (a 4-character
+  `UTF8String` "ÄÖÜß" fits `SIZE(1..4)`; see Constraint Validation). With checks off, the default, a decode takes
+  any value the encoding can carry, which is what you want for hostile or
+  sloppy input. PER's own range and SIZE limits on the encoding apply either way.
+- **Rich errors** (off by default): a `DecodeException` also names the path
+  of the value that failed and shows up to 8 input octets from where decoding
+  stopped. `e.path()` gives the path, for example `Limits.byte` or
+  `PS_PDU.payload.iRIPayloadSequence[2].timeStamp`, and `e.reason()` gives the
+  bare reason. A PER error's offset is in the outer input, also inside an
+  open type. Under XER and JER the path names the root type only, except for
+  a constraint violation, which carries its full path.
+- **Relaxed** (off by default) accepts input that a strict decoder rejects
+  but whose meaning is clear:
+  - BER: TLVs after the last member of a SEQUENCE without an extension
+    marker are skipped, as for an extensible one.
+  - BER: octets after the value inside an EXPLICIT or CHOICE tag are
+    ignored.
+  - BER: a BOOLEAN with more than one contents octet is TRUE when any of
+    them is non-zero.
+  - BER: a NULL with contents is accepted.
+  - BER: a BIT STRING with unused bits but no octets is empty.
+  - PER and JER: data after the value is ignored.
+  - XER: asn1c's text forms are accepted, the same as `decodeLenient`.
+- **Trace** (null by default) receives one line per member, alternative
+  and element as it is decoded, with its offset, path segment and type, for
+  example `BER byte 4 .num INTEGER` or `PER bit 16 .flag BOOLEAN` (BER and
+  PER).
+- **Constraint checks** under XER and JER run over the decoded value once
+  the document is read, and the error offset is the end of the document.
+
+**Printing values.** `ValuePrinter.print(v)` (package `print`) renders any
+generated value as text in the layout of ASN.1 value notation. It is for
+people to read, and is never parsed back. Every generated SEQUENCE, SET,
+CHOICE, ENUMERATED and named SEQUENCE OF class returns this text from
+`toString()`, so a failed `assertEquals` shows both values:
+
+```
+{
+  color blue,
+  pick s : "z",
+  -- opick absent
+  points {
+    /* [0] */ {
+      x 1,
+      y 2
+    }
+  },
+  data '0A0B'H,
+  payload CONTAINING {
+    id 5
+  }
+}
+```
+
+- SEQUENCE and SET members are listed by name, one per line. An absent
+  OPTIONAL member is a `-- name absent` line.
+- A CHOICE is shown as `alternative : value`.
+- SEQUENCE OF elements are numbered in `/* [i] */` comments.
+- An ENUMERATED value is shown as its identifier, and an OBJECT IDENTIFIER
+  as `{ arcs }`.
+- REAL is shown as XER writes it.
+- Strings and times are shown in quotes, with quote characters doubled and
+  control characters shown as `.`.
+- OCTET STRING and ANY are shown as `'..'H`. When all octets are printable,
+  a comment shows them as text.
+- A BIT STRING is shown as `'..'B` up to 64 bits, and as hex beyond that.
+- A contained value that was decoded is shown as `CONTAINING value`.
+  Otherwise its octets are shown, with its status and the reason.
+
+`new ValuePrinter(maxOctets, maxChars).format(v)` changes the limits after
+which octet and character strings are cut off; the defaults are 32 and 128.
+A cut-off value ends in a comment that gives its full size.
+
+**Reading time values.** `Asn1UtcTime` and `Asn1GeneralizedTime` keep the
+time text exactly as it was received. Their `parse()` method reads that text
+into a `TimeParse`, which is one of two results:
+
+- `TimeParse.Time` holds the fields (year to second, `nanos`,
+  `millisecond()`), the precision and the number of fraction digits. Its
+  zone is `LOCAL` (no indicator), `UTC` (`Z`) or `OFFSET` (`±hh[mm]`, with
+  `offsetMinutes`). It also has `localDateTime()`, and for UTC and offset
+  times `offsetDateTime()` and `instant()`.
+- `TimeParse.Malformed` gives the reason and the character index. A
+  malformed text is never read as zero.
+
+```java
+switch (t.parse()) {
+    case TimeParse.Time time -> time.instant().ifPresent(this::use);
+    case TimeParse.Malformed bad -> log(bad.reason() + " at " + bad.index());
+}
+```
+
+UTCTime (X.680 §47) is `YYMMDDhhmm[ss]`, then `Z` or `±hhmm`. Its two-digit
+year is read in the window 1950..2049, as X.509 does. X.680 itself gives no
+century, so the result has `twoDigitYear()` set.
+
+GeneralizedTime (X.680 §46) is `YYYYMMDDhh[mm[ss]]`, then an optional
+fraction of the last component after `.` or `,`, then nothing, `Z` or
+`±hh[mm]`. A fraction of an hour or a minute is spread over the lower
+fields, so `2024011514,25` reads as 14:15:00. Hour 24 and a time difference
+beyond 18 hours are malformed. Second 60 (a leap second) is accepted for
+GeneralizedTime only.
+
+**Finding values by type.** `Extract.all(root, T.class)` (package `query`)
+returns every value of type `T` below a decoded `root`, and `root` itself when
+it is one, in depth-first order. Pass the `Decoded` of a positions decode as
+well, and you get `Hit(value, bitOffset)` pairs:
+
+```java
+List<Timestamp> ts = Extract.all(pdu, Timestamp.class);
+List<Extraction.Hit<EncryptedPayload>> eps = Extract.all(pdu, decoded, EncryptedPayload.class);
+```
+
+Several targets are found in one pass by a compiled plan:
+
+```java
+ExtractPlan plan = ExtractPlan.of(PS_PDU::new, List.of(Timestamp.class, IRIContents.class));
+Extraction x = plan.run(pdu, decoded.positions());   // positions may be null
+x.values(Timestamp.class);  x.get(IRIContents.class);
+```
+
+A plan is built from the tables, not from data. It is compiled once per root
+type and target set, and cached, so `ExtractPlan.of` returns the same plan
+again. Members that cannot hold a target are left out of it, and
+`plan.toString()` prints what remains. A plan runs over a value of its root
+type or of any named type below it.
+
+A value matches when it is an instance of the target class, so an alias type
+(`A ::= B`, generated as `class A extends B`) also matches `B`. Builtin
+targets such as `Asn1Integer` match every value of that builtin. A builtin
+alias class (`LIID ::= OCTET STRING`, a class with a `value` field) matches
+as itself, the hit being the `LIID` object, and its `value` matches the
+builtin target.
+
+Every occurrence is a hit: each SEQUENCE OF element, each present OPTIONAL or
+extension member, and the selected CHOICE alternative. Absent members are not
+hits and not errors. The search does not look into unknown extensions, ANY,
+or a `Containing` field whose contents were not decoded. A decoded contained
+value is searched.
+
+**As a Maven dependency.** The runtime is the artifact
+`io.github.schramp.gambasasn1:gambasasn1-wire`, with sources and javadoc jars:
+
+```xml
+<dependency>
+  <groupId>io.github.schramp.gambasasn1</groupId>
+  <artifactId>gambasasn1-wire</artifactId>
+  <version>X.Y.Z</version>
+</dependency>
+```
+
+The generated sources compile against it with nothing else on the class
+path. `examples/contact-book/maven/` shows the setup: `make test` publishes
+`java-runtime` into a private local repository, generates the contact-book
+types, compiles them with Maven and checks the output. ctest runs it as
+`java_example_maven` when `mvn` is found. For a published version, run
+`make test GAMBASASN1_VERSION=X.Y.Z SKIP_PUBLISH=1`, which resolves the
+runtime from Maven Central.
+
+`./java-runtime/gradlew -p java-runtime publishToMavenLocal` installs a
+snapshot (`0.1.0-SNAPSHOT`, or `-Pversion=...`) into `~/.m2`.
+
+Releases go through the `java-release` workflow
+(`.github/workflows/java-release.yml`):
+
+1. Push a tag `java-runtime-vX.Y.Z`, or start the workflow by hand with a
+   version. The version must be plain `X.Y.Z` (digits and dots); anything
+   else, a `-SNAPSHOT` suffix included, stops the workflow.
+2. The workflow runs the runtime tests and builds a signed bundle.
+3. It uploads the bundle to the Central Portal as a user-managed
+   deployment.
+4. You publish the deployment from the Portal's Deployments page.
+
+The workflow needs the repository secrets `CENTRAL_TOKEN_USERNAME` and
+`CENTRAL_TOKEN_PASSWORD` (a Central Portal user token for the
+`io.github.schramp` namespace), and `SIGNING_KEY` and `SIGNING_PASSWORD` (an
+ASCII-armoured PGP key whose public half is on a key server).
 
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
@@ -2289,8 +2561,8 @@ value without the comment gets its bytes by encoding it with the field's
 decoder, and the contained members are then decoded as after a BER decode. The
 form can be set for one call: `XerObject.encode(v, new ContainedOptions(null,
 false, ContainedText.INLINE_RAW, null))` writes every contained field that
-way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
-takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+way, in place of each row's `xer` form, and `XerObject.decode(v, xer,
+DecodeOptions.DEFAULT.withContained(opts))` takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
 (`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER,
 JER and unaligned PER output for each DER value after the DER column. The Java
 XER legs compare the XER byte for byte, the Java JER legs the JER as JSON values
@@ -2333,8 +2605,9 @@ open bounds, base-10-only) like the C++ and Rust tables.
 A contained field (X.682 §11) is in its row's `jer` form, in the C++ runtime's
 layout: its bytes as a hex string, `{"containing":<inner value>}` (X.697
 §25.4), or that object with `"raw":"<hex>"` after it. `JerObject.encode(v,
-opts)` and `JerObject.decode(v, jer, opts)` take a `ContainedOptions` whose
-`jer` form replaces every row's. The decoder takes every form; `raw`, when
+opts)` takes a `ContainedOptions`, and `JerObject.decode(v, jer,
+DecodeOptions.DEFAULT.withContained(opts))` takes it inside the decoder
+settings; its `jer` form replaces every row's. The decoder takes every form; `raw`, when
 given, is kept as the field's bytes, otherwise the inner value is encoded to
 get them.
 
@@ -2407,8 +2680,9 @@ follow the outer rules (X.682 §11.4): contents read from BER are written as
 PER when the outer value is written as PER, and back; a `--container-config`
 field keeps its configured rules. The inner value is decoded after the
 enclosing value, through the same decoder registry as BER, and
-`PerObject.encode(v, opts)` / `PerObject.decode(v, data, opts)` take a
-`ContainedOptions`. asn1c, which has no contents constraints, writes a
+`PerObject.encode(v, opts)` takes a `ContainedOptions`, and
+`PerObject.decode(v, data, DecodeOptions.DEFAULT.withContained(opts))` takes it
+inside the decoder settings. asn1c, which has no contents constraints, writes a
 field's bytes as they are.
 
 ```java

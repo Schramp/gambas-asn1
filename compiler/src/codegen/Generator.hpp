@@ -243,42 +243,52 @@ public:
     }
 
     /// @brief Delete generated files left over from a previous run that no
-    ///        longer correspond to any type this run produced — e.g. a
-    ///        SEQUENCE that became a plain alias (drops its `.cpp` file),
-    ///        or the backend's declaration/definition extensions changing
-    ///        (e.g. switching backends between a two-file and single-file
-    ///        layout).
-    /// @note Only considers files directly in out_dir_ whose extension
-    ///       matches backend_.declaration_extension()/definition_extension()
-    ///       — never touches unrelated files (e.g. a hand-maintained
-    ///       sources.mk) or subdirectories.
-    void remove_stale_files() const {
-        std::set<std::string> exts{"." + backend_.declaration_extension(),
-                                    "." + backend_.definition_extension()};
-        if (!fs::exists(out_dir_)) return;
-        for (const auto& entry : fs::directory_iterator(out_dir_)) {
-            if (!entry.is_regular_file()) continue;
-            if (!exts.count(entry.path().extension().string())) continue;
-            if (known_files_.count(entry.path())) continue;
-            fs::remove(entry.path());
-        }
-    }
+    ///        longer correspond to any type this run produced: a SEQUENCE
+    ///        that became a plain alias (drops its `.cpp` file), a backend
+    ///        switching between a two-file and a single-file layout, or a
+    ///        module whose types are no longer generated (its whole
+    ///        sub-directory, under a backend whose `output_stem` places
+    ///        types below out_dir_).
+    /// @note Two sources of candidates, both limited to the backend's
+    ///       declaration/definition extensions: files directly in out_dir_
+    ///       or in a directory this run wrote into, and every file the
+    ///       previous run listed in out_dir_'s generated-files manifest.
+    ///       Directories left empty below out_dir_ are removed. Files no
+    ///       run of this generator wrote elsewhere (a hand-maintained
+    ///       sources.mk, a user's own sub-directory) are never touched.
+    void remove_stale_files() const;
 
-    // Returns the generated name to use for a type (via backend_.type_name),
-    // prefixing with module when colliding. Backend-agnostic — "cpp" in the
-    // old name was misleading, this drives both CppBackend and RustBackend.
+    /// @brief The generated name of a type assignment, used for it
+    ///        throughout code generation: the backend's module-scoped name
+    ///        when it gives each module a namespace, otherwise the type name
+    ///        with its module's name in front when the type name occurs in
+    ///        more than one module.
+    /// @param asn_name The type's ASN.1 name (X.680 §12.2 typereference).
+    /// @param mod_name The defining module (X.680 §12.5 modulereference).
+    /// @return The name every backend emits for the type.
     std::string effective_type_name(const std::string& asn_name,
                                     const std::string& mod_name) const {
         auto cname = backend_.type_name(asn_name);
+        if (auto scoped = backend_.module_scoped_type_name(mod_name, cname); !scoped.empty())
+            return scoped;
         if (!collision_types_.count(cname))
             return cname;
         return backend_.type_name(mod_name) + cname;
     }
 
-    // Returns the generated name for a TypeRef encountered in `from_module`.
+    /// @brief The generated name of the type a reference in `from_module`
+    ///        names, resolved through that module's imports (X.680 §13.16).
+    /// @param type_name   The referenced ASN.1 type name.
+    /// @param from_module The module the reference appears in.
+    /// @return As `effective_type_name` for the defining module; the bare
+    ///         name when the reference resolves to no module (a promoted type).
     std::string resolved_name_for_ref(const std::string& type_name,
                                       const std::string& from_module) const {
         auto cname = backend_.type_name(type_name);
+        if (!backend_.module_scoped_type_name(from_module, cname).empty()) {
+            std::string def_mod = resolver_.module_of(type_name, from_module);
+            return def_mod.empty() ? cname : backend_.module_scoped_type_name(def_mod, cname);
+        }
         if (!collision_types_.count(cname))
             return cname;
         std::string def_mod = resolver_.module_of(type_name, from_module);
@@ -286,11 +296,18 @@ public:
         return backend_.type_name(def_mod) + cname;
     }
 
-    // Returns the generated name for a fully qualified TypeRef.
-    // When module_name is set and the type is a collision type, uses module_name
-    // directly instead of resolving through from_module imports.
+    /// @brief The generated name of a type reference, which may name its
+    ///        module (X.680 §14.6 ExternalTypeReference): that module is
+    ///        used directly instead of resolving through the current
+    ///        module's imports.
+    /// @param tr The reference.
+    /// @return As `resolved_name_for_ref`.
     std::string resolved_name_for_typeref(const ast::TypeRef& tr) const {
         auto cname = backend_.type_name(tr.type_name);
+        if (!tr.module_name.empty()) {
+            if (auto scoped = backend_.module_scoped_type_name(tr.module_name, cname); !scoped.empty())
+                return scoped;
+        }
         if (!tr.module_name.empty() && collision_types_.count(cname))
             return backend_.type_name(tr.module_name) + cname;
         return resolved_name_for_ref(tr.type_name, current_module_);

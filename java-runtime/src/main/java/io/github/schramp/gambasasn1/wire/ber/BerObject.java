@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
@@ -11,15 +12,20 @@ import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
+import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
+import io.github.schramp.gambasasn1.wire.spec.Decoded;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import java.util.ArrayList;
@@ -57,17 +63,111 @@ public final class BerObject {
         decode(v, new BerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
-        decode(v, new BerReader(data).withContained(opts));
+    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        decode(v, new BerReader(data).withOptions(opts));
     }
 
     /**
-     * Decodes one value from {@code r} into {@code v}; the reader is left
-     * after it, so records can be read back to back.
+     * Decodes one value from {@code r} into {@code v}, under the reader's
+     * {@link DecodeOptions}; the reader is left after it, so records can
+     * be read back to back.
      */
     public static void decode(AsMemberRef v, BerReader r) {
-        decodeMemberRef(v.asMemberRef(), v.berFraming(), r);
+        DecodeOptions o = r.options();
+        MemberRef m = v.asMemberRef();
+        if (o.plain()) {
+            decodeMemberRef(m, v.berFraming(), r);
+            return;
+        }
+        trace(o, r, typeName(m), m);
+        try {
+            decodeChecked(m, v.berFraming(), v instanceof Asn1Pdu p ? p.pduConstraints() : Constraints.UNCONSTRAINED,
+                    o.checkConstraints(), r);
+        } catch (DecodeException e) {
+            if (!o.richErrors()) {
+                throw e;
+            }
+            throw e.within(typeName(m)).showing(r.source().octetsAt(e.position(), DecodeException.CONTEXT_OCTETS));
+        }
+    }
+
+    /** The ASN.1 name of {@code m}'s type, for an error path. */
+    private static String typeName(MemberRef m) {
+        return switch (m) {
+            case MemberRef.Composite(var s) -> s.spec().name();
+            case MemberRef.Choice(var c) -> c.spec().name();
+            case MemberRef.Primitive(var p, var owner) -> p.xerElementName();
+            case MemberRef.SeqOf(var q) -> q.ownXerName();
+            case MemberRef.Enumerated(var e, var spec) -> spec.name();
+            default -> m.getClass().getSimpleName();
+        };
+    }
+
+    /**
+     * {@link #decodeMemberRef}, then, when {@code check} is set, a check of
+     * the value against {@code c}; a violation is a {@link DecodeException}
+     * at the value's first octet.
+     */
+    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) {
+        int start = r.position();
+        decodeMemberRef(m, framing, r);
+        if (check) {
+            String why = ConstraintCheck.violation(m, c);
+            if (why != null) {
+                throw new DecodeException("constraint violated: " + why, start);
+            }
+        }
+    }
+
+    /**
+     * A member, alternative or element decoded under settings other than
+     * the defaults: checked against {@code c} when constraints are
+     * checked, and with {@code segment} added to the path of an error when
+     * errors are rich.
+     */
+    private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String segment, BerReader r) {
+        DecodeOptions o = r.options();
+        trace(o, r, segment, m);
+        try {
+            decodeChecked(m, framing, c, o.checkConstraints(), r);
+        } catch (DecodeException e) {
+            throw o.richErrors() ? e.within(segment) : e;
+        }
+    }
+
+    /** A trace line for {@code m}, about to be decoded as {@code segment}, when tracing is on. */
+    private static void trace(DecodeOptions o, BerReader r, String segment, MemberRef m) {
+        if (o.trace() != null) {
+            o.trace().accept("BER byte " + r.absoluteBit(r.position()) / 8 + " " + segment + " " + typeName(m));
+        }
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
+     * where every decoded node starts. {@code opts} may be null.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
+        return decodeWithPositions(v, new BerReader(data).withOptions(opts));
+    }
+
+    /**
+     * {@link #decode(AsMemberRef, BerReader)} that also records where every
+     * decoded node starts, in bits from the reader's position at the call;
+     * records read back to back each get their own positions. The reader is
+     * left after the value.
+     */
+    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) {
+        Positions p = Positions.recording();
+        Positions before = r.positions();
+        int start = r.position();
+        r.withPositions(p);
+        try {
+            decode(v, r);
+        } finally {
+            r.withPositions(before);
+        }
+        return new Decoded(r.position() - start, p.withBase(-r.absoluteBit(start)));
     }
 
     /** Encodes one member, alternative or element under its row's framing (X.690 §8.14). */
@@ -85,7 +185,7 @@ public final class BerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> BerPrimitive.encode(p, framing, out);
+            case MemberRef.Primitive(var p, var owner) -> BerPrimitive.encode(p, framing, out);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
                 byte[] content = BerPrimitive.encodeInteger(slot.enumGet());
                 switch (framing.resolve()) {
@@ -135,15 +235,23 @@ public final class BerObject {
      * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
      */
     public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
+        Object node = r.positions() == null ? null : Positions.nodeOf(m);
+        if (node != null) {
+            r.markStart(node);
+            r.positions().recordOwner(Positions.ownerOf(m), node);
+        }
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeMemberRefLevel(m, framing, r);
-            return;
+        } else {
+            r.enterLevel();
+            try {
+                decodeMemberRefLevel(m, framing, r);
+            } finally {
+                r.leaveLevel();
+            }
         }
-        r.enterLevel();
-        try {
-            decodeMemberRefLevel(m, framing, r);
-        } finally {
-            r.leaveLevel();
+        if (node != null) {
+            r.markEnd(node);
         }
     }
 
@@ -153,7 +261,7 @@ public final class BerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
-            case MemberRef.Primitive(var p) -> BerPrimitive.decode(p, framing, r);
+            case MemberRef.Primitive(var p, var owner) -> BerPrimitive.decode(p, framing, r);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
                 switch (framing.resolve()) {
                     case BerTagging.Implicit(Tag tag) -> decodeEnumerated(slot, tag, r);
@@ -215,6 +323,10 @@ public final class BerObject {
                 Asn1OctetString raw = new Asn1OctetString();
                 BerPrimitive.decode(raw, framing, r);
                 f.setRawFromWire(raw.get(), ContainedEncoding.BER);
+                if (r.positions() != null) {
+                    // A primitive TLV ends with its contents (X.690 §8.1.1).
+                    r.markContents(f, r.position() - raw.get().length, r.position());
+                }
             }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());
         }
@@ -230,10 +342,12 @@ public final class BerObject {
         if (!tlv.tag().equals(tag)) {
             throw new DecodeException("expected tag " + tag + ", got " + tlv.tag(), start);
         }
+        int len = tlv.value().remaining();
         long v = BerPrimitive.decodeInteger(tlv.value(), start);
         if (!slot.enumSet(v)) {
             throw new DecodeException("invalid ENUMERATED value: " + v, start);
         }
+        r.markContents(slot, r.position() - len, r.position());
     }
 
     /** A SEQUENCE value under its type's own tag (X.690 §8.9). */
@@ -273,11 +387,13 @@ public final class BerObject {
      * an extension marker they are an error.
      */
     private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
+        r.markValue(s, r.position(), r.position() + r.source().remaining());
         SequenceSpec spec = s.spec();
         if (spec.isSet()) {
             r = setInTableOrder(s, r);
         }
         List<MemberMeta> rows = spec.members();
+        boolean plain = r.options().plain();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
             if (row.optional()) {
@@ -289,12 +405,16 @@ public final class BerObject {
             } else if (r.atEnd()) {
                 throw new DecodeException("SEQUENCE " + spec.name() + ": mandatory member '" + row.name() + "' missing", r.position());
             }
-            decodeMemberRef(s.presentMember(i), row.ber(), r);
+            if (plain) {
+                decodeMemberRef(s.presentMember(i), row.ber(), r);
+            } else {
+                decodePart(s.presentMember(i), row.ber(), row.constraints(), "." + row.name(), r);
+            }
         }
         if (!spec.containedMembers().isEmpty()) {
             ContainedValues.decodeMembers(s, ContainedEncoding.BER, r);
         }
-        if (spec.extAt() >= 0) {
+        if (spec.extAt() >= 0 || r.options().relaxed()) {
             while (!r.atEnd()) {
                 r.readTlv();
             }
@@ -313,30 +433,50 @@ public final class BerObject {
     private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
         List<MemberMeta> rows = s.spec().members();
         byte[][] slot = new byte[rows.size()][];
+        long[] slotAt = new long[rows.size()];
         List<byte[]> unmatched = new ArrayList<>();
+        List<Long> unmatchedAt = new ArrayList<>();
         ByteSource src = r.source();
         while (!r.atEnd()) {
             int start = src.position();
             Tag t = r.readTlv().tag();
             byte[] raw = src.bytesSince(start);
+            long at = r.absoluteBit(start);
             int i = 0;
             while (i < rows.size() && (slot[i] != null || !setMemberMatches(s, i, t))) {
                 i++;
             }
             if (i < rows.size()) {
                 slot[i] = raw;
+                slotAt[i] = at;
             } else {
                 unmatched.add(raw);
+                unmatchedAt.add(at);
             }
         }
         ByteSink out = new ByteSink();
-        for (byte[] raw : slot) {
-            if (raw != null) {
-                out.write(raw);
+        List<Integer> local = new ArrayList<>();
+        List<Long> abs = new ArrayList<>();
+        int len = 0;
+        for (int i = 0; i < slot.length; i++) {
+            if (slot[i] != null) {
+                local.add(len);
+                abs.add(slotAt[i]);
+                len += slot[i].length;
+                out.write(slot[i]);
             }
         }
-        unmatched.forEach(out::write);
-        return r.nested(out.toByteArray());
+        for (int i = 0; i < unmatched.size(); i++) {
+            local.add(len);
+            abs.add(unmatchedAt.get(i));
+            len += unmatched.get(i).length;
+            out.write(unmatched.get(i));
+        }
+        if (r.positions() == null || local.isEmpty()) {
+            return r.nested(out.toByteArray());
+        }
+        return r.nestedPieces(out.toByteArray(), local.stream().mapToInt(Integer::intValue).toArray(),
+                abs.stream().mapToLong(Long::longValue).toArray());
     }
 
     /**
@@ -383,10 +523,17 @@ public final class BerObject {
      * element is appended and decoded per TLV until the contents end.
      */
     private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+        r.markValue(q, r.position(), r.position() + r.source().remaining());
         BerTagging framing = q.elemBerFraming();
         q.clear();
-        while (!r.atEnd()) {
-            decodeMemberRef(q.addDefault(), framing, r);
+        if (r.options().plain()) {
+            while (!r.atEnd()) {
+                decodeMemberRef(q.addDefault(), framing, r);
+            }
+            return;
+        }
+        for (int i = 0; !r.atEnd(); i++) {
+            decodePart(q.addDefault(), framing, Constraints.UNCONSTRAINED, "[" + i + "]", r);
         }
     }
 
@@ -448,12 +595,18 @@ public final class BerObject {
         int alt = dispatch(spec.berTags(), tag);
         if (alt >= 0) {
             AltMeta row = spec.alternatives().get(alt);
-            decodeMemberRef(c.select(alt), row.ber(), r);
+            if (r.options().plain()) {
+                decodeMemberRef(c.select(alt), row.ber(), r);
+            } else {
+                decodePart(c.select(alt), row.ber(), row.constraints(), "." + row.name(), r);
+            }
             if (spec.hasContained()) {
                 ContainedValues.decodeAlternative(c, ContainedEncoding.BER, r);
             }
             return;
         }
+        // Only an extensible CHOICE takes an unknown alternative (X.680 §52.1),
+        // relaxed or not: a non-extensible one has nowhere to keep it.
         if (spec.extAt() < 0) {
             throw new DecodeException("CHOICE " + spec.name() + ": no alternative has tag " + tag, start);
         }
@@ -492,7 +645,7 @@ public final class BerObject {
 
     /** A tag's contents hold exactly one encoding (X.690 §8.14.2). */
     private static void expectEnd(BerReader inner, Tag tag) {
-        if (!inner.atEnd()) {
+        if (!inner.atEnd() && !inner.options().relaxed()) {
             throw new DecodeException("trailing octets inside tag " + tag, inner.position());
         }
     }

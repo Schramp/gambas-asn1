@@ -648,6 +648,23 @@ int main() {
         check("Java escape: Rust/C++-only keywords left alone ('match', 'type', 'struct')",
               j.escape("match") == "match" && j.escape("type") == "type" && j.escape("struct") == "struct",
               j.escape("match") + " " + j.escape("type") + " " + j.escape("struct"));
+        check("Java escape: 'io' and 'java' head every runtime / library name, so they are escaped",
+              j.member_name("io") == "io_" && j.member_name("java") == "java_" && j.type_name("io") == "io_",
+              j.member_name("io") + " " + j.member_name("java"));
+        {
+            JavaBackend per_module("gen.modules", /*by_module=*/true);
+            JavaBackend flat("gen.modules", /*by_module=*/false);
+            check("Java per-module layout escapes names equal to the root package segment",
+                  per_module.member_name("gen") == "gen_" && per_module.type_name("gen") == "gen_" &&
+                  flat.member_name("gen") == "gen",
+                  per_module.member_name("gen") + " " + flat.member_name("gen"));
+            check("Java per-module layout needs a root package that generated code does not shadow",
+                  JavaBackend::module_layout_problem("gen.etsi").empty() &&
+                  !JavaBackend::module_layout_problem("").empty() &&
+                  !JavaBackend::module_layout_problem("value.x").empty() &&
+                  !JavaBackend::module_layout_problem("v").empty(),
+                  JavaBackend::module_layout_problem(""));
+        }
         check("Java member_name escapes against extra names",
               j.member_name("encode", {"encode"}) == "encode_", j.member_name("encode", {"encode"}));
         check("Java synthetic_name matches C++",

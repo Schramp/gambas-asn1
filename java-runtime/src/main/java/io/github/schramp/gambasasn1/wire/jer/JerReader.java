@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.jer;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
@@ -15,7 +16,7 @@ public final class JerReader {
     private final byte[] buf;
     private int pos;
     private int depth;
-    private ContainedOptions contained;
+    private DecodeOptions options = DecodeOptions.DEFAULT;
 
     public JerReader(byte[] buf) {
         this.buf = buf;
@@ -23,12 +24,23 @@ public final class JerReader {
 
     /** Contained-value settings of this decode; null for the defaults. */
     public ContainedOptions contained() {
-        return contained;
+        return options.contained();
     }
 
     /** Sets the contained-value settings of this decode. */
-    public JerReader withContained(ContainedOptions options) {
-        contained = options;
+    public JerReader withContained(ContainedOptions c) {
+        options = options.withContained(c);
+        return this;
+    }
+
+    /** The decoder settings of this decode. */
+    public DecodeOptions options() {
+        return options;
+    }
+
+    /** Sets the decoder settings, contained-value settings included; null for the defaults. */
+    public JerReader withOptions(DecodeOptions o) {
+        options = DecodeOptions.orDefault(o);
         return this;
     }
 

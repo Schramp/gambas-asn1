@@ -90,9 +90,9 @@ public final class ContainedValues {
     private static Long siblingValue(MemberRef m) {
         return switch (m) {
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> slot.enumGet();
-            case MemberRef.Primitive(Asn1Integer v) -> v.get();
-            case MemberRef.Primitive(Asn1UInteger v) -> v.get();
-            case MemberRef.Primitive(Asn1Boolean v) -> v.get() ? 1L : 0L;
+            case MemberRef.Primitive(Asn1Integer v, var owner) -> v.get();
+            case MemberRef.Primitive(Asn1UInteger v, var owner) -> v.get();
+            case MemberRef.Primitive(Asn1Boolean v, var owner) -> v.get() ? 1L : 0L;
             default -> null;
         };
     }
@@ -117,6 +117,10 @@ public final class ContainedValues {
                 r = ContainedResult.failed("unknown contained decoder '" + spec.decoder() + "'");
             } else {
                 inner = field.newInner();
+                if (parent.positions() != null && parent.positions().contentsBit(field) >= 0) {
+                    // The inner value is placed at the field's contents octets.
+                    parent.positions().recordPlacement(inner, parent.positions().contentsBit(field));
+                }
                 r = e.decode().decode(new ContainedDecodeArgs(field.rawOctets(), spec, inner, outer,
                         resolve(spec.encoding(), outerEncoding), reg, parent));
             }

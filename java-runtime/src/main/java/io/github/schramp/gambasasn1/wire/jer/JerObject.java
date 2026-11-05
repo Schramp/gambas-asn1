@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.jer;
 
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
@@ -12,6 +13,7 @@ import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
+import io.github.schramp.gambasasn1.wire.spec.ConstraintCheck;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
@@ -61,20 +63,43 @@ public final class JerObject {
 
     /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
-        decode(v, data, c, null);
+        decode(v, data, c, DecodeOptions.DEFAULT);
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings
+     * {@code opts} ({@link DecodeOptions#DEFAULT} for the defaults; a null
+     * also means the defaults, cast to {@code DecodeOptions}): constraint checks run over the
+     * decoded value, relaxed lets other text follow the value, and rich
+     * errors name the failing value's type and show the input there.
+     */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
         decode(v, data, rootConstraints(v), opts);
     }
 
-    /** {@link #decode(AsMemberRef, byte[], Constraints)} with contained-value settings; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c, ContainedOptions opts) {
-        JerReader r = new JerReader(data).withContained(opts);
-        decodeValue(v.asMemberRef(), c, r);
-        if (!r.atEnd()) {
-            throw new DecodeException("JER: trailing data after the value", r.position());
+    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
+        JerReader r = new JerReader(data).withOptions(opts);
+        DecodeOptions o = r.options();
+        try {
+            decodeValue(v.asMemberRef(), c, r);
+            if (!r.atEnd() && !o.relaxed()) {
+                throw new DecodeException("JER: trailing data after the value", r.position());
+            }
+            if (o.checkConstraints()) {
+                ConstraintCheck.Violation bad = ConstraintCheck.firstViolation(v.asMemberRef(), c, "");
+                if (bad != null) {
+                    DecodeException e = new DecodeException("constraint violated: " + bad.reason(), r.position());
+                    throw o.richErrors() ? e.within(v.ownElementXerName() + bad.path()) : e;
+                }
+            }
+        } catch (DecodeException e) {
+            if (!o.richErrors() || !e.path().isEmpty()) {
+                throw e;
+            }
+            int at = Math.min(Math.max(e.position(), 0), data.length);
+            throw e.within(v.ownElementXerName()).showing(java.util.Arrays.copyOfRange(data, at,
+                    Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
         }
     }
 
@@ -93,7 +118,7 @@ public final class JerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
-            case MemberRef.Primitive(var p) -> JerPrimitive.encode(p, c, w);
+            case MemberRef.Primitive(var p, var owner) -> JerPrimitive.encode(p, c, w);
             case MemberRef.Enumerated(var slot, var spec) -> JerPrimitive.encodeEnumerated(slot, spec, w);
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
@@ -124,7 +149,7 @@ public final class JerObject {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
-            case MemberRef.Primitive(var p) -> JerPrimitive.decode(p, c, r);
+            case MemberRef.Primitive(var p, var owner) -> JerPrimitive.decode(p, c, r);
             case MemberRef.Enumerated(var slot, var spec) -> JerPrimitive.decodeEnumerated(slot, spec, r);
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
@@ -210,7 +235,7 @@ public final class JerObject {
 
     /** Whether {@code m}'s own JER value can be {@code null}: NULL (X.697 §26) or an open type. */
     private static boolean mayBeNull(MemberRef m) {
-        return m instanceof MemberRef.Primitive(var p) && (p instanceof Asn1Null || p instanceof Asn1Any);
+        return m instanceof MemberRef.Primitive(var p, var owner) && (p instanceof Asn1Null || p instanceof Asn1Any);
     }
 
     private static int indexOf(List<MemberMeta> members, String key) {
@@ -369,7 +394,7 @@ public final class JerObject {
      * decoders: no bytes of its own, the same nesting depth and settings.
      */
     private static BerReader berAnchor(JerReader r) {
-        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        BerReader b = new BerReader(new byte[0]).withOptions(r.options());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
         }

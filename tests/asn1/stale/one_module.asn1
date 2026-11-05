@@ -1,0 +1,4 @@
+-- Second run of the stale_files test: ModB and ModA's Lim are gone.
+ModA DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    AType ::= BOOLEAN
+END
