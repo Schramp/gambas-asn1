@@ -12,6 +12,15 @@
 /// schema's depth, well below what an 8 MiB stack survives.
 pub const MAX_DECODE_DEPTH: u32 = 256;
 
+/// Item count above which a PER SEQUENCE OF/SET OF may not hold an element
+/// encoded in zero bits (NULL, X.691 §18; an INTEGER or ENUMERATED with a
+/// single value, §11.1.3). Such elements cost no input, so a few octets of
+/// length determinant (X.691 §11.9.3.8) would otherwise allocate millions
+/// of them. asn1c applies the same rule with 200 (`constr_SET_OF_uper.c`).
+/// Change it here and rebuild. The C++ runtime uses the same limit
+/// (`kMaxZeroWidthItems`, `ASN1CPP_MAX_ZERO_WIDTH_ITEMS`).
+pub const MAX_ZERO_WIDTH_ITEMS: usize = 200;
+
 /// Constructed levels the decode holding this reader has descended.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Depth(u32);

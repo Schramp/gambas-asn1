@@ -1178,6 +1178,12 @@ Causes of a per-record error:
   `nesting::MAX_DECODE_DEPTH`). Levels are counted, not recursion
   cycles. The count lives in the decoder's own reader, so concurrent
   decodes never share it.
+- **A PER list of more than 200 items encoded in zero bits** — NULL or
+  single-value elements cost no input, so the PER decoders refuse such a
+  list with `more than 200 items encoded in zero bits` rather than
+  allocate what a few octets of length can claim (C++
+  `kMaxZeroWidthItems`, Rust `nesting::MAX_ZERO_WIDTH_ITEMS`; see
+  [Known Limitations](#15-known-limitations)).
 - **A schema construct the Rust runtime does not support** — e.g. an
   untagged `ANY` between other members, which has no tag to detect it by.
   Code generation still emits the type; any encode or decode that reaches
@@ -1919,6 +1925,7 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 | **WITH COMPONENTS / PATTERN** | WITH COMPONENTS and PATTERN constraints are not enforced by the validator. Neither is PER-visible, so PER encoding is unaffected. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. A constrained INTEGER must fit int64 (−2^63..2^63−1) or, when its lower bound is non-negative, uint64 (0..2^64−1). Anything else — a bound below −2^63 (e.g. `INTEGER (-2^64..2^64-1)`) or a range mixing negative values with values above 2^63−1 (e.g. `INTEGER (-1..2^64-1)`) — is deliberately not implemented; supporting it would mean promoting such a member to a big-integer type with its own PER path ([Issue #754](https://github.com/Schramp/gambas-asn1/issues/754)). Full 64-bit ranges such as `(0..2^64-1)` and `(-2^63..2^63-1)` are encoded as 64-bit constrained whole numbers in PER. |
 | **FROM alphabet: one-byte characters only** | The generated `FROM` alphabet table has 256 entries indexed by code point, so it covers only U+0000..U+00FF, and code generation only reads one-character literals (`"A"`) and one-character ranges (`"A".."Z"`). A character above U+00FF in a UTF8String, BMPString or UniversalString value never satisfies a `FROM`, so `validate()` (Java: constraint checks) and PER encode reject it in the C++, Rust and Java runtimes; the PER encoder has always behaved this way. Code generation also drops some `FROM` entries without a warning: a non-ASCII literal such as `"Ä"` (more than one byte of UTF-8) is left out of the alphabet, so values containing it are rejected; a multi-character string such as `FROM ("ABC")`, or Quadruple / Tuple endpoints (X.680 §41.8) such as `FROM ({0,0,3,145}..{0,0,3,169})`, leave the type with no `FROM` constraint at all, so every character is accepted and PER does not use the alphabet ([Issue #1132](https://github.com/Schramp/gambas-asn1/issues/1132)). |
+| **PER: at most 200 zero-width list items** | A PER SEQUENCE OF/SET OF whose length counts more than 200 items fails to decode with `more than 200 items encoded in zero bits` as soon as one of its elements takes no input: a NULL (X.691 §18), or an INTEGER or ENUMERATED with a single value (§11.1.3). Such elements cost no octets, so without the limit a few octets of length determinant (64K items per fragment, §11.9.3.8) would make the decoder allocate millions of elements. The encoding is valid ASN.1, so a real list of 201 NULLs is refused too. Lists of elements that take input, and any number of short lists, are not limited. asn1c applies the same limit (`constr_SET_OF_uper.c`), more broadly: it also refuses more than 200 SEQUENCE, CHOICE or SET OF elements, whose decoders report no input used. The limit is a build-time constant: C++ `asn1::kMaxZeroWidthItems` (`codec/DecodeDepth.hpp`), set with `-DASN1CPP_MAX_ZERO_WIDTH_ITEMS=N` when building the runtime; Rust `asn1cpp_wire::nesting::MAX_ZERO_WIDTH_ITEMS`; Java `Nesting.MAX_ZERO_WIDTH_ITEMS` (package `io`). In Rust and Java, edit the constant and rebuild the runtime. |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
@@ -2153,7 +2160,9 @@ marker, such TLVs are an error. A recursive type (X.680 §3.6.55) needs nothing
 special: a member is a reference, and a recursion ends at an OPTIONAL member,
 a CHOICE or a SEQUENCE OF. Decoding counts each SEQUENCE/SET, CHOICE and
 SEQUENCE OF/SET OF level and fails past 256 levels (`Nesting.MAX_DECODE_DEPTH`
-in the runtime package `io`), the limit the C++ and Rust runtimes use. The
+in the runtime package `io`), the limit the C++ and Rust runtimes use. PER
+decoding refuses a list of more than 200 items once an element is encoded
+in zero bits (`Nesting.MAX_ZERO_WIDTH_ITEMS`; see Known Limitations). The
 compiler rejects a SEQUENCE or SET with a DEFAULT value other than a BOOLEAN,
 INTEGER (up to 64 bits), character string, ENUMERATED or REAL one with
 `emit_sequence: ... not implemented for this backend`.

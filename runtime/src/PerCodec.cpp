@@ -1053,6 +1053,16 @@ public:
         std::stable_sort(elems.begin(), elems.end(), padded_less);
         return elems;
     }
+    /// @brief Decodes a SEQUENCE OF/SET OF: its SIZE length, fragmented
+    ///        from 16K items on, then each element. A list counting more
+    ///        than \c kMaxZeroWidthItems items fails when its first element
+    ///        is encoded in zero bits (checked once per length fragment).
+    /// @param codec  The codec decoding the elements.
+    /// @param stream The stream at the length determinant.
+    /// @param def    The SEQUENCE OF/SET OF type.
+    /// @param dest   The \c SeqOfBase to fill.
+    /// @return An error for a malformed or bomb-sized list.
+    /// @see X.691 §20.6 (length), §11.9.3.8 (fragments).
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         if (debug_flags() & DBG_PER)
@@ -1065,9 +1075,17 @@ public:
         const auto& edef = *spec.element;
         IDecodeStream& ds = stream;
         auto count_r = decode_ext_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
+            if (m == 0) return decode_ok();
             std::size_t start = seq.count();
             seq.resize(start + m);
-            for (std::size_t i = start; i < start + m; ++i) {
+            // Only a type with a single value encodes in zero bits, so the
+            // first element tells for all of them.
+            int before = PerCodec::stream_bit_pos(stream);
+            if (auto r = codec.decode(ds, edef, seq.get_mut(start)); !r) return r;
+            if (m > kMaxZeroWidthItems && PerCodec::stream_bit_pos(stream) == before)
+                return decode_err(DecodeError(std::string(def.name) + ": more than "
+                    + std::to_string(kMaxZeroWidthItems) + " items encoded in zero bits"));
+            for (std::size_t i = start + 1; i < start + m; ++i) {
                 auto r = codec.decode(ds, edef, seq.get_mut(i));
                 if (!r) return r;
             }

@@ -500,11 +500,34 @@ fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, opts: Option<&cr
     Ok(parts)
 }
 
+/// @brief Decodes a SEQUENCE OF/SET OF: its SIZE length, fragmented from
+///        16K items on, then each element. A list counting more than
+///        [`MAX_ZERO_WIDTH_ITEMS`](crate::nesting::MAX_ZERO_WIDTH_ITEMS)
+///        items fails when its first element is encoded in zero bits
+///        (checked once per length fragment).
+/// @param obj  The collection the elements are appended to.
+/// @param pc   The list's constraints, its element constraints included.
+/// @param r    The reader at the length determinant.
+/// @return `Err` for a malformed or bomb-sized list.
+/// @see X.691 §20.6 (length), §11.9.3.8 (fragments).
 pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     decode_ext_size_and_items(r, pc, |r, m| {
+        if m == 0 {
+            return Ok(());
+        }
         obj.reserve(m);
-        for _ in 0..m {
+        // Only a type with a single value encodes in zero bits, so the first
+        // element tells for all of them.
+        let before = r.bit_pos();
+        decode_bare(obj.push_default_mut(), elem, r)?;
+        if m > crate::nesting::MAX_ZERO_WIDTH_ITEMS && r.bit_pos() == before {
+            return Err(DecodeError::new(
+                format!("PER: more than {} items encoded in zero bits", crate::nesting::MAX_ZERO_WIDTH_ITEMS),
+                before,
+            ));
+        }
+        for _ in 1..m {
             decode_bare(obj.push_default_mut(), elem, r)?;
         }
         Ok(())
