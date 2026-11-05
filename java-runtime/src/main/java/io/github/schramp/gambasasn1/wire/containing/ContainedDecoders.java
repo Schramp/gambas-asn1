@@ -86,14 +86,23 @@ public final class ContainedDecoders {
      * Decodes {@code bytes} under the args' encoding into {@code args.inner()},
      * for decoders that transformed the raw bytes first.
      *
+     * <p>Under a positions decode the inner value's nodes are recorded at the
+     * field's contents octets only when {@code bytes} is a prefix of
+     * {@code args.raw()} (padding stripped, as {@code zero_padding} and
+     * {@code pkcs7} do): then they are the bytes on the wire. Bytes a
+     * decoder changed, say decrypted or decompressed, have no place in the
+     * input, and their nodes are not recorded.
+     *
+     * @param bytes    the inner value's encoding
      * @param consumed receives the octets the value used in element 0; when
      *                 null, the value must use all of {@code bytes}
+     * @return the outcome to store in the field
      */
     public static ContainedResult decodeValueFrom(ContainedDecodeArgs args, byte[] bytes, int[] consumed) {
+        long at = placement(args, bytes);
         int used;
         switch (args.encoding()) {
             case BER, CER, DER -> {
-                long at = args.parent().positions() == null ? -1 : args.parent().positions().placementBit(args.inner());
                 BerReader r = at >= 0 ? args.parent().nestedAt(bytes, at) : args.parent().nested(bytes);
                 try {
                     BerObject.decode(args.inner(), r);
@@ -104,7 +113,6 @@ public final class ContainedDecoders {
             }
             case PER_UNALIGNED -> {
                 PerReader r = new PerReader(bytes).withOptions(args.parent().options());
-                long at = args.parent().positions() == null ? -1 : args.parent().positions().placementBit(args.inner());
                 if (at >= 0) {
                     r.withPositions(args.parent().positions(), at);
                 }
@@ -127,6 +135,23 @@ public final class ContainedDecoders {
             return ContainedResult.failed((bytes.length - used) + " octets after the contained value");
         }
         return ContainedResult.ok();
+    }
+
+    /**
+     * Absolute bit where the inner value of {@code args} lies in the input
+     * when it is decoded from {@code bytes}, or -1 when it is not recorded:
+     * no positions decode, or {@code bytes} not a prefix of the raw contents.
+     */
+    private static long placement(ContainedDecodeArgs args, byte[] bytes) {
+        if (args.parent().positions() == null) {
+            return -1;
+        }
+        byte[] raw = args.raw();
+        if (bytes != raw && (bytes.length > raw.length
+                || !Arrays.equals(bytes, 0, bytes.length, raw, 0, bytes.length))) {
+            return -1;
+        }
+        return args.parent().positions().placementBit(args.inner());
     }
 
     /** {@code plain}: the raw bytes are exactly one value. */

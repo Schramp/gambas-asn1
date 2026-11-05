@@ -14,7 +14,10 @@ import gen.seqof_ber.Point;
 import gen.seqof_ber.Points;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
+import io.github.schramp.gambasasn1.wire.containing.ContainedDecoders;
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.spec.Decoded;
 import io.github.schramp.gambasasn1.wire.spec.Positions;
 import java.util.HexFormat;
@@ -108,6 +111,42 @@ class PositionsTest {
             byte[] bytes = c.bytes();
             assertArrayEquals(bytes, java.util.Arrays.copyOfRange(der, (int) at, (int) at + bytes.length));
         }
+    }
+
+    private static byte[] xor(byte[] b) {
+        byte[] out = b.clone();
+        for (int i = 0; i < out.length; i++) {
+            out[i] ^= 0x5A;
+        }
+        return out;
+    }
+
+    @Test
+    void berContainedValueDecodedFromTransformedBytesIsNotPlaced() {
+        Holder src = new Holder();
+        BerObject.decode(src, row("containing_test.vectors", "Holder", "<plain/>").der());
+        for (var c : java.util.List.of(src.viaConstraint(), src.viaAlias(), src.viaSized())) {
+            c.setBytes(xor(c.bytes()));
+        }
+        byte[] der = BerObject.encode(src);
+
+        // A "plain" that deciphers first: the bytes it decodes are not on the wire.
+        ContainedDecoders reg = new ContainedDecoders();
+        reg.add("plain", a -> ContainedDecoders.decodeValueFrom(a, xor(a.raw()), null), null);
+        Holder v = new Holder();
+        Positions p = BerObject.decodeWithPositions(v, der,
+                new DecodeOptions(new ContainedOptions(reg, false, null, null), false, false, false, null)).positions();
+
+        Inner inner = v.viaConstraint().value();
+        assertEquals(5, inner.id().get());
+        assertEquals(7 * 8, p.contentsBit(v.viaConstraint()));
+        assertTrue(!p.contains(inner));
+        assertTrue(!p.contains(inner.id()));
+        assertEquals(-1, p.bitOffset(v.viaSized().value()));
+        // zero_padding decodes a prefix of the raw contents, which is on the wire.
+        long at = p.byteOffset(v.viaConfig().value());
+        byte[] bytes = v.viaConfig().bytes();
+        assertArrayEquals(bytes, java.util.Arrays.copyOfRange(der, (int) at, (int) at + bytes.length));
     }
 
     @Test
