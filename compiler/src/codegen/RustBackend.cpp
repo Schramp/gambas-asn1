@@ -1037,23 +1037,16 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // module, so the collection's constraint can point at it (X.691
     // §19/§20 — each element is encoded against `element`, the count
     // against this table's own SIZE fields).
+    // Two shapes: an ad hoc same-module table (MemberOwnTable, named by
+    // `member_descriptor_base_name`'s SCREAMING_SNAKE_CASE convention), or
+    // another top-level type's own `{name}_CONSTRAINTS` static
+    // (FreeStanding — e.g. a SEQUENCE OF element promoted out to its own
+    // type), whose real (unscreamed) name must not be recased.
     std::string element_expr = "None";
-    if (!spec.elem_ref.empty()) {
-        // Two distinct shapes, per `format_type_descriptor_ref`'s own doc:
-        // a bare base name (MemberOwnTable — an ad hoc same-module table,
-        // built via `member_descriptor_base_name`'s SCREAMING_SNAKE_CASE
-        // convention) or a `crate::{name}::{name}` path to another
-        // top-level type's own `{name}_CONSTRAINTS` static (FreeStanding —
-        // e.g. a SEQUENCE OF element promoted out to its own type),
-        // which already carries its real (unscreamed)
-        // name and must not be recased.
-        if (spec.elem_ref.find("::") != std::string::npos) {
-            element_expr = std::format("Some(&{}_CONSTRAINTS)", spec.elem_ref);
-        } else {
-            element_expr = std::format("Some(&{}_CONSTRAINTS)",
-                to_screaming_snake_case(spec.elem_ref));
-        }
-    }
+    if (spec.elem_tdref.kind == TypeDescriptorRefKind::MemberOwnTable)
+        element_expr = std::format("Some(&{}_CONSTRAINTS)", to_screaming_snake_case(spec.elem_tdref.name));
+    else if (spec.elem_tdref.kind == TypeDescriptorRefKind::FreeStanding)
+        element_expr = std::format("Some(&{}_CONSTRAINTS)", format_type_descriptor_ref(spec.elem_tdref));
     os << "#[allow(non_upper_case_globals)]\n";
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"

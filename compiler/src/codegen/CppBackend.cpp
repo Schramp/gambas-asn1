@@ -829,7 +829,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
 /// @see X.680 §25/§26, §51.5; X.691 §19/§20.
 void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
-    os << std::format("    {},\n", spec.elem_ref);
+    os << std::format("    {},\n", format_type_descriptor_ref(spec.elem_tdref));
     // A SEQUENCE OF/SET OF's own SIZE(...,...) extension marker (X.680
     // §51.8.3) must reach this Constraints table, or SeqOfSpec::validate
     // (TypeDescriptor.hpp) enforces the bound as if non-extensible.

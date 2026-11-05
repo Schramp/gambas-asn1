@@ -933,9 +933,8 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
     // Each element is encoded under its own constraints (X.691 §20.3): an
     // inline element constraint's table, or the referenced type's own.
     std::string element;
-    if (!spec.elem_ref.empty())
-        element = spec.elem_ref + ".CONSTRAINTS";
-    else if (spec.elem_tdref.kind == TypeDescriptorRefKind::FreeStanding)
+    if (spec.elem_tdref.kind == TypeDescriptorRefKind::MemberOwnTable ||
+        spec.elem_tdref.kind == TypeDescriptorRefKind::FreeStanding)
         element = spec.elem_tdref.name + ".CONSTRAINTS";
     if (!element.empty())
         constraints = std::format("{0}.spec.Constraints.withElement({1}, {2})", kWire, constraints, element);
