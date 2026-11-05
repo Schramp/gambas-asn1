@@ -2076,10 +2076,12 @@ set(java_leg_per_nkm_size_PDUS
     Rec)
 set(java_leg_size_lower_bound_PDUS
     Probe Ub65535 Ub65536 Lb10Ub70k Lb10Max)
+set(java_leg_promoted_name_clash_PDUS
+    Rec Pick RecParties PickList)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent
-        per_nkm_size size_lower_bound)
+        per_nkm_size size_lower_bound promoted_name_clash)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})

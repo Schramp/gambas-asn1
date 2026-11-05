@@ -462,7 +462,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     // An inline collection alternative has the class generated for its
     // collection type, as a SEQUENCE member has.
     auto alt_type = [&](const ChoiceAlternativeSpec& a) {
-        return a.seq_of_kind != SeqOfKind::None ? escape(synthetic_name(spec.type_name, a.asn1_name)) : a.mtype;
+        return a.seq_of_kind != SeqOfKind::None ? escape(a.tdref.name) : a.mtype;
     };
     auto alt_factory = [&](const ChoiceAlternativeSpec& a) {
         if (a.contained)
@@ -658,7 +658,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         names.push_back(accessor(m));
         // An inline SEQUENCE OF / SET OF member has the class generated for
         // its collection type, so finding values by class sees that type.
-        std::string coll = m.seq_of_kind != SeqOfKind::None ? escape(synthetic_name(spec.type_name, m.asn1_name)) : "";
+        std::string coll = m.seq_of_kind != SeqOfKind::None ? escape(m.tdref.name) : "";
         types.push_back(!coll.empty() ? coll : m.mtype);
         news.push_back(!coll.empty() ? std::format("new {}()", coll)
                             : m.contained ? std::format("new {}({}::new, {}.CONTAINED)", m.mtype, m.contained_inner, m.contained_base)
