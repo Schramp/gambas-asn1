@@ -42,6 +42,9 @@ static const struct option long_opts[] = {
 #ifndef ASN1CPP_STDLIB_DIR
 #define ASN1CPP_STDLIB_DIR ""
 #endif
+#ifndef ASN1CPP_INSTALLED_STDLIB_REL
+#define ASN1CPP_INSTALLED_STDLIB_REL "../share/asn1cpp/predefined"
+#endif
 
 // X.681 Annex A/B (TYPE-IDENTIFIER, ABSTRACT-SYNTAX) and X.208 §34
 // (EXTERNAL) are implicitly available in every module without an
@@ -51,6 +54,23 @@ static const struct option long_opts[] = {
 // asn1c is this project's ground-truth reference compiler) through the
 // same grammar as any user file, before the user's own modules.
 static const char* kStdlibModuleFile = "ASN1C-UsefulInformationObjectClasses.asn1";
+
+/// @brief Directory of the predefined-classes module when --stdlib-dir is
+///        not given. An installed compiler (`cmake --install`) reads the
+///        copy installed next to it, ASN1CPP_INSTALLED_STDLIB_REL relative
+///        to its own directory, so an install tree can be moved; a
+///        compiler run from its build tree has none there and reads the
+///        source tree's copy, ASN1CPP_STDLIB_DIR.
+/// @return The directory to look for kStdlibModuleFile in.
+static std::string default_stdlib_dir() {
+    std::error_code ec;
+    fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        fs::path installed = exe.parent_path() / ASN1CPP_INSTALLED_STDLIB_REL;
+        if (fs::exists(installed / kStdlibModuleFile, ec)) return installed.lexically_normal().string();
+    }
+    return ASN1CPP_STDLIB_DIR;
+}
 
 static void print_help(const char* prog) {
     std::cout <<
@@ -109,7 +129,7 @@ static void print_help(const char* prog) {
         "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
         "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
         "                              EXTERNAL, auto-included in every module).\n"
-        "                              Default: " ASN1CPP_STDLIB_DIR "\n";
+        "                              Default: " << default_stdlib_dir() << "\n";
 }
 
 static void usage(const char* prog) {
@@ -166,7 +186,7 @@ int main(int argc, char** argv) {
     std::string target = "cpp";
     std::string java_package;
     bool java_flat = false;
-    std::string stdlib_dir = ASN1CPP_STDLIB_DIR;
+    std::string stdlib_dir = default_stdlib_dir();
     std::vector<std::string> input_files;
     std::string container_config;
     bool list_contained = false;

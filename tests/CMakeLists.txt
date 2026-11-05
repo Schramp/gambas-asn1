@@ -445,6 +445,13 @@ target_include_directories(test_size_lower_bound PRIVATE ${SIZE_LB_GEN_DIR})
 target_link_libraries(test_size_lower_bound PRIVATE asn1cpp_runtime)
 add_test(NAME size_lower_bound COMMAND test_size_lower_bound)
 
+# ---- cmake --install: the layout INSTALL.md documents, used from a moved
+# prefix by a C++ program built from generated code.
+add_test(NAME install_smoke
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/install/install_smoke.sh
+            ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(install_smoke PROPERTIES TIMEOUT 300)
+
 # ---- PER SEQUENCE OF items encoded in zero bits (X.691 §18, §11.9.3.8):
 # kMaxZeroWidthItems; Rust leg: rust/zero_width_items, Java: ZeroWidthItemsTest
 set(ZW_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_zero_width_items_test)

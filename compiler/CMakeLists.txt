@@ -69,3 +69,13 @@ target_compile_options(asn1cpp PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # via --stdlib-dir.
 target_compile_definitions(asn1cpp PRIVATE
     ASN1CPP_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/predefined")
+
+# ---- install: the compiler, and the predefined-classes module where an
+# installed compiler looks for it (relative to its own directory).
+set(_asn1cpp_stdlib_dest ${CMAKE_INSTALL_DATADIR}/asn1cpp/predefined)
+file(RELATIVE_PATH _asn1cpp_stdlib_rel ${CMAKE_INSTALL_FULL_BINDIR}
+     ${CMAKE_INSTALL_PREFIX}/${_asn1cpp_stdlib_dest})
+target_compile_definitions(asn1cpp PRIVATE
+    ASN1CPP_INSTALLED_STDLIB_REL="${_asn1cpp_stdlib_rel}")
+install(TARGETS asn1cpp RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY predefined/ DESTINATION ${_asn1cpp_stdlib_dest})
