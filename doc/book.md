@@ -1135,7 +1135,7 @@ rejects a 3-octet value). On a character string, `SIZE` and `FROM` count charact
 (X.680 §51.5, §51.7), not stored bytes: `UTF8String (SIZE(1..4))` accepts "ÄÖÜß" (8 bytes
 of UTF-8), `BMPString (SIZE(1..2))` accepts "AB" (4 bytes), and `BMPString (FROM("A".."Z"))`
 checks each 2-byte character. A `FROM` alphabet covers code points 0..255 only (see
-Known Limitations). Both runtimes and both PER size modes count the same way.
+Known Limitations). The C++, Rust and Java runtimes and both PER size modes count the same way.
 Violations increment a counter and (optionally) record a path:
 
 ```cpp
@@ -1918,7 +1918,7 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 |------|-----------|
 | **WITH COMPONENTS / PATTERN** | WITH COMPONENTS and PATTERN constraints are not enforced by the validator. Neither is PER-visible, so PER encoding is unaffected. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. A constrained INTEGER must fit int64 (−2^63..2^63−1) or, when its lower bound is non-negative, uint64 (0..2^64−1). Anything else — a bound below −2^63 (e.g. `INTEGER (-2^64..2^64-1)`) or a range mixing negative values with values above 2^63−1 (e.g. `INTEGER (-1..2^64-1)`) — is deliberately not implemented; supporting it would mean promoting such a member to a big-integer type with its own PER path ([Issue #754](https://github.com/Schramp/gambas-asn1/issues/754)). Full 64-bit ranges such as `(0..2^64-1)` and `(-2^63..2^63-1)` are encoded as 64-bit constrained whole numbers in PER. |
-| **FROM alphabet: one-byte characters only** | The generated `FROM` alphabet table has 256 entries indexed by code point, so it covers only U+0000..U+00FF, and code generation only reads one-character literals (`"A"`) and one-character ranges (`"A".."Z"`). A character above U+00FF in a UTF8String, BMPString or UniversalString value never satisfies a `FROM`, so `validate()` and PER encode reject it in both runtimes; the PER encoder has always behaved this way. Code generation also drops some `FROM` entries without a warning: a non-ASCII literal such as `"Ä"` (more than one byte of UTF-8) is left out of the alphabet, so values containing it are rejected; a multi-character string such as `FROM ("ABC")`, or Quadruple / Tuple endpoints (X.680 §41.8) such as `FROM ({0,0,3,145}..{0,0,3,169})`, leave the type with no `FROM` constraint at all, so every character is accepted and PER does not use the alphabet ([Issue #1132](https://github.com/Schramp/gambas-asn1/issues/1132)). |
+| **FROM alphabet: one-byte characters only** | The generated `FROM` alphabet table has 256 entries indexed by code point, so it covers only U+0000..U+00FF, and code generation only reads one-character literals (`"A"`) and one-character ranges (`"A".."Z"`). A character above U+00FF in a UTF8String, BMPString or UniversalString value never satisfies a `FROM`, so `validate()` (Java: constraint checks) and PER encode reject it in the C++, Rust and Java runtimes; the PER encoder has always behaved this way. Code generation also drops some `FROM` entries without a warning: a non-ASCII literal such as `"Ä"` (more than one byte of UTF-8) is left out of the alphabet, so values containing it are rejected; a multi-character string such as `FROM ("ABC")`, or Quadruple / Tuple endpoints (X.680 §41.8) such as `FROM ({0,0,3,145}..{0,0,3,169})`, leave the type with no `FROM` constraint at all, so every character is accepted and PER does not use the alphabet ([Issue #1132](https://github.com/Schramp/gambas-asn1/issues/1132)). |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
@@ -2319,7 +2319,8 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   ranges, SIZE of strings, BIT STRINGs and SEQUENCE OFs, and a string's
   permitted alphabet. The rules are the C++ runtime's `validate()`: a
   constraint with an extension marker admits every value, and a string's SIZE
-  counts its contents octets. With checks off, the default, a decode takes
+  and permitted alphabet count characters, not contents octets (a 4-character
+  `UTF8String` "ÄÖÜß" fits `SIZE(1..4)`; see Constraint Validation). With checks off, the default, a decode takes
   any value the encoding can carry, which is what you want for hostile or
   sloppy input. PER's own range and SIZE limits on the encoding apply either way.
 - **Rich errors** (off by default): a `DecodeException` also names the path

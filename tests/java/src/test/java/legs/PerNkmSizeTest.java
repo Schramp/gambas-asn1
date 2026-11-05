@@ -52,6 +52,17 @@ class PerNkmSizeTest {
     }
 
     @Test
+    void sizeCountsCharactersNotOctets() {
+        Rec r = value();
+        r.s(new Asn1Utf8String("\u00C4".repeat(32)));
+        Rec back = new Rec();
+        PerObject.decode(back, PerObject.encode(r));
+        assertEquals("\u00C4".repeat(32), back.s().get());
+        r.s(new Asn1Utf8String("\u00C4".repeat(33)));
+        assertThrows(EncodeException.class, () -> PerObject.encode(r));
+    }
+
+    @Test
     void lengthOutsideExtensibleRootEncodes() {
         Rec r = value();
         r.ext(new Asn1Utf8String("y".repeat(200)));

@@ -14,7 +14,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1UtcTime;
  * range of an INTEGER or REAL, the SIZE of a string or SEQUENCE OF and a
  * string's permitted alphabet (X.680 §51). The rules are the C++ runtime's
  * {@code validate()}: a constraint with an extension marker admits every
- * value, and a string's SIZE counts its contents octets.
+ * value, and a string's SIZE and permitted alphabet count characters.
  */
 public final class ConstraintCheck {
     private ConstraintCheck() {
@@ -182,16 +182,21 @@ public final class ConstraintCheck {
         return size("BIT STRING", sig, c, true);
     }
 
+    /**
+     * SIZE and FROM count characters (X.680 §51.5, §51.7), not contents
+     * octets. The alphabet table covers code points 0..255; a character
+     * above that is never in it.
+     */
     private static String chars(Asn1CharString s, Constraints c) {
-        byte[] octets = s.octets();
-        String v = size(s.xerElementName(), octets.length, c, false);
+        int[] cps = s.codePoints();
+        String v = size(s.xerElementName(), cps.length, c, false);
         if (v != null || c.encodeTable() == null) {
             return v;
         }
         char[] table = c.encodeTable();
-        for (byte o : octets) {
-            if (table[o & 0xFF] == 0xFFFF) {
-                return s.xerElementName() + " character " + (o & 0xFF) + " outside its permitted alphabet";
+        for (int cp : cps) {
+            if (cp > 0xFF || table[cp] == 0xFFFF) {
+                return s.xerElementName() + " character U+" + String.format("%04X", cp) + " outside its permitted alphabet";
             }
         }
         return null;
