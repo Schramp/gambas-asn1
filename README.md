@@ -61,6 +61,8 @@ ctest --test-dir build --output-on-failure
 Dependencies (CMake ≥ 3.20, GCC/Clang with C++20, Bison ≥ 3.8, RE/flex
 6.1.0) and full build/run/test instructions, including the ETSI LI example
 library and cross-validation setup: [**doc/QUICKSTART.md**](doc/QUICKSTART.md).
+Installing the compiler and the Java runtime (into the local Maven
+repository, `~/.m2`): [**INSTALL.md**](INSTALL.md).
 
 ## Status
 
