@@ -144,9 +144,12 @@ public:
         return spec.kind == TypeDescriptorRefKind::MemberOwnTable ? spec.name : std::string{};
     }
 
-    /// @brief The runtime's SEQUENCE OF collection around `elem_type`. A
-    ///        member's real collection classes, SET OF included, come from
-    ///        its ElemShape (see java_collection_type).
+    /// @brief The runtime's SEQUENCE OF collection around `elem_type`. An
+    ///        inline SEQUENCE OF / SET OF member or alternative is declared
+    ///        with the class generated for its promoted collection type
+    ///        instead, named by its `tdref` (emit_sequence / emit_choice).
+    /// @param elem_type  Native element type.
+    /// @return The generic collection type text.
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("io.github.schramp.gambasasn1.wire.spec.SeqOf<{}>", elem_type);
     }
