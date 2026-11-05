@@ -267,7 +267,6 @@ public final class PerObject {
                     // The octets follow their length determinant (X.691 §17.8).
                     long end = r.absoluteBit(r.bitPos());
                     r.positions().recordContents(f, end - 8L * raw.get().length, end);
-                    r.positions().recordValue(f, end - 8L * raw.get().length, end);
                 }
             }
             default -> throw r.error("PER: " + m.getClass().getSimpleName() + " is not supported yet");
