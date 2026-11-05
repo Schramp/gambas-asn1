@@ -337,7 +337,7 @@ int main() {
         spec.type_name = "MyList";
         spec.xer_name  = "MyList";
         spec.elem_type = "Elem";
-        spec.elem_ref  = "&asn_DEF_Elem";
+        spec.elem_tdref = {TypeDescriptorRefKind::FreeStanding, {}, "Elem"};
         spec.range_bits = 4;
         spec.size_lower = 1;
         spec.size_upper = 10;

@@ -451,13 +451,12 @@ struct MemberTypeDescriptorSpec {
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
 ///        (X.680 §25/26) — element descriptor reference, collection SIZE
 ///        constraint, and optional element XER tag rename (X.693 §12). No
-///        C++/Rust/etc. syntax; `elem_ref` is already a fully-formatted
-///        reference expression since it comes from the (already
-///        backend-delegated) emit_member_type_descriptor call.
+///        C++/Rust/etc. syntax: each backend renders `elem_tdref` itself.
 struct SeqOfSpec : TaggedTypeSpec {
-    std::string elem_ref;        // reference expression to the element's TypeDescriptor
-    TypeDescriptorRefSpec elem_tdref; // the element type's descriptor decision, for a backend whose
-                                      // element constraints live on the referenced type (empty elem_ref)
+    // The element's type-descriptor decision: MemberOwnTable when the
+    // element carries inline constraints (its own table), else the
+    // referenced or builtin type's descriptor (type_descriptor_ref_spec_for).
+    TypeDescriptorRefSpec elem_tdref;
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
     int         range_bits = 0;
     int64_t     size_lower = 0;

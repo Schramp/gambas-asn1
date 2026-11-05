@@ -3418,6 +3418,9 @@ SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostre
 ///        the SeqOfSpec for the combined backend call.
 /// @param def     SEQUENCE OF / SET OF type definition.
 /// @param session Per-type output session.
+/// @return The type's SeqOfSpec; `elem_tdref` is the element's descriptor
+///         decision, rendered by each backend.
+/// @see X.680 §25/§26 (SEQUENCE OF / SET OF); X.691 §19/§20 (element and count constraints).
 SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_type_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
@@ -3469,9 +3472,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
-    spec.elem_ref = backend_.format_type_descriptor_ref(
-        emit_member_type_descriptor(elem_node, cname, "elem", session));
-    spec.elem_tdref = type_descriptor_ref_spec_for(elem_node);
+    spec.elem_tdref = emit_member_type_descriptor(elem_node, cname, "elem", session);
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.

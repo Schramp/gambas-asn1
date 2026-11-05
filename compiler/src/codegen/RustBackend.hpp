@@ -176,7 +176,7 @@ public:
     // hand-written `Elem ::= INTEGER (0..15)`): `crate::{name}::{name}`
     // (module-escaped, type name itself never is — mirrors
     // `emit_seq_of_definition`'s own `{Synth}_CONSTRAINTS` cross-module
-    // reference). The one consumer that reads this (`SeqOfSpec::elem_ref`,
+    // reference). The one consumer that reads this (`SeqOfSpec::elem_tdref`,
     // for the collection's per-element PER Constraints — see
     // `emit_seq_of_definition`'s own doc) appends `_CONSTRAINTS` to the
     // trailing raw name with no recasing, matching
