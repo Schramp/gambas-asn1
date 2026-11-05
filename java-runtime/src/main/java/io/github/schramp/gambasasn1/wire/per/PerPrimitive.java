@@ -396,14 +396,16 @@ public final class PerPrimitive {
             // Not PER-visible (X.691 §30.6), but still a constraint on the
             // value (§10.3 note): reject a violating value, then send the
             // octets after an unconstrained length.
+            // SIZE and FROM count characters (X.680 §51.5, §51.7).
+            int[] cps = Asn1CharString.codePoints(octets, tag);
             if (has(c, Constraints.SIZE_CONSTRAINED) && !has(c, Constraints.EXTENSIBLE)
-                    && (count < c.sizeLower() || count > c.sizeUpper())) {
-                throw new EncodeException("PER: string length " + count + " violates SIZE("
+                    && (cps.length < c.sizeLower() || cps.length > c.sizeUpper())) {
+                throw new EncodeException("PER: string length " + cps.length + " violates SIZE("
                         + c.sizeLower() + ".." + c.sizeUpper() + ")");
             }
-            for (int i = 0; alpha && i < count; i++) {
-                if (alphabetIndex(c, octets, i * width, width) < 0) {
-                    throw new EncodeException("PER: character " + (octets[i * width + width - 1] & 0xFF)
+            for (int i = 0; alpha && i < cps.length; i++) {
+                if (cps[i] > 0xFF || c.encodeTable()[cps[i]] == 0xFFFF) {
+                    throw new EncodeException("PER: character U+" + String.format("%04X", cps[i])
                             + " is not in the permitted alphabet");
                 }
             }
