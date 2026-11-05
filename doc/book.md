@@ -2256,7 +2256,11 @@ unaligned PER the node's first bit. SET components keep their wire positions
 after the reorder into table order, and an extension addition or CHOICE
 extension decoded from its open type keeps its place in the outer input. A
 contained value (`Containing`) is placed at the field's contents octets,
-and the inner value's own nodes from there on. A builtin alias class
+and the inner value's own nodes from there on, when the bytes its decoder
+decodes are a prefix of those octets (`plain`, `zero_padding`, `pkcs7`). A
+decoder that changes the bytes first, say decrypts them, and passes the result
+to `ContainedDecoders.decodeValueFrom` gets no positions for the inner value:
+those bytes are not in the input. A builtin alias class
 (`LIID ::= OCTET STRING`) and the builtin in its `value` field are the same
 node: `p.bitOffset(liid)` and `p.bitOffset(liid.value)` agree.
 
