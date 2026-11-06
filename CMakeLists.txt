@@ -12,6 +12,18 @@ if(NOT ASN1CPP_CARGO_VERSION STREQUAL "version = \"${PROJECT_VERSION}\"")
     message(FATAL_ERROR "rust-runtime/wire/Cargo.toml has ${ASN1CPP_CARGO_VERSION}, "
                         "VERSION has ${PROJECT_VERSION}: set both to the same version")
 endif()
+# The Java runtime's version marker class, which generated Java refers to.
+string(REPLACE "." "_" _asn1cpp_marker "RuntimeVersion_${PROJECT_VERSION}")
+set(_asn1cpp_marker_dir "${CMAKE_CURRENT_SOURCE_DIR}/java-runtime/src/main/java/io/github/schramp/gambasasn1/wire")
+if(NOT EXISTS "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java")
+    message(FATAL_ERROR "VERSION is ${PROJECT_VERSION}, so the Java runtime needs "
+                        "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java (rename the RuntimeVersion_* class)")
+endif()
+file(GLOB _asn1cpp_markers "${_asn1cpp_marker_dir}/RuntimeVersion_*.java")
+list(LENGTH _asn1cpp_markers _asn1cpp_marker_count)
+if(NOT _asn1cpp_marker_count EQUAL 1)
+    message(FATAL_ERROR "the Java runtime must hold exactly one RuntimeVersion_* class: ${_asn1cpp_markers}")
+endif()
 
 # Must be called here (top-level scope), not just in tests/CMakeLists.txt —
 # CMake only emits build/CTestTestfile.cmake (what `ctest --test-dir build`

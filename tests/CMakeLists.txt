@@ -3060,6 +3060,18 @@ if(WITH_JAVA_RUNTIME_TEST)
         COMMAND make -C ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder test
                 ASNCPP=$<TARGET_FILE:asn1cpp>)
     set_tests_properties(java_example_nested_decoder PROPERTIES TIMEOUT 600 LABELS "java")
+    # Generated Java refers to the runtime's version marker class: without
+    # it (a runtime of another version) the generated code does not compile.
+    set(_dir ${CMAKE_CURRENT_BINARY_DIR}/runtime_version_mismatch)
+    add_test(NAME java_runtime_version_mismatch
+        COMMAND sh -c "set -e; rm -rf '${_dir}'; mkdir -p '${_dir}/classes'; \
+                       '$<TARGET_FILE:asn1cpp>' --target=java --package=p \
+                           '${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1' -o '${_dir}/gen' >/dev/null; \
+                       find '${CMAKE_SOURCE_DIR}/java-runtime/src/main/java' -name '*.java' ! -name 'RuntimeVersion_*' > '${_dir}/srcs'; \
+                       find '${_dir}/gen' -name '*.java' >> '${_dir}/srcs'; \
+                       ! '${Java_JAVAC_EXECUTABLE}' -d '${_dir}/classes' @'${_dir}/srcs' 2>&1")
+    set_tests_properties(java_runtime_version_mismatch PROPERTIES TIMEOUT 300 LABELS "java"
+        PASS_REGULAR_EXPRESSION "cannot find symbol[^\n]*\n[^\n]*\n[^\n]*\n *symbol: *class RuntimeVersion_${PROJECT_VERSION_MAJOR}_${PROJECT_VERSION_MINOR}_${PROJECT_VERSION_PATCH}")
     # The published-artifact path: java-runtime as a Maven dependency
     # (gambasasn1-wire, from a private local repository) of a Maven build of
     # generated code. Needs mvn and, on first run, network for Maven's plugins.

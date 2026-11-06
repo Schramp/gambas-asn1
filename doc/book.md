@@ -216,6 +216,24 @@ generated code that is checked in, this line says which runtime it belongs to.
 The line holds no date or path: regenerating with the same compiler gives the
 same bytes.
 
+Generated Java also checks this in the compiler. Every generated class has a
+private field `asn1cpp$runtimeVersion` holding the class literal
+`io.github.schramp.gambasasn1.wire.RuntimeVersion_X_Y_Z` for the compiler's
+version, and only the runtime of that version contains that empty class.
+Compiled against a runtime of another version, the generated code fails in
+`javac`:
+
+```
+error: cannot find symbol
+  symbol:   class RuntimeVersion_0_1_0
+  location: package io.github.schramp.gambasasn1.wire
+```
+
+A runtime jar swapped in after compiling fails when the JVM first initializes
+a generated class (JLS §12.4.1), with
+`NoClassDefFoundError: io/github/schramp/gambasasn1/wire/RuntimeVersion_0_1_0`.
+The check costs nothing after that one class load.
+
 ---
 
 ## 5. Types and Sequences in ASN.1
