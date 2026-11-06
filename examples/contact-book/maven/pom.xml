@@ -67,7 +67,6 @@
               <goal>regex-property</goal>
             </goals>
             <configuration>
-              <skip>${asn1cpp.skip}</skip>
               <name>asn1cpp.requiredVersion</name>
               <value>${gambasasn1.version}</value>
               <regex>-.*$</regex>

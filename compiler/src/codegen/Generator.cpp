@@ -37,24 +37,6 @@ Generator::Generator(fs::path out_dir, sema::Resolver& res)
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// @brief Write a generated file only when its content changed, so an
-///        unchanged file keeps its mtime and downstream builds skip it.
-///        Creates the file's directory, which a backend's `output_stem`
-///        can place below the output directory.
-/// @param path    The file to write.
-/// @param content Its new content.
-static void write_if_changed(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());
-    fs::path tmp = path; tmp += ".tmp";
-    { std::ofstream out(tmp, std::ios::binary); out << content; }
-    if (fs::exists(path)) {
-        std::ifstream existing(path, std::ios::binary);
-        std::string old((std::istreambuf_iterator<char>(existing)),
-                         std::istreambuf_iterator<char>());
-        if (old == content) { fs::remove(tmp); return; }
-    }
-    fs::rename(tmp, path);
-}
 
 // ---------------------------------------------------------------------------
 

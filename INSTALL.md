@@ -11,12 +11,17 @@ runtimes. CMake and Gradle read it. The CMake configure step stops when one
 of these copies, which cannot read the file, has another version:
 
 - `rust-runtime/wire/Cargo.toml` (`version = "X.Y.Z"`, which every
-  generated `lib.rs` asserts on at compile time);
+  generated Rust file asserts on at compile time);
 - `runtime/include/asn1cpp/Version.hpp` (the `ASN1CPP_RUNTIME_VERSION*`
-  macros, which every generated C++ header `static_assert`s on);
+  macros, which every generated C++ header `static_assert`s on, and the
+  library symbol `asn1::runtime_version_X_Y_Z` they name, which every
+  generated C++ source refers to);
 - the Java runtime's marker class
   `java-runtime/src/main/java/io/github/schramp/gambasasn1/wire/RuntimeVersion_X_Y_Z.java`,
-  which every generated Java class refers to.
+  which every generated Java class refers to (Gradle also checks it is the
+  only one, so a release cannot ship a stale marker);
+- `examples/contact-book/maven/pom.xml`'s default `gambasasn1.version`
+  (`X.Y.Z-SNAPSHOT`; the example's Makefile reads `VERSION` itself).
 
 A Java runtime built from a checkout is `VERSION` plus `-SNAPSHOT`; a release
 is published from tag `java-runtime-vX.Y.Z` only when `X.Y.Z` is the
