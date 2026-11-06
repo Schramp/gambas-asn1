@@ -3068,7 +3068,7 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
         if (content.empty()) continue;
         fs::path path = out_dir_ / (base + "." + ext);
         known_files_.insert(path);
-        write_if_changed(path, content);
+        write_if_changed(path, backend_.file_banner() + content);
     }
 }
 
