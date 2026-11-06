@@ -47,6 +47,10 @@ jobs:
           if ! printf '%s' "$v" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
             echo "not a release version (X.Y.Z): '$v'"; exit 1
           fi
+          # The runtime is released only together with its compiler version.
+          if [ "$v" != "$(cat VERSION)" ]; then
+            echo "release version $v differs from VERSION ($(cat VERSION))"; exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Test and stage the signed bundle

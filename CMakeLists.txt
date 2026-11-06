@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
-project(asn1cpp VERSION 0.1.0 LANGUAGES CXX)
+# VERSION is the one version of the compiler and every runtime: generated
+# code needs the runtime of the compiler version that produced it.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ASN1CPP_VERSION_FILE LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION rust-runtime/wire/Cargo.toml)
+project(asn1cpp VERSION ${ASN1CPP_VERSION_FILE} LANGUAGES CXX)
+
+# Cargo cannot read its version from a file, so check it here.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/rust-runtime/wire/Cargo.toml" ASN1CPP_CARGO_VERSION
+     REGEX "^version = " LIMIT_COUNT 1)
+if(NOT ASN1CPP_CARGO_VERSION STREQUAL "version = \"${PROJECT_VERSION}\"")
+    message(FATAL_ERROR "rust-runtime/wire/Cargo.toml has ${ASN1CPP_CARGO_VERSION}, "
+                        "VERSION has ${PROJECT_VERSION}: set both to the same version")
+endif()
 
 # Must be called here (top-level scope), not just in tests/CMakeLists.txt —
 # CMake only emits build/CTestTestfile.cmake (what `ctest --test-dir build`
