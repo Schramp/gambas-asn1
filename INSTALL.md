@@ -6,6 +6,12 @@ language: C++ (`runtime/`), Rust (`rust-runtime/wire/`) and Java
 that produced it, so install the compiler and the runtimes from the same
 checkout, and install them again after you update it.
 
+The top-level `VERSION` file holds the one version of the compiler and all
+runtimes: CMake and Gradle read it, and the CMake configure step stops when
+`rust-runtime/wire/Cargo.toml` has another version. A Java runtime built from
+a checkout is `VERSION` plus `-SNAPSHOT`; a release is published from tag
+`java-runtime-vX.Y.Z` only when `X.Y.Z` is the `VERSION` of that commit.
+
 ## 1. Build
 
 Needs CMake ≥ 3.20, GCC or Clang with C++20, Bison ≥ 3.8 and RE/flex 6.1.0.
