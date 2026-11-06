@@ -2513,7 +2513,13 @@ compiler in the `generate-sources` phase (exec-maven-plugin, with
 `-require-version=${gambasasn1.version}`, so the build stops when compiler
 and runtime versions differ) and adds the output as a source root
 (build-helper-maven-plugin). The `asn1cpp.executable` property names the
-compiler; the default is `asn1cpp` on the `PATH`. `make test` publishes
+compiler; the default is `asn1cpp` on the `PATH`. Before that, in the
+`initialize` phase, the pom runs `asn1cpp --version` (maven-antrun-plugin).
+When the compiler is missing, too old to know `--version`, or another
+version, the build stops and prints the version required, the git ref to
+build it from (`main` for a `-SNAPSHOT` runtime, the release tag
+`java-runtime-vX.Y.Z` otherwise), the project URL, and the clone, build and
+install commands. `make test` publishes
 `java-runtime` into a private local repository, runs `mvn compile` and
 checks the output. ctest runs it as
 `java_example_maven` when `mvn` is found. For a published version, run

@@ -219,7 +219,13 @@ not the version of the runtime:
 ```
 
 Pass `-Dasn1cpp.executable=<path>` when the compiler is not on the `PATH`.
-`examples/contact-book/maven/` is the complete project. `make test` there
+`examples/contact-book/maven/` is the complete project. Its `pom.xml` also
+checks the compiler before generating (maven-antrun-plugin, `initialize`
+phase): when the compiler is missing or another version, the build stops
+with the git ref to build (`main` for a `-SNAPSHOT` runtime, tag
+`java-runtime-vX.Y.Z` for a release) and the commands from this file. Copy
+that plugin and the `regex-property` execution too for the same message in
+your own project. `make test` there
 installs the runtime into a private repository (`m2/`), runs `mvn compile`
 and checks the output.
 
