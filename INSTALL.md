@@ -157,14 +157,71 @@ dependencies {
 
 ### Generating Java
 
+By hand:
+
 ```bash
 asn1cpp --target=java --package=contacts contact.asn1 -o src/main/java/contacts
 ```
 
 The generated sources need nothing but `gambasasn1-wire` on the class path.
-`examples/contact-book/maven/` is a complete Maven project. `make test` there
-installs the runtime into a private repository (`m2/`), generates the
-classes, compiles them with Maven and checks the output.
+
+From Maven, so that `mvn compile` regenerates the code with the matching
+compiler: run `asn1cpp` in the `generate-sources` phase with
+`-require-version=${gambasasn1.version}` and add its output as a source root.
+`-require-version` stops the build when the compiler (`asn1cpp --version`) is
+not the version of the runtime:
+
+```xml
+<properties>
+  <gambasasn1.version>0.1.0-SNAPSHOT</gambasasn1.version>
+  <asn1cpp.executable>asn1cpp</asn1cpp.executable>
+  <asn1cpp.generated>${project.build.directory}/generated-sources/asn1cpp</asn1cpp.generated>
+</properties>
+
+<plugin>
+  <groupId>org.codehaus.mojo</groupId>
+  <artifactId>exec-maven-plugin</artifactId>
+  <version>3.5.0</version>
+  <executions>
+    <execution>
+      <id>asn1cpp</id>
+      <phase>generate-sources</phase>
+      <goals><goal>exec</goal></goals>
+      <configuration>
+        <executable>${asn1cpp.executable}</executable>
+        <arguments>
+          <argument>-require-version=${gambasasn1.version}</argument>
+          <argument>-target=java</argument>
+          <argument>-package=contacts</argument>
+          <argument>${project.basedir}/src/main/asn1/contact.asn1</argument>
+          <argument>-o</argument>
+          <argument>${asn1cpp.generated}/contacts</argument>
+        </arguments>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+<plugin>
+  <groupId>org.codehaus.mojo</groupId>
+  <artifactId>build-helper-maven-plugin</artifactId>
+  <version>3.6.0</version>
+  <executions>
+    <execution>
+      <id>asn1cpp-sources</id>
+      <phase>generate-sources</phase>
+      <goals><goal>add-source</goal></goals>
+      <configuration>
+        <sources><source>${asn1cpp.generated}</source></sources>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+```
+
+Pass `-Dasn1cpp.executable=<path>` when the compiler is not on the `PATH`.
+`examples/contact-book/maven/` is the complete project. `make test` there
+installs the runtime into a private repository (`m2/`), runs `mvn compile`
+and checks the output.
 
 To uninstall:
 

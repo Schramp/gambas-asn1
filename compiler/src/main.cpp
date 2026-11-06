@@ -36,11 +36,16 @@ static const struct option long_opts[] = {
     {"flat-package",         no_argument,       nullptr, 'F'},
     {"per-nkm-size",         required_argument, nullptr, 'N'},
     {"list-per-nkm-size",    no_argument,       nullptr, 'Z'},
+    {"version",              no_argument,       nullptr, 'V'},
+    {"require-version",      required_argument, nullptr, 'R'},
     {nullptr, 0, nullptr, 0}
 };
 
 #ifndef ASN1CPP_STDLIB_DIR
 #define ASN1CPP_STDLIB_DIR ""
+#endif
+#ifndef ASN1CPP_VERSION
+#define ASN1CPP_VERSION "0.0.0"
 #endif
 #ifndef ASN1CPP_INSTALLED_STDLIB_REL
 #define ASN1CPP_INSTALLED_STDLIB_REL "../share/asn1cpp/predefined"
@@ -54,6 +59,16 @@ static const struct option long_opts[] = {
 // asn1c is this project's ground-truth reference compiler) through the
 // same grammar as any user file, before the user's own modules.
 static const char* kStdlibModuleFile = "ASN1C-UsefulInformationObjectClasses.asn1";
+
+/// @brief Whether a runtime of version \p wanted goes with this compiler:
+///        the same X.Y.Z as ASN1CPP_VERSION, any qualifier after a '-'
+///        (a Maven -SNAPSHOT) ignored. Generated code uses the runtime API
+///        of the compiler that produced it, so a build pins both together.
+/// @param wanted The runtime version the build uses, e.g. 0.1.0-SNAPSHOT.
+/// @return True when the versions match.
+static bool version_matches(std::string_view wanted) {
+    return wanted.substr(0, wanted.find('-')) == ASN1CPP_VERSION;
+}
 
 /// @brief Directory of the predefined-classes module when --stdlib-dir is
 ///        not given. An installed compiler (`cmake --install`) reads the
@@ -126,6 +141,11 @@ static void print_help(const char* prog) {
         "                              unless --flat-package is given.\n"
         "  --flat-package              (java) Put every type in the --package itself\n"
         "                              (default there: the unnamed package).\n"
+        "  --version                   Print the compiler version and exit.\n"
+        "  --require-version=<v>       Fail unless <v> (X.Y.Z, a -SNAPSHOT or other\n"
+        "                              -qualifier ignored) is this compiler's version,\n"
+        "                              so a build cannot pair generated code with\n"
+        "                              another version's runtime.\n"
         "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
         "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
         "                              EXTERNAL, auto-included in every module).\n"
@@ -249,6 +269,14 @@ int main(int argc, char** argv) {
             }
             break;
         case 'Z': list_nkm_size = true; break;
+        case 'V': std::cout << "asn1cpp " ASN1CPP_VERSION "\n"; return 0;
+        case 'R':
+            if (!version_matches(optarg)) {
+                std::cerr << "error: asn1cpp " ASN1CPP_VERSION " does not match the required version "
+                          << optarg << " (generated code needs the runtime of the same version)\n";
+                return 1;
+            }
+            break;
         default: usage(argv[0]);
         }
     }

@@ -2,8 +2,9 @@
 #
 # Publishes java-runtime into a private local Maven repository (as the
 # released artifact io.github.schramp.gambasasn1:gambasasn1-wire would be
-# resolved from Maven Central), generates Java from ../contact.asn1,
-# compiles it with Maven against that artifact, and runs ../java/Main.java.
+# resolved from Maven Central), then `mvn compile`: pom.xml runs asn1cpp on
+# ../contact.asn1, requiring the runtime's version, and compiles the
+# generated Java with ../java/Main.java. `make test` runs Main.
 #
 # Usage:
 #   make          build target/classes
@@ -29,14 +30,9 @@ ifndef SKIP_PUBLISH
 		-Dmaven.repo.local=$(REPO) -Pversion=$(GAMBASASN1_VERSION)
 endif
 
-src/.stamp: ../contact.asn1 ../java/Main.java $(ASNCPP)
-	rm -rf src && mkdir -p src
-	$(ASNCPP) --target=java --package=contacts ../contact.asn1 -o src/contacts
-	cp ../java/Main.java src/
-	touch $@
-
-target/.stamp: src/.stamp pom.xml publish
-	$(MVN) -q -B -Dmaven.repo.local=$(REPO) -Dgambasasn1.version=$(GAMBASASN1_VERSION) compile
+target/.stamp: ../contact.asn1 ../java/Main.java pom.xml $(ASNCPP) publish
+	$(MVN) -q -B -Dmaven.repo.local=$(REPO) -Dgambasasn1.version=$(GAMBASASN1_VERSION) \
+		-Dasn1cpp.executable=$(abspath $(ASNCPP)) compile
 	touch $@
 
 test: target/.stamp
@@ -45,6 +41,6 @@ test: target/.stamp
 	@echo "contact-book (Maven): output matches"
 
 clean:
-	rm -rf src target m2 contact.ber actual.txt
+	rm -rf target m2 contact.ber actual.txt
 
 .PHONY: all publish test clean

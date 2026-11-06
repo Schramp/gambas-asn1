@@ -1312,6 +1312,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 | `--per-nkm-size=strict\|visible` | PER handling of `SIZE` on UTF8String, TeletexString/T61String, VideotexString, GraphicString, GeneralString and ObjectDescriptor. `strict` (default): not PER-visible (X.691 §10.3.18, §30.6), matching Erlang/OTP, asn1tools and Wireshark. `visible`: encoded as if PER-visible, matching asn1c (not X.691-conformant). Only PER changes. Can be overridden per type or member with the sidecar's `per_nkm_size` entries. See [SIZE on non-known-multiplier strings](#size-on-non-known-multiplier-strings---per-nkm-size). |
 | `--list-per-nkm-size` | Print every SIZE-constrained string of those types with its effective mode and its source (`default` or `config`), then exit without generating code. |
+| `--version` | Print `asn1cpp X.Y.Z` and exit. |
+| `--require-version=<v>` | Stop with an error unless `<v>` is this compiler's version. Generated code uses the runtime API of the compiler that produced it, so a build passes its runtime version here (`0.1.0-SNAPSHOT`; the part after a `-` is ignored) and cannot pair code from one compiler with another version's runtime. `examples/contact-book/maven/pom.xml` does this for Maven. |
 | `--stdlib-dir=<dir>` | Directory holding `ASN1C-UsefulInformationObjectClasses.asn1` (X.681 TYPE-IDENTIFIER and ABSTRACT-SYNTAX, X.208 EXTERNAL), which is read before every input. By default an installed compiler (`cmake --install`, see [INSTALL.md](../INSTALL.md)) reads `<prefix>/share/asn1cpp/predefined`, found relative to its own path, so an install tree can be moved. A compiler run from its build tree reads `compiler/predefined` in the source tree. `--help` prints the directory in use. |
 
 ### Comparison with asn1c CLI
@@ -2506,9 +2508,14 @@ value is searched.
 ```
 
 The generated sources compile against it with nothing else on the class
-path. `examples/contact-book/maven/` shows the setup: `make test` publishes
-`java-runtime` into a private local repository, generates the contact-book
-types, compiles them with Maven and checks the output. ctest runs it as
+path. `examples/contact-book/maven/` shows the setup. Its `pom.xml` runs the
+compiler in the `generate-sources` phase (exec-maven-plugin, with
+`-require-version=${gambasasn1.version}`, so the build stops when compiler
+and runtime versions differ) and adds the output as a source root
+(build-helper-maven-plugin). The `asn1cpp.executable` property names the
+compiler; the default is `asn1cpp` on the `PATH`. `make test` publishes
+`java-runtime` into a private local repository, runs `mvn compile` and
+checks the output. ctest runs it as
 `java_example_maven` when `mvn` is found. For a published version, run
 `make test GAMBASASN1_VERSION=X.Y.Z SKIP_PUBLISH=1`, which resolves the
 runtime from Maven Central.

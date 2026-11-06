@@ -452,6 +452,20 @@ add_test(NAME install_smoke
             ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(install_smoke PROPERTIES TIMEOUT 300)
 
+# ---- asn1cpp --version / --require-version (the Maven build pins the
+# compiler to its runtime version with the latter).
+add_test(NAME compiler_version COMMAND $<TARGET_FILE:asn1cpp> --version)
+set_tests_properties(compiler_version PROPERTIES
+    PASS_REGULAR_EXPRESSION "^asn1cpp ${PROJECT_VERSION}\n$")
+add_test(NAME compiler_require_version_snapshot
+    COMMAND $<TARGET_FILE:asn1cpp> --require-version=${PROJECT_VERSION}-SNAPSHOT -E
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
+add_test(NAME compiler_require_version_mismatch
+    COMMAND $<TARGET_FILE:asn1cpp> --require-version=999.0.0 -E
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
+set_tests_properties(compiler_require_version_mismatch PROPERTIES
+    PASS_REGULAR_EXPRESSION "does not match the required version 999.0.0")
+
 # ---- PER SEQUENCE OF items encoded in zero bits (X.691 §18, §11.9.3.8):
 # kMaxZeroWidthItems; Rust leg: rust/zero_width_items, Java: ZeroWidthItemsTest
 set(ZW_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_zero_width_items_test)
