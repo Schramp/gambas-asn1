@@ -1,0 +1,25 @@
+# find_package(asn1cpp) for an installed gambas-asn1: the imported target
+# asn1cpp::runtime (the C++ runtime library, its headers and the compile
+# definitions it was built with) and ASN1CPP_EXECUTABLE (the compiler).
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(@ASN1CPP_USES_FMT@)
+    find_dependency(fmt)
+endif()
+
+if(NOT TARGET asn1cpp::runtime)
+    add_library(asn1cpp::runtime STATIC IMPORTED)
+    set_target_properties(asn1cpp::runtime PROPERTIES
+        IMPORTED_LOCATION "@PACKAGE_CMAKE_INSTALL_LIBDIR@/libasn1cpp_runtime.a"
+        INTERFACE_INCLUDE_DIRECTORIES "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@"
+        INTERFACE_COMPILE_FEATURES cxx_std_20
+        INTERFACE_COMPILE_DEFINITIONS "@ASN1CPP_RUNTIME_DEFINITIONS@")
+    if(@ASN1CPP_USES_FMT@)
+        set_property(TARGET asn1cpp::runtime APPEND PROPERTY INTERFACE_LINK_LIBRARIES fmt::fmt)
+    endif()
+endif()
+
+find_program(ASN1CPP_EXECUTABLE asn1cpp HINTS "@PACKAGE_CMAKE_INSTALL_BINDIR@" NO_DEFAULT_PATH)
+
+check_required_components(asn1cpp)

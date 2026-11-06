@@ -35,6 +35,7 @@ find_program(ASN1C_EXECUTABLE asn1c
     DOC "asn1c reference compiler (optional — enables cross-validation tests)")
 
 include(CMakeDependentOption)
+include(GNUInstallDirs)
 cmake_dependent_option(WITH_ASN1C_XVAL
     "Cross-validate parser tests against the asn1c reference compiler"
     ON "ASN1C_EXECUTABLE" OFF)
