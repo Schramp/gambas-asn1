@@ -4,6 +4,7 @@
 // No codec internals (BerCodec, XerCodec, PerCodec, RandomFiller, Validation).
 // Generated .hpp/.cpp files include this; callers that need codec ops include asn1cpp.hpp.
 
+#include "Version.hpp"
 #include "Asn1Object.hpp"
 #include "EnumValue.hpp"
 #include "SeqOfBase.hpp"

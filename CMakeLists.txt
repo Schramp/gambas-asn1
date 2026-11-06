@@ -19,6 +19,20 @@ if(NOT EXISTS "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java")
     message(FATAL_ERROR "VERSION is ${PROJECT_VERSION}, so the Java runtime needs "
                         "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java (rename the RuntimeVersion_* class)")
 endif()
+# The C++ runtime's version macros, which generated headers static_assert on.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include/asn1cpp/Version.hpp" _asn1cpp_cpp_version
+     REGEX "^#define ASN1CPP_RUNTIME_VERSION \"")
+if(NOT _asn1cpp_cpp_version STREQUAL "#define ASN1CPP_RUNTIME_VERSION \"${PROJECT_VERSION}\"")
+    message(FATAL_ERROR "runtime/include/asn1cpp/Version.hpp has ${_asn1cpp_cpp_version}, "
+                        "VERSION has ${PROJECT_VERSION}: set both (and the _MAJOR/_MINOR/_PATCH macros) to the same version")
+endif()
+foreach(_part MAJOR MINOR PATCH)
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include/asn1cpp/Version.hpp" _line
+         REGEX "^#define ASN1CPP_RUNTIME_VERSION_${_part} ")
+    if(NOT _line STREQUAL "#define ASN1CPP_RUNTIME_VERSION_${_part} ${PROJECT_VERSION_${_part}}")
+        message(FATAL_ERROR "runtime/include/asn1cpp/Version.hpp: ${_line}, but VERSION is ${PROJECT_VERSION}")
+    endif()
+endforeach()
 file(GLOB _asn1cpp_markers "${_asn1cpp_marker_dir}/RuntimeVersion_*.java")
 list(LENGTH _asn1cpp_markers _asn1cpp_marker_count)
 if(NOT _asn1cpp_marker_count EQUAL 1)
