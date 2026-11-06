@@ -3098,26 +3098,30 @@ endif()
 
 # Cross-language descriptor-table diff (validation-tools/table_diff,
 # doc/backend-guide.md Appendix A): the C++ and Rust runtimes dump every
-# generated type's tables and the dumps must match field by field, on the
-# default target list (validation-tools/table_diff/targets.txt).
+# generated type's tables and the dumps must match field by field. ctest
+# takes the small tests/ schemas of the default target list
+# (validation-tools/table_diff/targets.txt); CI's xval workers run the whole
+# list, the large example schemas included, one shard per worker.
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME table_diff_cpp_rust
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
-                --lang cpp,rust -j 2)
+                --lang cpp,rust --target tests/ -j 2)
+    # Both table diffs build the C++ leg of a schema in the same directory.
     set_tests_properties(table_diff_cpp_rust PROPERTIES
-        TIMEOUT 900 LABELS "rust")
+        TIMEOUT 600 LABELS "rust" RESOURCE_LOCK table_diff_testbuild)
 endif()
 
-# The same diff for the Java runtime, on the schemas the Java backend emits
-# so far (validation-tools/table_diff/java_targets.txt).
+# The same diff for the Java runtime, on the tests/ schemas the Java backend
+# emits so far (validation-tools/table_diff/java_targets.txt); the ETSI LI
+# schema of that list runs on the xval workers.
 if(WITH_JAVA_RUNTIME_TEST)
     add_test(NAME table_diff_cpp_java
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
-                --lang cpp,java -j 2)
+                --lang cpp,java --target tests/ -j 2)
     set_tests_properties(table_diff_cpp_java PROPERTIES
-        TIMEOUT 900 LABELS "java" RESOURCE_LOCK java_runtime_build)
+        TIMEOUT 600 LABELS "java" RESOURCE_LOCK "java_runtime_build;table_diff_testbuild")
 endif()
 
 # Java examples: build with plain javac and diff their output against the

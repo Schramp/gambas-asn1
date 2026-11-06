@@ -25,8 +25,13 @@ A schema whose inputs (schema files, flags, compiler, runtime sources) are
 unchanged since the last run reuses that run's dump; --rebuild forces a
 fresh build.
 
+--shard K/N keeps the K-th of N shards: schemas go to the shard with the
+fewest schema bytes so far, largest first, so one large schema (ETSI LI)
+gets a shard of its own. CI runs one shard per xval worker; ctest runs the
+small tests/ schemas only (--target tests/).
+
 Usage:
-    table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [-j N] [-v] [--not-carried] [--rebuild]
+    table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [--shard K/N] [-j N] [-v] [--not-carried] [--rebuild]
 
 Exit code: 0 = no mismatch, 1 = mismatch or build failure.
 """
@@ -361,11 +366,32 @@ def say(*a):
     print(*a, flush=True)
 
 
+def shard_of(jobs, spec, ap):
+    """The jobs of shard K of N: each schema, largest first, goes to the shard
+    with the fewest schema bytes so far."""
+    try:
+        k, n = (int(x) for x in spec.split("/"))
+        if not 0 <= k < n:
+            raise ValueError
+    except ValueError:
+        ap.error(f"--shard: expected K/N with 0 <= K < N, got {spec!r}")
+    size = {schema: sum(os.path.getsize(f) for f in schema_files(schema)) for schema, _ in jobs}
+    load, mine = [0] * n, []
+    for schema, flags in sorted(jobs, key=lambda j: (-size[j[0]], j[0])):
+        s = load.index(min(load))
+        load[s] += size[schema]
+        if s == k:
+            mine.append((schema, flags))
+    say(f"shard {k}/{n}: {len(mine)} of {len(jobs)} schema(s)")
+    return mine
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--lang", default="cpp,rust", help="comma list; the first is the reference (default cpp,rust)")
     ap.add_argument("--target", help="only schemas whose path contains this substring")
     ap.add_argument("-j", type=int, default=4)
+    ap.add_argument("--shard", metavar="K/N", help="keep the K-th of N size-balanced shards of the schemas")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every differing field")
     ap.add_argument("--not-carried", action="store_true", help="list fields a runtime does not carry")
     ap.add_argument("--full", action="store_true", help="run every schema in xval_sweep/targets.txt")
@@ -395,7 +421,10 @@ def main():
         if args.target and args.target not in schema:
             continue
         seen.add(schema)
-        jobs.append((len(jobs) % args.j, schema, flags, langs, args.rebuild))
+        jobs.append((schema, flags))
+    if args.shard:
+        jobs = shard_of(jobs, args.shard, ap)
+    jobs = [(i % args.j, schema, flags, langs, args.rebuild) for i, (schema, flags) in enumerate(jobs)]
 
     failed = 0
     all_not_carried = {}
