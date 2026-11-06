@@ -253,6 +253,7 @@ public:
     std::string definition_extension() const override { return "rs"; }
 
 private:
+    static std::string runtime_version_assert();
     // Split declaration/definition halves — kept as private helpers so the
     // per-construct emission bodies don't need reshaping; the public emit_*
     // overrides above just call both in sequence.

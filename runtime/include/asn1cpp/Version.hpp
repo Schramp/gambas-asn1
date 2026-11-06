@@ -8,7 +8,20 @@
 #define ASN1CPP_RUNTIME_VERSION_PATCH 0
 #define ASN1CPP_RUNTIME_VERSION "0.1.0"
 
+#define ASN1CPP_RUNTIME_VERSION_SYMBOL_(a, b, c) runtime_version_##a##_##b##_##c
+#define ASN1CPP_RUNTIME_VERSION_SYMBOL_X(a, b, c) ASN1CPP_RUNTIME_VERSION_SYMBOL_(a, b, c)
+/// The runtime library's version symbol, `runtime_version_X_Y_Z`.
+#define ASN1CPP_RUNTIME_VERSION_SYMBOL                                              \
+    ASN1CPP_RUNTIME_VERSION_SYMBOL_X(ASN1CPP_RUNTIME_VERSION_MAJOR, ASN1CPP_RUNTIME_VERSION_MINOR, \
+                                     ASN1CPP_RUNTIME_VERSION_PATCH)
+
 namespace asn1 {
+
+/// Defined only in libasn1cpp_runtime (runtime/src/Version.cpp), named after
+/// its version. Every generated source file refers to the symbol of its
+/// compiler's version, so linking generated code against a runtime library
+/// of another version fails with an undefined reference.
+extern const int ASN1CPP_RUNTIME_VERSION_SYMBOL;
 
 /// @brief Whether this runtime is version @p major.@p minor.@p patch. Every
 ///        generated header checks its compiler's version with it in a

@@ -20,7 +20,7 @@ ASN1CPP_ROOT       ?= ../../..
 ASNCPP             ?= $(ASN1CPP_ROOT)/build/compiler/asn1cpp
 MVN                ?= mvn
 JAVA               ?= java
-GAMBASASN1_VERSION ?= 0.1.0-SNAPSHOT
+GAMBASASN1_VERSION ?= $(shell cat $(ASN1CPP_ROOT)/VERSION)-SNAPSHOT
 REPO               := $(CURDIR)/m2
 JAR                := $(REPO)/io/github/schramp/gambasasn1/gambasasn1-wire/$(GAMBASASN1_VERSION)/gambasasn1-wire-$(GAMBASASN1_VERSION).jar
 

@@ -33,8 +33,11 @@ dependencies {
 // The class is checked in (plain javac builds compile these sources too);
 // check that it is the one of this version.
 val runtimeVersionClass = "RuntimeVersion_" + version.toString().substringBefore('-').replace('.', '_')
-check(file("src/main/java/io/github/schramp/gambasasn1/wire/$runtimeVersionClass.java").isFile) {
-    "version $version needs src/main/java/io/github/schramp/gambasasn1/wire/$runtimeVersionClass.java"
+val runtimeVersionMarkers = file("src/main/java/io/github/schramp/gambasasn1/wire").listFiles()!!
+    .map { it.name }.filter { it.startsWith("RuntimeVersion_") }
+check(runtimeVersionMarkers == listOf("$runtimeVersionClass.java")) {
+    "version $version needs exactly one marker, src/main/java/io/github/schramp/gambasasn1/wire/" +
+        "$runtimeVersionClass.java; found $runtimeVersionMarkers"
 }
 
 tasks.withType<JavaCompile>().configureEach {

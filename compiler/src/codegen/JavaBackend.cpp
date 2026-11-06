@@ -33,10 +33,8 @@ static constexpr const char* kWire = "io.github.schramp.gambasasn1.wire";
 ///        holds letters, digits and `_`.
 /// @return The field declaration with its newline.
 static std::string runtime_version_field() {
-    std::string v = ASN1CPP_VERSION;
-    std::replace(v.begin(), v.end(), '.', '_');
     return std::format("    private static final java.lang.Class<?> asn1cpp$runtimeVersion = {}.RuntimeVersion_{}.class;\n",
-                       kWire, v);
+                       kWire, Backend::runtime_version_ident());
 }
 
 /// @brief The runtime wrapper class for a builtin a type assignment
