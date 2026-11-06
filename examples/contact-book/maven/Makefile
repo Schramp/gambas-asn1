@@ -4,7 +4,9 @@
 # released artifact io.github.schramp.gambasasn1:gambasasn1-wire would be
 # resolved from Maven Central), then `mvn compile`: pom.xml runs asn1cpp on
 # ../contact.asn1, requiring the runtime's version, and compiles the
-# generated Java with ../java/Main.java. `make test` runs Main.
+# generated Java with ../java/Main.java. `make test` runs Main, then builds
+# again from a copy of the generated code as if it were checked in
+# (-Dasn1cpp.skip=true, no compiler on hand) and runs that too.
 #
 # Usage:
 #   make          build target/classes
@@ -39,8 +41,17 @@ test: target/.stamp
 	$(JAVA) -cp target/classes:$(JAR) Main contact.ber > actual.txt
 	diff ../java/contact.expected actual.txt
 	@echo "contact-book (Maven): output matches"
+	rm -rf checked-in && cp -r target/generated-sources/asn1cpp checked-in
+	$(MVN) -q -B -Dmaven.repo.local=$(REPO) -Dgambasasn1.version=$(GAMBASASN1_VERSION) \
+		-Dasn1cpp.skip=true -Dasn1cpp.generated=$(CURDIR)/checked-in \
+		-Dasn1cpp.executable=/nonexistent/asn1cpp \
+		clean compile
+	test ! -e target/generated-sources/asn1cpp
+	$(JAVA) -cp target/classes:$(JAR) Main contact.ber > actual.txt
+	diff ../java/contact.expected actual.txt
+	@echo "contact-book (Maven, checked-in generated code): output matches"
 
 clean:
-	rm -rf target m2 contact.ber actual.txt
+	rm -rf target checked-in m2 contact.ber actual.txt
 
 .PHONY: all publish test clean

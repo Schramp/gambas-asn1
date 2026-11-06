@@ -233,7 +233,22 @@ phase): when the compiler is missing or another version, the build stops
 with the git ref to build (`main` for a `-SNAPSHOT` runtime, tag
 `java-runtime-vX.Y.Z` for a release) and the commands from this file. Copy
 that plugin and the `regex-property` execution too for the same message in
-your own project. `make test` there
+your own project.
+
+Two ways to keep a project's generated code:
+
+- **ASN.1 checked in, compiler needed** (the default above): every build
+  checks the compiler and regenerates into `target/generated-sources`.
+- **Generated code checked in, runtime only**: set `asn1cpp.skip` to `true`
+  and `asn1cpp.generated` to a committed directory. A plain build then needs
+  no compiler and compiles the committed code; `mvn -Dasn1cpp.skip=false
+  generate-sources` regenerates it with the checked compiler, after which you
+  commit the result. The committed code still refers to its runtime's
+  version marker, so it does not compile against a runtime of another
+  version, and each file's first line names the compiler version that
+  produced it.
+
+`make test` in `examples/contact-book/maven/` builds both ways. `make test` there
 installs the runtime into a private repository (`m2/`), runs `mvn compile`
 and checks the output.
 

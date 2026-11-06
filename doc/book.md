@@ -2544,9 +2544,14 @@ When the compiler is missing, too old to know `--version`, or another
 version, the build stops and prints the version required, the git ref to
 build it from (`main` for a `-SNAPSHOT` runtime, the release tag
 `java-runtime-vX.Y.Z` otherwise), the project URL, and the clone, build and
-install commands. `make test` publishes
+install commands. With `-Dasn1cpp.skip=true` the pom skips the check and the
+compiler and compiles the Java already in `asn1cpp.generated`: a project that
+checks its generated code in needs only the runtime to build, and the
+runtime version marker (above) still rejects a runtime of another version.
+`make test` publishes
 `java-runtime` into a private local repository, runs `mvn compile` and
-checks the output. ctest runs it as
+checks the output, then repeats that from a copy of the generated code with
+`-Dasn1cpp.skip=true` and no compiler. ctest runs it as
 `java_example_maven` when `mvn` is found. For a published version, run
 `make test GAMBASASN1_VERSION=X.Y.Z SKIP_PUBLISH=1`, which resolves the
 runtime from Maven Central.

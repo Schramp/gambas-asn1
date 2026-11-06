@@ -10,10 +10,20 @@
   stops with the checkout, build and install steps for the right one:
   generated code uses its own compiler's runtime API.
 
+  Generated code checked in: with -Dasn1cpp.skip=true the build neither
+  checks nor runs the compiler and compiles the Java already in
+  asn1cpp.generated, so it needs only the runtime. Generated classes refer
+  to the runtime's version marker class, so checked-in code still fails to
+  compile against a runtime of another version. A project that checks its
+  generated code in sets asn1cpp.skip to true and asn1cpp.generated to a
+  committed directory, and regenerates with -Dasn1cpp.skip=false.
+
   Properties:
     gambasasn1.version   runtime version, and the compiler version required
     asn1cpp.executable   the compiler (default: asn1cpp on PATH, where
                          cmake's install step puts it)
+    asn1cpp.generated    root of the generated Java
+    asn1cpp.skip         true: compile the Java in asn1cpp.generated as is
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -29,6 +39,7 @@
     <asn1cpp.executable>asn1cpp</asn1cpp.executable>
     <asn1cpp.project>https://github.com/Schramp/gambas-asn1</asn1cpp.project>
     <asn1cpp.generated>${project.build.directory}/generated-sources/asn1cpp</asn1cpp.generated>
+    <asn1cpp.skip>false</asn1cpp.skip>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -56,6 +67,7 @@
               <goal>regex-property</goal>
             </goals>
             <configuration>
+              <skip>${asn1cpp.skip}</skip>
               <name>asn1cpp.requiredVersion</name>
               <value>${gambasasn1.version}</value>
               <regex>-.*$</regex>
@@ -89,6 +101,7 @@
               <goal>run</goal>
             </goals>
             <configuration>
+              <skip>${asn1cpp.skip}</skip>
               <target>
                 <exec executable="${asn1cpp.executable}" failifexecutionfails="false"
                       outputproperty="asn1cpp.found" errorproperty="asn1cpp.err">
@@ -139,6 +152,7 @@ Dependencies and options: ${asn1cpp.project}/blob/${asn1cpp.ref}/INSTALL.md
               <goal>exec</goal>
             </goals>
             <configuration>
+              <skip>${asn1cpp.skip}</skip>
               <executable>${asn1cpp.executable}</executable>
               <arguments>
                 <argument>-require-version=${gambasasn1.version}</argument>
