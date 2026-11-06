@@ -3,7 +3,9 @@ name: release
 # Releases version X.Y.Z of the compiler and every runtime, from main:
 #   1. set every copy of the version to X.Y.Z (tools/set-version.sh), then
 #      build and run ctest as CI does;
-#   2. commit "release: X.Y.Z", tag vX.Y.Z, push both to main;
+#   2. commit "release: X.Y.Z" when that changed any file (main normally
+#      holds X.Y.Z already: step 5 of the previous release set it), tag
+#      vX.Y.Z, push both to main;
 #   3. create the GitHub Release vX.Y.Z with the installed compiler and
 #      runtimes for linux-x86_64 and the source tarball;
 #   4. publish the Java runtime to Maven Central (java-release.yml);
@@ -131,7 +133,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -q -am "release: $VERSION"
+          if git diff HEAD --quiet; then
+            echo "main is at $VERSION already: tagging $(git rev-parse --short HEAD)"
+          else
+            git commit -q -am "release: $VERSION"
+          fi
           git tag -a "v$VERSION" -m "gambas-asn1 $VERSION"
 
       - name: Package
