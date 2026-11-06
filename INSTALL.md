@@ -23,9 +23,15 @@ of these copies, which cannot read the file, has another version:
 - `examples/contact-book/maven/pom.xml`'s default `gambasasn1.version`
   (`X.Y.Z-SNAPSHOT`; the example's Makefile reads `VERSION` itself).
 
-A Java runtime built from a checkout is `VERSION` plus `-SNAPSHOT`; a release
-is published from tag `java-runtime-vX.Y.Z` only when `X.Y.Z` is the
-`VERSION` of that commit.
+`tools/set-version.sh X.Y.Z` sets `VERSION` and all of these copies at once
+(and every tracked `Cargo.lock` that pins `asn1cpp-wire`), then runs the
+configure step's checks.
+
+A runtime built from a checkout is `VERSION` plus `-SNAPSHOT` for Java. A
+release is tag `vX.Y.Z`, made by the `release` workflow (see Releasing in
+[doc/book.md](doc/book.md)), whose commit has `VERSION` `X.Y.Z`; right after
+it, `main` moves to the next patch version, so a snapshot built from `main`
+is always newer than the last release.
 
 ## 1. Build
 
@@ -244,7 +250,7 @@ Pass `-Dasn1cpp.executable=<path>` when the compiler is not on the `PATH`.
 checks the compiler before generating (maven-antrun-plugin, `initialize`
 phase): when the compiler is missing or another version, the build stops
 with the git ref to build (`main` for a `-SNAPSHOT` runtime, tag
-`java-runtime-vX.Y.Z` for a release) and the commands from this file. Copy
+`vX.Y.Z` for a release) and the commands from this file. Copy
 that plugin and the `regex-property` execution too for the same message in
 your own project.
 

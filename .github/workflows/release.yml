@@ -1,0 +1,188 @@
+name: release
+
+# Releases version X.Y.Z of the compiler and every runtime, from main:
+#   1. set every copy of the version to X.Y.Z (tools/set-version.sh), then
+#      build and run ctest as CI does;
+#   2. commit "release: X.Y.Z", tag vX.Y.Z, push both to main;
+#   3. create the GitHub Release vX.Y.Z with the installed compiler and
+#      runtimes for linux-x86_64 and the source tarball;
+#   4. publish the Java runtime to Maven Central (java-release.yml);
+#   5. set X.Y.(Z+1), commit "version: X.Y.(Z+1) development", push to main.
+# A failed step 4 can be repeated by running java-release by hand.
+#
+# It pushes straight to main with this workflow's GITHUB_TOKEN: main has no
+# branch protection. If protection is added, give GitHub Actions a bypass
+# for this workflow. Pushes made with GITHUB_TOKEN start no other workflow,
+# so the tag push does not trigger anything by itself.
+#
+# dry_run: steps 1 and the build of step 3 only, on any branch; nothing is
+# pushed or published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (X.Y.Z)'
+        required: true
+      dry_run:
+        description: 'Build and test only; push and publish nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      next: ${{ steps.v.outputs.next }}
+    steps:
+      # The version reaches every later step through env: only, never through
+      # ${{ }} inside a script, and must be plain X.Y.Z: a dispatch input is
+      # text a writer chose, and may hold ; $( ) or `.
+      - name: Version
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          v="$INPUT_VERSION"
+          if ! printf '%s' "$v" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "not a release version (X.Y.Z): '$v'"; exit 1
+          fi
+          if [ "$DRY_RUN" != "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "a release runs from main, not $GITHUB_REF (dry_run runs anywhere)"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "next=${v%.*}.$(( ${v##*.} + 1 ))" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Tag is new
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "tag v$VERSION exists already"; exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y bison cmake g++ python3
+
+      - name: Cache RE/flex
+        id: cache-reflex
+        uses: actions/cache@v5
+        with:
+          path: ~/.reflex
+          key: reflex-6.1.0-ubuntu-latest
+
+      - name: Build RE/flex
+        if: steps.cache-reflex.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch v6.1.0 --depth 1 https://github.com/Genivia/RE-flex reflex-src
+          cd reflex-src
+          ./build.sh
+          mkdir -p ~/.reflex/bin ~/.reflex/include ~/.reflex/lib
+          cp bin/reflex ~/.reflex/bin/
+          cp -r include/reflex ~/.reflex/include/
+          cp lib/libreflex.a ~/.reflex/lib/
+
+      - name: Install RE/flex
+        run: |
+          sudo cp ~/.reflex/bin/reflex /usr/local/bin/
+          sudo cp -r ~/.reflex/include/reflex /usr/local/include/
+          sudo cp ~/.reflex/lib/libreflex.a /usr/local/lib/
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: tools/set-version.sh --no-check "$VERSION"
+
+      - name: Build and test
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --parallel $(nproc)
+          ctest --test-dir build --output-on-failure -j$(nproc)
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -am "release: $VERSION"
+          git tag -a "v$VERSION" -m "gambas-asn1 $VERSION"
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --parallel $(nproc)
+          cmake --install build-release --prefix "dist/asn1cpp-$VERSION"
+          tar -C dist -czf "asn1cpp-$VERSION-linux-x86_64.tar.gz" "asn1cpp-$VERSION"
+          git archive --prefix="gambas-asn1-$VERSION/" -o "gambas-asn1-$VERSION.tar.gz" "v$VERSION"
+          ls -l ./*.tar.gz
+
+      - name: Push
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+
+      - name: GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          gh release create "v$VERSION" --verify-tag --title "gambas-asn1 $VERSION" --generate-notes \
+              "asn1cpp-$VERSION-linux-x86_64.tar.gz" "gambas-asn1-$VERSION.tar.gz"
+
+  publish-java:
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/java-release.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+    secrets: inherit
+
+  next-version:
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Set next version
+        env:
+          NEXT: ${{ needs.prepare.outputs.next }}
+        run: |
+          tools/set-version.sh --no-check "$NEXT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -am "version: $NEXT development"
+          git push origin HEAD:refs/heads/main

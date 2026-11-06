@@ -6,7 +6,7 @@ plugins {
 
 group = "io.github.schramp.gambasasn1"
 // The default is ../VERSION as a snapshot; a release sets -Pversion=X.Y.Z
-// (the CI release job takes it from the tag and checks it against VERSION).
+// (the java-release workflow, which checks it against VERSION).
 version = providers.gradleProperty("version")
     .getOrElse(rootDir.resolve("../VERSION").readText().trim() + "-SNAPSHOT")
 

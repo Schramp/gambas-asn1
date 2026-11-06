@@ -112,7 +112,7 @@
                   <length string="${asn1cpp.found}" trim="true" when="greater" length="0"/>
                 </condition>
                 <condition property="asn1cpp.ref" value="main"
-                           else="java-runtime-v${asn1cpp.requiredVersion}">
+                           else="v${asn1cpp.requiredVersion}">
                   <contains string="${gambasasn1.version}" substring="-SNAPSHOT"/>
                 </condition>
                 <condition property="asn1cpp.ok">
