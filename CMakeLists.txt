@@ -1,5 +1,54 @@
 cmake_minimum_required(VERSION 3.20)
-project(asn1cpp VERSION 0.1.0 LANGUAGES CXX)
+# VERSION is the one version of the compiler and every runtime: generated
+# code needs the runtime of the compiler version that produced it.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ASN1CPP_VERSION_FILE LIMIT_COUNT 1)
+# The copies of the version checked below rerun the checks when edited.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION rust-runtime/wire/Cargo.toml
+             runtime/include/asn1cpp/Version.hpp examples/contact-book/maven/pom.xml)
+project(asn1cpp VERSION ${ASN1CPP_VERSION_FILE}
+        HOMEPAGE_URL "https://github.com/Schramp/gambas-asn1" LANGUAGES CXX)
+
+# Cargo cannot read its version from a file, so check it here.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/rust-runtime/wire/Cargo.toml" ASN1CPP_CARGO_VERSION
+     REGEX "^version = " LIMIT_COUNT 1)
+if(NOT ASN1CPP_CARGO_VERSION STREQUAL "version = \"${PROJECT_VERSION}\"")
+    message(FATAL_ERROR "rust-runtime/wire/Cargo.toml has ${ASN1CPP_CARGO_VERSION}, "
+                        "VERSION has ${PROJECT_VERSION}: set both to the same version")
+endif()
+# The Java runtime's version marker class, which generated Java refers to.
+string(REPLACE "." "_" _asn1cpp_marker "RuntimeVersion_${PROJECT_VERSION}")
+set(_asn1cpp_marker_dir "${CMAKE_CURRENT_SOURCE_DIR}/java-runtime/src/main/java/io/github/schramp/gambasasn1/wire")
+if(NOT EXISTS "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java")
+    message(FATAL_ERROR "VERSION is ${PROJECT_VERSION}, so the Java runtime needs "
+                        "${_asn1cpp_marker_dir}/${_asn1cpp_marker}.java (rename the RuntimeVersion_* class)")
+endif()
+# The C++ runtime's version macros, which generated headers static_assert on.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include/asn1cpp/Version.hpp" _asn1cpp_cpp_version
+     REGEX "^#define ASN1CPP_RUNTIME_VERSION \"")
+if(NOT _asn1cpp_cpp_version STREQUAL "#define ASN1CPP_RUNTIME_VERSION \"${PROJECT_VERSION}\"")
+    message(FATAL_ERROR "runtime/include/asn1cpp/Version.hpp has ${_asn1cpp_cpp_version}, "
+                        "VERSION has ${PROJECT_VERSION}: set both (and the _MAJOR/_MINOR/_PATCH macros) to the same version")
+endif()
+foreach(_part MAJOR MINOR PATCH)
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include/asn1cpp/Version.hpp" _line
+         REGEX "^#define ASN1CPP_RUNTIME_VERSION_${_part} ")
+    if(NOT _line STREQUAL "#define ASN1CPP_RUNTIME_VERSION_${_part} ${PROJECT_VERSION_${_part}}")
+        message(FATAL_ERROR "runtime/include/asn1cpp/Version.hpp: ${_line}, but VERSION is ${PROJECT_VERSION}")
+    endif()
+endforeach()
+file(GLOB _asn1cpp_markers CONFIGURE_DEPENDS "${_asn1cpp_marker_dir}/RuntimeVersion_*.java")
+list(LENGTH _asn1cpp_markers _asn1cpp_marker_count)
+if(NOT _asn1cpp_marker_count EQUAL 1)
+    message(FATAL_ERROR "the Java runtime must hold exactly one RuntimeVersion_* class: ${_asn1cpp_markers}")
+endif()
+# The Maven example's default runtime version (its Makefile reads VERSION).
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/examples/contact-book/maven/pom.xml" _asn1cpp_pom_version
+     REGEX "<gambasasn1.version>" LIMIT_COUNT 1)
+string(STRIP "${_asn1cpp_pom_version}" _asn1cpp_pom_version)
+if(NOT _asn1cpp_pom_version STREQUAL "<gambasasn1.version>${PROJECT_VERSION}-SNAPSHOT</gambasasn1.version>")
+    message(FATAL_ERROR "examples/contact-book/maven/pom.xml has ${_asn1cpp_pom_version}, "
+                        "VERSION has ${PROJECT_VERSION}: set gambasasn1.version to ${PROJECT_VERSION}-SNAPSHOT")
+endif()
 
 # Must be called here (top-level scope), not just in tests/CMakeLists.txt —
 # CMake only emits build/CTestTestfile.cmake (what `ctest --test-dir build`

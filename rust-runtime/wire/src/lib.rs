@@ -42,6 +42,7 @@ pub mod type_tag;
 pub mod strings;
 pub mod validate;
 pub mod value;
+pub mod version;
 pub mod xer;
 
 pub use ber::reader::{DecodeError, Reader, Tlv};

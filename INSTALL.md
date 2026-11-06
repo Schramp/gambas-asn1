@@ -6,6 +6,27 @@ language: C++ (`runtime/`), Rust (`rust-runtime/wire/`) and Java
 that produced it, so install the compiler and the runtimes from the same
 checkout, and install them again after you update it.
 
+The top-level `VERSION` file holds the one version of the compiler and all
+runtimes. CMake and Gradle read it. The CMake configure step stops when one
+of these copies, which cannot read the file, has another version:
+
+- `rust-runtime/wire/Cargo.toml` (`version = "X.Y.Z"`, which every
+  generated Rust file asserts on at compile time);
+- `runtime/include/asn1cpp/Version.hpp` (the `ASN1CPP_RUNTIME_VERSION*`
+  macros, which every generated C++ header `static_assert`s on, and the
+  library symbol `asn1::runtime_version_X_Y_Z` they name, which every
+  generated C++ source refers to);
+- the Java runtime's marker class
+  `java-runtime/src/main/java/io/github/schramp/gambasasn1/wire/RuntimeVersion_X_Y_Z.java`,
+  which every generated Java class refers to (Gradle also checks it is the
+  only one, so a release cannot ship a stale marker);
+- `examples/contact-book/maven/pom.xml`'s default `gambasasn1.version`
+  (`X.Y.Z-SNAPSHOT`; the example's Makefile reads `VERSION` itself).
+
+A Java runtime built from a checkout is `VERSION` plus `-SNAPSHOT`; a release
+is published from tag `java-runtime-vX.Y.Z` only when `X.Y.Z` is the
+`VERSION` of that commit.
+
 ## 1. Build
 
 Needs CMake ≥ 3.20, GCC or Clang with C++20, Bison ≥ 3.8 and RE/flex 6.1.0.
@@ -225,7 +246,22 @@ phase): when the compiler is missing or another version, the build stops
 with the git ref to build (`main` for a `-SNAPSHOT` runtime, tag
 `java-runtime-vX.Y.Z` for a release) and the commands from this file. Copy
 that plugin and the `regex-property` execution too for the same message in
-your own project. `make test` there
+your own project.
+
+Two ways to keep a project's generated code:
+
+- **ASN.1 checked in, compiler needed** (the default above): every build
+  checks the compiler and regenerates into `target/generated-sources`.
+- **Generated code checked in, runtime only**: set `asn1cpp.skip` to `true`
+  and `asn1cpp.generated` to a committed directory. A plain build then needs
+  no compiler and compiles the committed code; `mvn -Dasn1cpp.skip=false
+  generate-sources` regenerates it with the checked compiler, after which you
+  commit the result. The committed code still refers to its runtime's
+  version marker, so it does not compile against a runtime of another
+  version, and each file's first line names the compiler version that
+  produced it.
+
+`make test` in `examples/contact-book/maven/` builds both ways. `make test` there
 installs the runtime into a private repository (`m2/`), runs `mvn compile`
 and checks the output.
 

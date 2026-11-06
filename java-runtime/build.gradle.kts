@@ -5,8 +5,10 @@ plugins {
 }
 
 group = "io.github.schramp.gambasasn1"
-// A release sets -Pversion=X.Y.Z (the CI release job takes it from the tag).
-version = providers.gradleProperty("version").getOrElse("0.1.0-SNAPSHOT")
+// The default is ../VERSION as a snapshot; a release sets -Pversion=X.Y.Z
+// (the CI release job takes it from the tag and checks it against VERSION).
+version = providers.gradleProperty("version")
+    .getOrElse(rootDir.resolve("../VERSION").readText().trim() + "-SNAPSHOT")
 
 java {
     toolchain {
@@ -24,6 +26,18 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+// Generated code refers to the empty class RuntimeVersion_X_Y_Z of its
+// compiler version, so it compiles and links only against this runtime.
+// The class is checked in (plain javac builds compile these sources too);
+// check that it is the one of this version.
+val runtimeVersionClass = "RuntimeVersion_" + version.toString().substringBefore('-').replace('.', '_')
+val runtimeVersionMarkers = file("src/main/java/io/github/schramp/gambasasn1/wire").listFiles()!!
+    .map { it.name }.filter { it.startsWith("RuntimeVersion_") }
+check(runtimeVersionMarkers == listOf("$runtimeVersionClass.java")) {
+    "version $version needs exactly one marker, src/main/java/io/github/schramp/gambasasn1/wire/" +
+        "$runtimeVersionClass.java; found $runtimeVersionMarkers"
 }
 
 tasks.withType<JavaCompile>().configureEach {
