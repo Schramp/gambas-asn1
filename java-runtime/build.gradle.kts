@@ -28,6 +28,15 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
+// Generated code refers to the empty class RuntimeVersion_X_Y_Z of its
+// compiler version, so it compiles and links only against this runtime.
+// The class is checked in (plain javac builds compile these sources too);
+// check that it is the one of this version.
+val runtimeVersionClass = "RuntimeVersion_" + version.toString().substringBefore('-').replace('.', '_')
+check(file("src/main/java/io/github/schramp/gambasasn1/wire/$runtimeVersionClass.java").isFile) {
+    "version $version needs src/main/java/io/github/schramp/gambasasn1/wire/$runtimeVersionClass.java"
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
 }

@@ -8,7 +8,9 @@ checkout, and install them again after you update it.
 
 The top-level `VERSION` file holds the one version of the compiler and all
 runtimes: CMake and Gradle read it, and the CMake configure step stops when
-`rust-runtime/wire/Cargo.toml` has another version. A Java runtime built from
+`rust-runtime/wire/Cargo.toml` has another version, or when the Java
+runtime's marker class (`java-runtime/src/main/java/io/github/schramp/gambasasn1/wire/RuntimeVersion_X_Y_Z.java`,
+which generated Java refers to) is not the one of `VERSION`. A Java runtime built from
 a checkout is `VERSION` plus `-SNAPSHOT`; a release is published from tag
 `java-runtime-vX.Y.Z` only when `X.Y.Z` is the `VERSION` of that commit.
 

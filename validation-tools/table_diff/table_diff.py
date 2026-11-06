@@ -175,9 +175,10 @@ def dump_rust(work, files, flags, slot):
 # TableDump.dump on each, compiled against java-runtime's classes.
 
 JAVA_DUMPS_PER_METHOD = 500  # keeps each method under the JVM's 64 KiB code limit
-# A typeref alias (`A ::= B`) is an empty subclass with B's tables, so it
+# A typeref alias (`A ::= B`) is a subclass with B's tables and only the
+# runtime version marker field, so it
 # has no tables of its own to dump, as a C++ `using` or a Rust `pub type`.
-JAVA_ALIAS = re.compile(r"^public class \w+ extends \w+ \{\n\}", re.M)
+JAVA_ALIAS = re.compile(r"^public class \w+ extends \w+ \{\n(?:    private static final java\.lang\.Class<\?> asn1cpp\$runtimeVersion = [^\n]*\n)?\}", re.M)
 
 
 def dump_java(work, files, flags, slot):
