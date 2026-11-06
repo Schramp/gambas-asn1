@@ -2531,6 +2531,7 @@ void RustBackend::finalize_output(const std::string& out_dir) const {
     namespace fs = std::filesystem;
     fs::path lib_rs = fs::path(out_dir) / "lib.rs";
     std::ofstream lib(lib_rs);
+    lib << file_banner();
     for (const auto& entry : fs::directory_iterator(out_dir)) {
         if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
         std::string stem = entry.path().stem().string();
