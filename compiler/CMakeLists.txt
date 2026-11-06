@@ -69,7 +69,8 @@ target_compile_options(asn1cpp PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # via --stdlib-dir.
 target_compile_definitions(asn1cpp PRIVATE
     ASN1CPP_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/predefined"
-    ASN1CPP_VERSION="${PROJECT_VERSION}")
+    ASN1CPP_VERSION="${PROJECT_VERSION}"
+    ASN1CPP_HOMEPAGE_URL="${PROJECT_HOMEPAGE_URL}")
 
 # ---- install: the compiler, and the predefined-classes module where an
 # installed compiler looks for it (relative to its own directory).
