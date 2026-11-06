@@ -2633,7 +2633,9 @@ suffix included, stops it). It:
 
 1. sets `VERSION` and its copies to `X.Y.Z` (`tools/set-version.sh`), then
    builds and runs ctest as CI does;
-2. commits `release: X.Y.Z`, tags `vX.Y.Z` and pushes both to `main`;
+2. tags `vX.Y.Z` and pushes the tag to `main`; when `main` held another
+   version than `X.Y.Z` (step 5 of the last release normally set it to
+   `X.Y.Z` already), it first commits the change as `release: X.Y.Z`;
 3. creates the GitHub Release `vX.Y.Z` with
    `asn1cpp-X.Y.Z-linux-x86_64.tar.gz` (the `cmake --install` tree: compiler,
    C++ runtime, Rust runtime crate) and the source tarball
