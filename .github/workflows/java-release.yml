@@ -1,8 +1,9 @@
 name: java-release
 
 # Publishes java-runtime (io.github.schramp.gambasasn1:gambasasn1-wire) to
-# Maven Central through the Central Portal. Triggered by a tag
-# java-runtime-vX.Y.Z (version X.Y.Z) or by hand with a version.
+# Maven Central through the Central Portal, from the release tag vX.Y.Z.
+# The release workflow (release.yml) calls it after pushing that tag; run it
+# by hand with a version to publish an existing tag again.
 #
 # Repository secrets it needs:
 #   CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD  Central Portal user token
@@ -12,12 +13,15 @@ name: java-release
 # release is published from the Portal's Deployments page.
 
 on:
-  push:
-    tags: ['java-runtime-v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (X.Y.Z)'
+        description: 'Version to publish (X.Y.Z; tag vX.Y.Z must exist)'
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        type: string
         required: true
 
 permissions:
@@ -28,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
 
       - uses: actions/setup-java@v4
         with:
@@ -35,15 +41,14 @@ jobs:
           java-version: '21'
 
       # The version reaches every later step through env: only, never through
-      # ${{ }} inside a script, and must be plain X.Y.Z: a dispatch input or a
-      # tag name is text a writer chose, and a tag may hold ; $( ) or `.
+      # ${{ }} inside a script, and must be plain X.Y.Z: a dispatch input is
+      # text a writer chose, and may hold ; $( ) or `.
       - name: Version
         id: v
         env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           v="$INPUT_VERSION"
-          if [ -z "$v" ]; then v="${GITHUB_REF_NAME#java-runtime-v}"; fi
           if ! printf '%s' "$v" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
             echo "not a release version (X.Y.Z): '$v'"; exit 1
           fi

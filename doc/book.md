@@ -2610,7 +2610,7 @@ compiler; the default is `asn1cpp` on the `PATH`. Before that, in the
 When the compiler is missing, too old to know `--version`, or another
 version, the build stops and prints the version required, the git ref to
 build it from (`main` for a `-SNAPSHOT` runtime, the release tag
-`java-runtime-vX.Y.Z` otherwise), the project URL, and the clone, build and
+`vX.Y.Z` otherwise), the project URL, and the clone, build and
 install commands. With `-Dasn1cpp.skip=true` the pom skips the check and the
 compiler and compiles the Java already in `asn1cpp.generated`: a project that
 checks its generated code in needs only the runtime to build, and the
@@ -2626,18 +2626,32 @@ runtime from Maven Central.
 `./java-runtime/gradlew -p java-runtime publishToMavenLocal` installs a
 snapshot (`0.1.0-SNAPSHOT`, or `-Pversion=...`) into `~/.m2`.
 
-Releases go through the `java-release` workflow
-(`.github/workflows/java-release.yml`):
+**Releasing.** One version covers the compiler and every runtime. Start the
+`release` workflow (`.github/workflows/release.yml`) on `main`, by hand, with
+the version `X.Y.Z` (digits and dots only; anything else, a `-SNAPSHOT`
+suffix included, stops it). It:
 
-1. Push a tag `java-runtime-vX.Y.Z`, or start the workflow by hand with a
-   version. The version must be plain `X.Y.Z` (digits and dots); anything
-   else, a `-SNAPSHOT` suffix included, stops the workflow.
-2. The workflow runs the runtime tests and builds a signed bundle.
-3. It uploads the bundle to the Central Portal as a user-managed
-   deployment.
-4. You publish the deployment from the Portal's Deployments page.
+1. sets `VERSION` and its copies to `X.Y.Z` (`tools/set-version.sh`), then
+   builds and runs ctest as CI does;
+2. commits `release: X.Y.Z`, tags `vX.Y.Z` and pushes both to `main`;
+3. creates the GitHub Release `vX.Y.Z` with
+   `asn1cpp-X.Y.Z-linux-x86_64.tar.gz` (the `cmake --install` tree: compiler,
+   C++ runtime, Rust runtime crate) and the source tarball
+   `gambas-asn1-X.Y.Z.tar.gz`;
+4. publishes the Java runtime through the `java-release` workflow: the
+   runtime tests, a signed bundle, uploaded to the Central Portal as a
+   user-managed deployment, which you publish from the Portal's Deployments
+   page;
+5. sets the next patch version `X.Y.(Z+1)` on `main` and pushes that as
+   `version: X.Y.(Z+1) development`.
 
-The workflow needs the repository secrets `CENTRAL_TOKEN_USERNAME` and
+With `dry_run` it does step 1 and builds the step-3 files, on any branch, and
+pushes and publishes nothing. If step 4 fails, start `java-release` by hand
+with the same version; it publishes from the tag `vX.Y.Z`.
+
+The workflow pushes to `main` with its own `GITHUB_TOKEN`, which works while
+`main` has no branch protection; with protection, GitHub Actions needs a
+bypass for it. The Java runtime workflow needs the repository secrets `CENTRAL_TOKEN_USERNAME` and
 `CENTRAL_TOKEN_PASSWORD` (a Central Portal user token for the
 `io.github.schramp` namespace), and `SIGNING_KEY` and `SIGNING_PASSWORD` (an
 ASCII-armoured PGP key whose public half is on a key server).
