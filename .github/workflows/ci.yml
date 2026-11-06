@@ -254,6 +254,18 @@ jobs:
           chmod +x build/compiler/asn1cpp
           python3 validation-tools/xval_sweep/xval_sweep.py --java --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
 
+      # Cross-language descriptor-table diff (validation-tools/table_diff) on
+      # the whole target lists, large schemas included; ctest runs only the
+      # small tests/ schemas. Same shard as the sweep above.
+      - name: Table diff C++ vs Rust and C++ vs Java (shard ${{ matrix.shard }})
+        env:
+          SHARD: ${{ matrix.shard != 'full' && format('--shard={0}/4', matrix.shard) || '' }}
+        run: |
+          rc=0
+          python3 validation-tools/table_diff/table_diff.py --lang cpp,rust -j 2 $SHARD || rc=1
+          python3 validation-tools/table_diff/table_diff.py --lang cpp,java -j 2 $SHARD || rc=1
+          exit $rc
+
       # Fuzz smoke run over the builds above: malformed BER/PER/XER/JER into
       # every C++, Rust and Java decoder; only a crash fails (xval_sweep --fuzz).
       - name: Fuzz smoke (xval_sweep --fuzz, shard ${{ matrix.shard }}/4)

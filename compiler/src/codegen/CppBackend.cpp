@@ -1377,7 +1377,8 @@ void CppBackend::emit_declaration_preamble(const std::string& module_comment, Ty
 ///        runtime headers; this reference makes linking against a
 ///        libasn1cpp_runtime of another version an undefined-reference
 ///        error. `[[gnu::used]]` keeps the otherwise unused pointer, and so
-///        the reference, in the object file.
+///        the reference, in the object file; a macro guard emits it once per
+///        translation unit, so unity builds of several sources still compile.
 /// @param declaration_filename The type's header file name, without `.hpp`.
 /// @param session              Per-type output session; writes the `.cpp` buffer.
 void CppBackend::emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
@@ -1391,8 +1392,13 @@ void CppBackend::emit_definition_preamble(const std::string& declaration_filenam
     os << "#ifdef __GNUC__\n";
     os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
     os << "#endif\n\n";
-    os << std::format("namespace {{ [[gnu::used]] const int* const asn1cpp_runtime_version = &asn1::runtime_version_{}; }}\n\n",
+    // Once per translation unit: a unity build puts several generated
+    // sources in one, where a second definition would be an error.
+    os << "#ifndef ASN1CPP_RUNTIME_VERSION_REFERENCED\n"
+          "#define ASN1CPP_RUNTIME_VERSION_REFERENCED\n";
+    os << std::format("namespace {{ [[gnu::used]] const int* const asn1cpp_runtime_version = &asn1::runtime_version_{}; }}\n",
                       runtime_version_ident());
+    os << "#endif\n\n";
 }
 
 void CppBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {

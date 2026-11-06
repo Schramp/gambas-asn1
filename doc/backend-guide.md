@@ -628,9 +628,10 @@ Value sets and normalisation:
 
 A field a runtime's tables do not carry is left out of its dump and reported as "not carried" (`--not-carried` lists them), never as a mismatch. An already-filed divergence is listed in `validation-tools/table_diff/known_diffs.txt` (`<lang> <field-path glob> <issue>`) and reported as known.
 
-Usage: `table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
+Usage: `table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [--targets-file F] [--shard K/N] [-j N] [-v] [--not-carried] [--rebuild]`.
 
-- The default target list, `validation-tools/table_diff/targets.txt`, holds the schemas every compared backend covers today, so a run takes minutes; ctest `table_diff_cpp_rust` runs it. While a backend is being built, keep this list at the few schemas it already covers and move schemas into it from `validation-tools/xval_sweep/targets.txt` as coverage grows. `--full` runs that whole list, including the large real-world schemas.
+- The default target list, `validation-tools/table_diff/targets.txt`, holds the schemas every compared backend covers today, so a run takes minutes; ctest `table_diff_cpp_rust` runs its `tests/` schemas. While a backend is being built, keep this list at the few schemas it already covers and move schemas into it from `validation-tools/xval_sweep/targets.txt` as coverage grows. `--full` runs that whole list, including the large real-world schemas.
 - A run that includes a backend still being built uses that backend's own list instead (Java: `java_targets.txt`, ctest `table_diff_cpp_java`), whose `-pdu` roots leave out the types it cannot emit yet.
+- ctest runs only the small `tests/` schemas of these lists (`--target tests/`), so it stays fast. CI's xval workers run the whole lists, the large example schemas such as ETSI LI included, each worker one `--shard K/N`: schemas go to the shard with the fewest schema bytes so far, largest first, so a large schema gets a shard of its own. Both lists build a schema's C++ leg in the same directory, so two runs must not run at once (ctest serializes them with a resource lock).
 - A dump is reused when its inputs (schema files, flags, compiler binary, runtime sources) are unchanged; `--rebuild` forces fresh builds.
 - The C++ harness is a unity build (one translation unit per core), since each generated file is a few lines of tables behind the same runtime headers.

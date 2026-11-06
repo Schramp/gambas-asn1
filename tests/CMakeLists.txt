@@ -465,6 +465,16 @@ add_test(NAME compiler_require_version_mismatch
             ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
 set_tests_properties(compiler_require_version_mismatch PROPERTIES
     PASS_REGULAR_EXPRESSION "does not match the required version 999.0.0")
+# Several generated sources in one translation unit (a unity build) still
+# compile: the runtime version reference is emitted once per unit.
+set(_dir ${CMAKE_CURRENT_BINARY_DIR}/cpp_generated_unity_build)
+add_test(NAME cpp_generated_unity_build
+    COMMAND sh -c "set -e; rm -rf '${_dir}'; mkdir -p '${_dir}'; cd '${_dir}'; \
+                   '$<TARGET_FILE:asn1cpp>' '${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1' -o gen >/dev/null; \
+                   for f in gen/*.cpp; do echo \"#include \\\"$PWD/$f\\\"\"; done > unity.cpp; \
+                   test $(grep -c include unity.cpp) -ge 2; \
+                   '${CMAKE_CXX_COMPILER}' -std=c++20 -I'${CMAKE_SOURCE_DIR}/runtime/include' -Igen -c unity.cpp -o unity.o")
+
 # The "other" runtime version for the version-mismatch tests: the patch
 # after this one, so it always differs from VERSION.
 math(EXPR _other_patch "${PROJECT_VERSION_PATCH} + 1")
@@ -3098,26 +3108,30 @@ endif()
 
 # Cross-language descriptor-table diff (validation-tools/table_diff,
 # doc/backend-guide.md Appendix A): the C++ and Rust runtimes dump every
-# generated type's tables and the dumps must match field by field, on the
-# default target list (validation-tools/table_diff/targets.txt).
+# generated type's tables and the dumps must match field by field. ctest
+# takes the small tests/ schemas of the default target list
+# (validation-tools/table_diff/targets.txt); CI's xval workers run the whole
+# list, the large example schemas included, one shard per worker.
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME table_diff_cpp_rust
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
-                --lang cpp,rust -j 2)
+                --lang cpp,rust --target tests/ -j 2)
+    # Both table diffs build the C++ leg of a schema in the same directory.
     set_tests_properties(table_diff_cpp_rust PROPERTIES
-        TIMEOUT 900 LABELS "rust")
+        TIMEOUT 600 LABELS "rust" RESOURCE_LOCK table_diff_testbuild)
 endif()
 
-# The same diff for the Java runtime, on the schemas the Java backend emits
-# so far (validation-tools/table_diff/java_targets.txt).
+# The same diff for the Java runtime, on the tests/ schemas the Java backend
+# emits so far (validation-tools/table_diff/java_targets.txt); the ETSI LI
+# schema of that list runs on the xval workers.
 if(WITH_JAVA_RUNTIME_TEST)
     add_test(NAME table_diff_cpp_java
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
-                --lang cpp,java -j 2)
+                --lang cpp,java --target tests/ -j 2)
     set_tests_properties(table_diff_cpp_java PROPERTIES
-        TIMEOUT 900 LABELS "java" RESOURCE_LOCK java_runtime_build)
+        TIMEOUT 600 LABELS "java" RESOURCE_LOCK "java_runtime_build;table_diff_testbuild")
 endif()
 
 # Java examples: build with plain javac and diff their output against the
