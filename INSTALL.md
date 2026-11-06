@@ -10,7 +10,8 @@ The top-level `VERSION` file holds the one version of the compiler and all
 runtimes. CMake and Gradle read it. The CMake configure step stops when one
 of these copies, which cannot read the file, has another version:
 
-- `rust-runtime/wire/Cargo.toml` (`version = "X.Y.Z"`);
+- `rust-runtime/wire/Cargo.toml` (`version = "X.Y.Z"`, which every
+  generated `lib.rs` asserts on at compile time);
 - `runtime/include/asn1cpp/Version.hpp` (the `ASN1CPP_RUNTIME_VERSION*`
   macros, which every generated C++ header `static_assert`s on);
 - the Java runtime's marker class
