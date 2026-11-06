@@ -465,6 +465,16 @@ add_test(NAME compiler_require_version_mismatch
             ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
 set_tests_properties(compiler_require_version_mismatch PROPERTIES
     PASS_REGULAR_EXPRESSION "does not match the required version 999.0.0")
+# Several generated sources in one translation unit (a unity build) still
+# compile: the runtime version reference is emitted once per unit.
+set(_dir ${CMAKE_CURRENT_BINARY_DIR}/cpp_generated_unity_build)
+add_test(NAME cpp_generated_unity_build
+    COMMAND sh -c "set -e; rm -rf '${_dir}'; mkdir -p '${_dir}'; cd '${_dir}'; \
+                   '$<TARGET_FILE:asn1cpp>' '${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1' -o gen >/dev/null; \
+                   for f in gen/*.cpp; do echo \"#include \\\"$PWD/$f\\\"\"; done > unity.cpp; \
+                   test $(grep -c include unity.cpp) -ge 2; \
+                   '${CMAKE_CXX_COMPILER}' -std=c++20 -I'${CMAKE_SOURCE_DIR}/runtime/include' -Igen -c unity.cpp -o unity.o")
+
 # The "other" runtime version for the version-mismatch tests: the patch
 # after this one, so it always differs from VERSION.
 math(EXPR _other_patch "${PROJECT_VERSION_PATCH} + 1")
