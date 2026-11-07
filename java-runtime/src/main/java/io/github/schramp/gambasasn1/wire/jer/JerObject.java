@@ -34,34 +34,70 @@ public final class JerObject {
     private JerObject() {
     }
 
-    /** Encodes {@code v} as one JER text, under its own PDU constraints when it is a PDU. */
+    /**
+     * Encodes {@code v} as one JER text, under its own PDU constraints when it is a PDU.
+     *
+     * @throws EncodeException if {@code v} has no JER encoding: a CHOICE with no alternative
+     *         selected, or a value JER cannot carry
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, rootConstraints(v));
     }
 
-    /** {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws EncodeException if {@code v} has no JER encoding: a CHOICE with no alternative
+     *         selected, or a value JER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, Constraints c) {
         return encode(v, c, null);
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no JER encoding: a CHOICE with no alternative
+     *         selected, or a value JER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         return encode(v, rootConstraints(v), opts);
     }
 
-    /** {@link #encode(AsMemberRef, Constraints)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef, Constraints)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no JER encoding: a CHOICE with no alternative
+     *         selected, or a value JER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, Constraints c, ContainedOptions opts) {
         JerWriter w = new JerWriter().withContained(opts);
         encodeValue(v.asMemberRef(), c, w);
         return w.toByteArray();
     }
 
-    /** Decodes one JER text into {@code v}; only whitespace may follow it. */
+    /**
+     * Decodes one JER text into {@code v}; only whitespace may follow it.
+     *
+     * @throws DecodeException if {@code data} is not a valid JER encoding of the type of {@code v}
+     *         followed by whitespace only (other text too when relaxed): malformed or truncated input,
+     *         nesting deeper than {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a
+     *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
+     *         offset where decoding stopped
+     */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, data, rootConstraints(v));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid JER encoding of the type of {@code v}
+     *         followed by whitespace only (other text too when relaxed): malformed or truncated input,
+     *         nesting deeper than {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a
+     *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
+     *         offset where decoding stopped
+     */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
         decode(v, data, c, DecodeOptions.DEFAULT);
     }
@@ -72,12 +108,26 @@ public final class JerObject {
      * also means the defaults, cast to {@code DecodeOptions}): constraint checks run over the
      * decoded value, relaxed lets other text follow the value, and rich
      * errors name the failing value's type and show the input there.
+     *
+     * @throws DecodeException if {@code data} is not a valid JER encoding of the type of {@code v}
+     *         followed by whitespace only (other text too when relaxed): malformed or truncated input,
+     *         nesting deeper than {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a
+     *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
+     *         offset where decoding stopped
      */
     public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
         decode(v, data, rootConstraints(v), opts);
     }
 
-    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid JER encoding of the type of {@code v}
+     *         followed by whitespace only (other text too when relaxed): malformed or truncated input,
+     *         nesting deeper than {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a
+     *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
+     *         offset where decoding stopped
+     */
     public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
         JerReader r = new JerReader(data).withOptions(opts);
         DecodeOptions o = r.options();

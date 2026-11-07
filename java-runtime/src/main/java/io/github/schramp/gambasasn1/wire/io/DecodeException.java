@@ -9,7 +9,7 @@ import java.util.HexFormat;
  * value being decoded ({@code Type.member[index].member}) and shows the
  * input octets at the offset.
  */
-public final class DecodeException extends RuntimeException {
+public final class DecodeException extends Asn1Exception {
     private static final long serialVersionUID = 1L;
     /** How many input octets an error with rich errors on shows. */
     public static final int CONTEXT_OCTETS = 8;

@@ -43,19 +43,37 @@ public final class XerObject {
     private XerObject() {
     }
 
-    /** Encodes {@code v} as a BASIC-XER document. */
+    /**
+     * Encodes {@code v} as a BASIC-XER document.
+     *
+     * @throws EncodeException if {@code v} has no XER encoding: a CHOICE with no alternative
+     *         selected, or a value XER cannot carry
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, null);
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no XER encoding: a CHOICE with no alternative
+     *         selected, or a value XER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         XerWriter w = new XerWriter().withContained(opts);
         encodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), w, 0);
         return w.toByteArray();
     }
 
-    /** Decodes a BASIC-XER document into {@code v}. */
+    /**
+     * Decodes a BASIC-XER document into {@code v}.
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, new XerReader(data));
     }
@@ -66,6 +84,12 @@ public final class XerObject {
      * extensions as {@link #decodeLenient} does, constraint checks run over
      * the decoded value, and rich errors name the failing value's type and
      * show the input there.
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
         XerReader r = new XerReader(data).withOptions(opts);
@@ -93,12 +117,26 @@ public final class XerObject {
     /**
      * {@link #decode(AsMemberRef, byte[])} that also accepts the asn1c
      * extensions (text BOOLEAN, hex BIT STRING).
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decodeLenient(AsMemberRef v, byte[] data) {
         decode(v, new XerReader(data, true));
     }
 
-    /** Decodes one document from {@code r} into {@code v}. */
+    /**
+     * Decodes one document from {@code r} into {@code v}.
+     *
+     * @throws DecodeException if the next document in {@code r} is not a valid XER encoding of the
+     *         type of {@code v} (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
     public static void decode(AsMemberRef v, XerReader r) {
         r.skipWhitespace();
         decodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), r);

@@ -41,19 +41,34 @@ public final class PerObject {
     private PerObject() {
     }
 
-    /** Encodes {@code v} as one complete encoding, under its own PDU constraints when it is a PDU. */
+    /**
+     * Encodes {@code v} as one complete encoding, under its own PDU constraints when it is a PDU.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, rootConstraints(v));
     }
 
-    /** {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v, Constraints c) {
         PerWriter w = new PerWriter();
         encodeValue(v.asMemberRef(), c, w);
         return w.toByteArray();
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; {@code opts} may be null. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; {@code opts} may be null.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         PerWriter w = new PerWriter().withContained(opts);
         encodeValue(v.asMemberRef(), rootConstraints(v), w);
@@ -64,12 +79,26 @@ public final class PerObject {
      * Decodes one complete encoding into {@code v}; only the padding of
      * X.691 §11.1.3.1 may follow it, or the one zero octet that stands for
      * an empty encoding.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, data, rootConstraints(v));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
         decodeWhole(v, data, c, new PerReader(data));
     }
@@ -78,12 +107,26 @@ public final class PerObject {
      * {@link #decode(AsMemberRef, byte[])} under the decoder settings
      * {@code opts} ({@link DecodeOptions#DEFAULT} for the defaults; a null
      * also means the defaults, cast to {@code DecodeOptions}).
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
         decode(v, data, rootConstraints(v), opts);
     }
 
-    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
     public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
         decodeWhole(v, data, c, new PerReader(data).withOptions(opts));
     }
@@ -172,6 +215,11 @@ public final class PerObject {
      * padding a decoder removes.
      *
      * @return the octets the encoding takes, its padding included (X.691 §11.1.3.1)
+     * @throws DecodeException if the start of the data of {@code r} is not a valid PER encoding of
+     *         the type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static int decodePrefix(AsMemberRef v, PerReader r) {
         decodeValue(v.asMemberRef(), rootConstraints(v), r);
@@ -182,6 +230,12 @@ public final class PerObject {
      * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
      * where every decoded node starts, in bits from the start of
      * {@code data}. {@code opts} may be null.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
         Positions p = Positions.recording();

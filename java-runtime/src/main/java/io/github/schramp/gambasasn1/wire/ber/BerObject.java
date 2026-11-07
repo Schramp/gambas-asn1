@@ -43,12 +43,22 @@ public final class BerObject {
     private BerObject() {
     }
 
-    /** Encodes {@code v} with its type's own framing. */
+    /**
+     * Encodes {@code v} with its type's own framing.
+     *
+     * @throws EncodeException if {@code v} has no BER encoding: a CHOICE with no alternative
+     *         selected, or a value BER cannot carry
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, null);
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no BER encoding: a CHOICE with no alternative
+     *         selected, or a value BER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         ByteSink out = new ByteSink();
         encodeMemberRef(v.asMemberRef(), v.berFraming(), out, opts);
@@ -58,12 +68,26 @@ public final class BerObject {
     /**
      * Decodes the first value in {@code data} into {@code v}, with its
      * type's own framing.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, new BerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
     public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
         decode(v, new BerReader(data).withOptions(opts));
     }
@@ -72,6 +96,12 @@ public final class BerObject {
      * Decodes one value from {@code r} into {@code v}, under the reader's
      * {@link DecodeOptions}; the reader is left after it, so records can
      * be read back to back.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decode(AsMemberRef v, BerReader r) {
         DecodeOptions o = r.options();
@@ -168,6 +198,12 @@ public final class BerObject {
     /**
      * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
      * where every decoded node starts. {@code opts} may be null.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
         return decodeWithPositions(v, new BerReader(data).withOptions(opts));
@@ -178,6 +214,12 @@ public final class BerObject {
      * decoded node starts, in bits from the reader's position at the call;
      * records read back to back each get their own positions. The reader is
      * left after the value.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) {
         Positions p = Positions.recording();
@@ -192,7 +234,12 @@ public final class BerObject {
         return new Decoded(r.position() - start, p.withBase(-r.absoluteBit(start)));
     }
 
-    /** Encodes one member, alternative or element under its row's framing (X.690 §8.14). */
+    /**
+     * Encodes one member, alternative or element under its row's framing (X.690 §8.14).
+     *
+     * @throws EncodeException if the value of {@code m} has no BER encoding: a CHOICE with no
+     *         alternative selected, or a value BER cannot carry
+     */
     public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out) {
         encodeMemberRef(m, framing, out, null);
     }
@@ -201,6 +248,9 @@ public final class BerObject {
      * {@link #encodeMemberRef(MemberRef, BerTagging, ByteSink)} with the
      * contained-value settings {@code opts} (null for the defaults), used when
      * a modified contained value is re-encoded.
+     *
+     * @throws EncodeException if the value of {@code m} has no BER encoding: a CHOICE with no
+     *         alternative selected, or a value BER cannot carry
      */
     public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out, ContainedOptions opts) {
         switch (m) {
@@ -255,6 +305,12 @@ public final class BerObject {
      * or SEQUENCE OF/SET OF value enters one nesting level of {@code r}, so
      * a recursive type (X.680 §3.6.55) cannot recurse past
      * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code m}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
     public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);

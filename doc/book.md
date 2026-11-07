@@ -1281,6 +1281,12 @@ for (byte[] record : records) {
 | Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
 | Java | `BerObject`/`XerObject`/`JerObject`/`PerObject.encode` throw `io.EncodeException`, a `RuntimeException` (callers need not catch or declare it) |
 
+In Java both exceptions extend `io.Asn1Exception` (itself a
+`RuntimeException`), so one `catch (Asn1Exception e)` handles every encode
+and decode failure, for example in a loop that decodes and re-encodes each
+record. The Javadoc of every public `encode` and `decode` method names the
+exception it throws and when (`@throws`).
+
 Causes of a per-record error:
 
 - **Malformed input** — truncated or inconsistent TLVs, wrong tags, bad XML/JSON (decode).
