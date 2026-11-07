@@ -20,7 +20,7 @@ class BerReaderTest {
     }
 
     @Test
-    void tagRoundTrip() {
+    void tagRoundTrip() throws DecodeException {
         for (TagClass cls : TagClass.values()) {
             for (int n : new int[] {0, 1, 30, 31, 127, 128, 16383, 16384, Integer.MAX_VALUE}) {
                 for (boolean constructed : new boolean[] {false, true}) {
@@ -37,7 +37,7 @@ class BerReaderTest {
     }
 
     @Test
-    void definiteLengthNested() {
+    void definiteLengthNested() throws DecodeException {
         BerReader r = new BerReader(bytes(0x30, 0x06, 0x01, 0x01, 0xFF, 0x02, 0x01, 0x2A, 0x05, 0x00));
         Tlv seq = r.readTlv();
         assertEquals(Tag.universal(UniversalTag.SEQUENCE, true), seq.tag());
@@ -50,7 +50,7 @@ class BerReaderTest {
     }
 
     @Test
-    void indefiniteLengthNested() {
+    void indefiniteLengthNested() throws DecodeException {
         // [0] { SEQUENCE (indefinite) { INTEGER 5 } } with end-of-contents octets
         BerReader r = new BerReader(bytes(0xA0, 0x80, 0x30, 0x80, 0x02, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00));
         Tlv outer = r.readTlv();
@@ -61,7 +61,7 @@ class BerReaderTest {
     }
 
     @Test
-    void longLength() {
+    void longLength() throws DecodeException {
         byte[] data = new byte[4 + 300];
         data[0] = 0x04;
         data[1] = (byte) 0x82;

@@ -46,7 +46,7 @@ class SetBerTest {
     }
 
     /** The component TLVs of an encoded SET, as they appear. */
-    private static List<byte[]> components(byte[] der) {
+    private static List<byte[]> components(byte[] der) throws DecodeException {
         BerReader outer = new BerReader(der);
         BerReader r = new BerReader(outer.readTlv().value());
         ByteSource src = r.source();
@@ -68,7 +68,7 @@ class SetBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -77,7 +77,7 @@ class SetBerTest {
     /** asn1c's components in reverse order decode to the same value, which re-encodes canonically. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesComponentsInAnyOrder(Vectors.Vector vec) {
+    void decodesComponentsInAnyOrder(Vectors.Vector vec) throws DecodeException {
         List<byte[]> parts = components(vec.der());
         Collections.reverse(parts);
         Asn1Pdu canonical = TYPES.get(vec.type()).get();
@@ -104,7 +104,7 @@ class SetBerTest {
     }
 
     @Test
-    void malformedInputIsADecodeError() {
+    void malformedInputIsADecodeError() throws DecodeException {
         List<byte[]> parts = components(hex("310A800200C7810100830102"));
         // A mandatory component missing.
         assertThrows(DecodeException.class, () -> BerObject.decode(new Rec(), set(parts.subList(0, 2))));

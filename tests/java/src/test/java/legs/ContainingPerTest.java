@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -35,7 +37,7 @@ class ContainingPerTest {
     /** Every asn1c UPER decodes and re-encodes byte for byte; undecodable contents stay raw. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("uper")
-    void decodesAsn1cUperAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cUperAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = ContainingTest.TYPES.get(vec.type()).get();
         PerObject.decode(v, vec.asn1cUper());
         assertArrayEquals(vec.asn1cUper(), PerObject.encode(v));
@@ -46,7 +48,7 @@ class ContainingPerTest {
      * asn1c. (Written back as BER, its contents become BER: X.682 §11.4.)
      */
     @Test
-    void perContentsMatchAsn1c() {
+    void perContentsMatchAsn1c() throws DecodeException {
         Vectors.Vector vec = row("Holder", "<viaConstraint>008280");
         Holder h = new Holder();
         BerObject.decode(h, vec.der());
@@ -58,7 +60,7 @@ class ContainingPerTest {
      * the outer value is; the sidecar fields, configured BER, keep their bytes.
      */
     @Test
-    void berContentsAreWrittenAsPer() {
+    void berContentsAreWrittenAsPer() throws DecodeException {
         Holder b = new Holder();
         BerObject.decode(b, row("Holder", "<viaConstraint>3003800105").der());
         Holder back = new Holder();
@@ -73,7 +75,7 @@ class ContainingPerTest {
     }
 
     @Test
-    void encodesAContainedChoiceAlternative() {
+    void encodesAContainedChoiceAlternative() throws DecodeException {
         Pick p = new Pick();
         p.select(0);
         Inner in = new Inner();

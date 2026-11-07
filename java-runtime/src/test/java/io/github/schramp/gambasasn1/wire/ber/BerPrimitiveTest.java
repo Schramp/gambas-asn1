@@ -51,7 +51,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void booleanAcceptsAnyNonZeroOctetAsTrue() {
+    void booleanAcceptsAnyNonZeroOctetAsTrue() throws DecodeException {
         Asn1Boolean b = new Asn1Boolean();
         BerPrimitive.decode(b, BerTagging.DELEGATE, new BerReader(bytes(0x01, 0x01, 0x2A)));
         assertEquals(true, b.get());
@@ -68,7 +68,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void nullHasNoContents() {
+    void nullHasNoContents() throws DecodeException {
         assertArrayEquals(bytes(0x05, 0x00), encode(new Asn1Null(), BerTagging.DELEGATE));
         BerPrimitive.decode(new Asn1Null(), BerTagging.DELEGATE, new BerReader(bytes(0x05, 0x00)));
         assertThrows(DecodeException.class,
@@ -84,7 +84,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void implicitReplacesTheNaturalTag() {
+    void implicitReplacesTheNaturalTag() throws DecodeException {
         byte[] wire = encode(new Asn1Boolean(true), IMPLICIT_CTX5);
         assertArrayEquals(bytes(0x85, 0x01, 0xFF), wire);
         Asn1Boolean b = new Asn1Boolean();
@@ -93,7 +93,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void explicitWrapsTheNaturalEncoding() {
+    void explicitWrapsTheNaturalEncoding() throws DecodeException {
         byte[] wire = encode(new Asn1Null(), EXPLICIT_APP3);
         assertArrayEquals(bytes(0x63, 0x02, 0x05, 0x00), wire);
         BerPrimitive.decode(new Asn1Null(), EXPLICIT_APP3, new BerReader(wire));
@@ -107,7 +107,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void decodeLeavesTheReaderAfterTheValue() {
+    void decodeLeavesTheReaderAfterTheValue() throws DecodeException {
         BerReader r = new BerReader(bytes(0x05, 0x00, 0x01, 0x01, 0xFF));
         BerPrimitive.decode(new Asn1Null(), BerTagging.DELEGATE, r);
         Asn1Boolean b = new Asn1Boolean();
@@ -129,7 +129,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void integerRoundTrips() {
+    void integerRoundTrips() throws DecodeException {
         for (long n : new long[] {0, 1, -1, 127, 128, -128, -129, 255, 256, 65535, -65536, Integer.MAX_VALUE,
                 Integer.MIN_VALUE, Long.MAX_VALUE, Long.MIN_VALUE}) {
             Asn1Integer back = new Asn1Integer();
@@ -147,7 +147,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void octetStringContentsAreTheOctets() {
+    void octetStringContentsAreTheOctets() throws DecodeException {
         assertArrayEquals(bytes(0x04, 0x03, 0x01, 0x02, 0x03), encode(new Asn1OctetString(bytes(1, 2, 3)), BerTagging.DELEGATE));
         assertArrayEquals(bytes(0x04, 0x00), encode(new Asn1OctetString(), BerTagging.DELEGATE));
         Asn1OctetString o = new Asn1OctetString();
@@ -156,7 +156,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void longOctetStringUsesTheLongLengthForm() {
+    void longOctetStringUsesTheLongLengthForm() throws DecodeException {
         byte[] big = new byte[300];
         big[299] = 7;
         byte[] wire = encode(new Asn1OctetString(big), BerTagging.DELEGATE);
@@ -167,7 +167,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void bitStringLeadsWithTheUnusedBitCount() {
+    void bitStringLeadsWithTheUnusedBitCount() throws DecodeException {
         assertArrayEquals(bytes(0x03, 0x03, 0x04, 0xA5, 0xF0), encode(new Asn1BitString(bytes(0xA5, 0xF0), 4), BerTagging.DELEGATE));
         assertArrayEquals(bytes(0x03, 0x01, 0x00), encode(new Asn1BitString(), BerTagging.DELEGATE));
         Asn1BitString b = new Asn1BitString();
@@ -206,7 +206,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void charStringOctetsSurviveARoundTrip() {
+    void charStringOctetsSurviveARoundTrip() throws DecodeException {
         // Not UTF-8: kept as sent, as the C++ runtime does.
         Asn1Utf8String s = new Asn1Utf8String();
         BerPrimitive.decode(s, BerTagging.DELEGATE, new BerReader(bytes(0x0C, 0x02, 0xFF, 0xFE)));
@@ -218,7 +218,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void objectIdentifierCombinesTheFirstTwoArcs() {
+    void objectIdentifierCombinesTheFirstTwoArcs() throws DecodeException {
         assertArrayEquals(bytes(0x06, 0x03, 0x55, 0x04, 0x03), encode(new Asn1ObjectIdentifier(2, 5, 4, 3), BerTagging.DELEGATE));
         // X.690 §8.19.5 example: {2 999 3}, first subidentifier 1079.
         assertArrayEquals(bytes(0x06, 0x03, 0x88, 0x37, 0x03), encode(new Asn1ObjectIdentifier(2, 999, 3), BerTagging.DELEGATE));
@@ -229,7 +229,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void objectIdentifierFirstSubidentifierBoundaries() {
+    void objectIdentifierFirstSubidentifierBoundaries() throws DecodeException {
         for (long[] arcs : new long[][] {{0, 39}, {1, 0}, {1, 39}, {2, 0}, {2, Asn1ObjectIdentifier.MAX_ARC}}) {
             byte[] wire = encode(new Asn1ObjectIdentifier(arcs), BerTagging.DELEGATE);
             Asn1ObjectIdentifier o = new Asn1ObjectIdentifier();
@@ -255,7 +255,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void relativeOidHasOneSubidentifierPerArc() {
+    void relativeOidHasOneSubidentifierPerArc() throws DecodeException {
         assertArrayEquals(bytes(0x0D, 0x04, 0xC2, 0x7B, 0x03, 0x02), encode(new Asn1RelativeOid(8571, 3, 2), BerTagging.DELEGATE));
         assertArrayEquals(bytes(0x8D, 0x02, 0x01, 0x02), encode(new Asn1RelativeOid(1, 2), new BerTagging.Implicit(Tag.context(13, false))));
         Asn1RelativeOid r = new Asn1RelativeOid();
@@ -265,7 +265,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void timeTypesAreTheirTextUnderTheirOwnTag() {
+    void timeTypesAreTheirTextUnderTheirOwnTag() throws DecodeException {
         byte[] utc = encode(new Asn1UtcTime("240115143000Z"), BerTagging.DELEGATE);
         assertArrayEquals(bytes(0x17, 0x0D), java.util.Arrays.copyOf(utc, 2));
         Asn1GeneralizedTime g = new Asn1GeneralizedTime();
@@ -277,7 +277,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void unsignedIntegerUsesNineOctetsAboveInt64Max() {
+    void unsignedIntegerUsesNineOctetsAboveInt64Max() throws DecodeException {
         // X.690 §8.3: two's complement in the fewest octets, so a set top bit needs a leading 00.
         // The C++ runtime's UInteger encodes these values identically; asn1c cannot encode them.
         assertArrayEquals(bytes(0x02, 0x01, 0x00), encode(new Asn1UInteger(0), BerTagging.DELEGATE));
@@ -302,7 +302,7 @@ class BerPrimitiveTest {
     }
 
     @Test
-    void anyReplaysItsCapturedEncoding() {
+    void anyReplaysItsCapturedEncoding() throws DecodeException {
         Asn1Any a = new Asn1Any();
         BerPrimitive.decode(a, BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x01, 0x05, 0x05, 0x00)));
         assertArrayEquals(bytes(0x02, 0x01, 0x05, 0x05, 0x00), a.get());

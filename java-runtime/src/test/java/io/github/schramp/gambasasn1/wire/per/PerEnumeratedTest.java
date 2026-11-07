@@ -72,7 +72,7 @@ class PerEnumeratedTest {
     }
 
     @Test
-    void rootAndExtensionItemsMatchAsn1c() {
+    void rootAndExtensionItemsMatchAsn1c() throws DecodeException {
         long[] values = {0, 1, 2, 65, 66, 71};
         String[] uper = {"00", "40", "80", "BF", "C05000", "C05140"};
         for (int i = 0; i < values.length; i++) {
@@ -92,7 +92,7 @@ class PerEnumeratedTest {
 
     /** X.691 §14.2: a root index beyond the root items has no value. */
     @Test
-    void rootIndexBeyondTheRootFails() {
+    void rootIndexBeyondTheRootFails() throws DecodeException {
         EnumSpec three = new EnumSpec("Three", List.of(new EnumEntry(0, "a"), new EnumEntry(1, "b"),
                 new EnumEntry(2, "c")), false, 3, 2);
         EnumSlot slot = new EnumSlot() {

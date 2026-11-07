@@ -1,5 +1,7 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
@@ -63,7 +65,7 @@ public final class PerPrimitive {
      *
      * @param c its own PER-visible constraints
      */
-    public static void decode(Asn1Primitive p, Constraints c, PerReader r) {
+    public static void decode(Asn1Primitive p, Constraints c, PerReader r) throws DecodeException {
         switch (p) {
             case Asn1Boolean b -> b.set(r.getBits(1) == 1);
             case Asn1Null n -> {
@@ -123,7 +125,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeInteger}. */
-    static long decodeInteger(Constraints c, PerReader r) {
+    static long decodeInteger(Constraints c, PerReader r) throws DecodeException {
         boolean bounded = has(c, Constraints.CONSTRAINED) || has(c, Constraints.SEMI_CONSTRAINED);
         if (bounded && has(c, Constraints.EXTENSIBLE) && r.getBits(1) == 1) {
             return PerLength.getUnconstrained(r);
@@ -186,7 +188,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeUInteger}. */
-    static long decodeUInteger(Constraints c, PerReader r) {
+    static long decodeUInteger(Constraints c, PerReader r) throws DecodeException {
         boolean bounded = has(c, Constraints.CONSTRAINED) || has(c, Constraints.SEMI_CONSTRAINED);
         if (bounded && has(c, Constraints.EXTENSIBLE) && r.getBits(1) == 1) {
             return getUnsignedUnconstrained(r);
@@ -221,7 +223,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #putUnsignedUnconstrained}: a negative value has no unsigned storage. */
-    private static long getUnsignedUnconstrained(PerReader r) {
+    private static long getUnsignedUnconstrained(PerReader r) throws DecodeException {
         byte[] octets = PerLength.getOctets(r);
         if (octets.length == 9 && octets[0] == 0 && octets[1] < 0) {
             return PerWhole.fromNonNegative(java.util.Arrays.copyOfRange(octets, 1, 9));
@@ -263,7 +265,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeEnumerated}; an index past the known items fails. */
-    static void decodeEnumerated(EnumSlot slot, EnumSpec spec, PerReader r) {
+    static void decodeEnumerated(EnumSlot slot, EnumSpec spec, PerReader r) throws DecodeException {
         long index;
         if (spec.extensible() && r.getBits(1) == 1) {
             index = spec.rootCount() + PerLength.getNormallySmall(r);
@@ -292,7 +294,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeOctets}. */
-    static byte[] decodeOctets(Constraints c, PerReader r) {
+    static byte[] decodeOctets(Constraints c, PerReader r) throws DecodeException {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         PerLength.getExtSize(r, c, (in, count) -> {
             if (count * 8L > in.remaining()) {
@@ -331,7 +333,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeBits}. */
-    static void decodeBits(Asn1BitString b, Constraints c, PerReader r) {
+    static void decodeBits(Asn1BitString b, Constraints c, PerReader r) throws DecodeException {
         PerWriter bits = new PerWriter();
         int n = PerLength.getExtSize(r, c, (in, count) -> {
             if (count > in.remaining()) {
@@ -458,7 +460,7 @@ public final class PerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeChars}: the string's contents octets. */
-    static byte[] decodeChars(int tag, Constraints c, PerReader r) {
+    static byte[] decodeChars(int tag, Constraints c, PerReader r) throws DecodeException {
         int bits = charLayout(tag)[0];
         int width = charLayout(tag)[1];
         boolean alpha = hasAlphabet(c);

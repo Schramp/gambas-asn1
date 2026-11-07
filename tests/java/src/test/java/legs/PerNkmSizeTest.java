@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,7 +34,7 @@ class PerNkmSizeTest {
     }
 
     @Test
-    void strictEncodingMatchesErlang() {
+    void strictEncodingMatchesErlang() throws DecodeException {
         byte[] want = HexFormat.of().parseHex("026162036162630378797a0241420b4690");
         assertArrayEquals(want, PerObject.encode(value()));
         Rec back = new Rec();
@@ -52,7 +54,7 @@ class PerNkmSizeTest {
     }
 
     @Test
-    void sizeCountsCharactersNotOctets() {
+    void sizeCountsCharactersNotOctets() throws DecodeException {
         Rec r = value();
         r.s(new Asn1Utf8String("\u00C4".repeat(32)));
         Rec back = new Rec();
@@ -63,7 +65,7 @@ class PerNkmSizeTest {
     }
 
     @Test
-    void lengthOutsideExtensibleRootEncodes() {
+    void lengthOutsideExtensibleRootEncodes() throws DecodeException {
         Rec r = value();
         r.ext(new Asn1Utf8String("y".repeat(200)));
         Rec back = new Rec();

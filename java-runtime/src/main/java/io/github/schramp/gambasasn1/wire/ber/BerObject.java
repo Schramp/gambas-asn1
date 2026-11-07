@@ -75,7 +75,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data) {
+    public static void decode(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, new BerReader(data));
     }
 
@@ -88,7 +88,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         decode(v, new BerReader(data).withOptions(opts));
     }
 
@@ -103,7 +103,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static void decode(AsMemberRef v, BerReader r) {
+    public static void decode(AsMemberRef v, BerReader r) throws DecodeException {
         DecodeOptions o = r.options();
         MemberRef m = v.asMemberRef();
         if (o.plain()) {
@@ -141,7 +141,7 @@ public final class BerObject {
      * the value against {@code c}; a violation is a {@link DecodeException}
      * at the value's first octet.
      */
-    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) {
+    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) throws DecodeException {
         int start = r.position();
         decodeMemberRef(m, framing, r);
         if (check) {
@@ -167,7 +167,7 @@ public final class BerObject {
      * @param r       the reader at the part's first octet
      */
     private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String name, int index,
-            BerReader r) {
+            BerReader r) throws DecodeException {
         DecodeOptions o = r.options();
         if (o.trace() != null) {
             trace(o, r, segment(name, index), m);
@@ -205,7 +205,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         return decodeWithPositions(v, new BerReader(data).withOptions(opts));
     }
 
@@ -221,7 +221,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) {
+    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) throws DecodeException {
         Positions p = Positions.recording();
         Positions before = r.positions();
         int start = r.position();
@@ -312,7 +312,7 @@ public final class BerObject {
      *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
      *         stopped
      */
-    public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
+    public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) throws DecodeException {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);
         if (node != null) {
             r.markStart(node);
@@ -334,7 +334,7 @@ public final class BerObject {
     }
 
     /** The per-kind decode {@link #decodeMemberRef} dispatches to once it has counted the level. */
-    private static void decodeMemberRefLevel(MemberRef m, BerTagging framing, BerReader r) {
+    private static void decodeMemberRefLevel(MemberRef m, BerTagging framing, BerReader r) throws DecodeException {
         switch (m) {
             case MemberRef.Absent a -> {
             }
@@ -414,7 +414,7 @@ public final class BerObject {
      * One ENUMERATED TLV under {@code tag} into {@code slot} (X.690 §8.4);
      * a value that is not one of the type's items is an error.
      */
-    private static void decodeEnumerated(EnumSlot slot, Tag tag, BerReader r) {
+    private static void decodeEnumerated(EnumSlot slot, Tag tag, BerReader r) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().equals(tag)) {
@@ -449,7 +449,7 @@ public final class BerObject {
     }
 
     /** Decode counterpart of {@link #encodeSequence}. */
-    private static void decodeSequence(Asn1Seq s, BerReader r) {
+    private static void decodeSequence(Asn1Seq s, BerReader r) throws DecodeException {
         Tag tag = s.spec().tag();
         decodeSequenceContent(s, enter(r, tag), tag);
     }
@@ -464,7 +464,7 @@ public final class BerObject {
      * which are delimited and skipped (X.680 §7.1, §7.2); in a type without
      * an extension marker they are an error.
      */
-    private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
+    private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) throws DecodeException {
         r.markValue(s, r.position(), r.position() + r.source().remaining());
         SequenceSpec spec = s.spec();
         if (spec.isSet()) {
@@ -503,7 +503,7 @@ public final class BerObject {
      * order (X.680 §8.6). A TLV no member matches goes last, where the walk
      * reports it.
      */
-    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
+    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) throws DecodeException {
         List<MemberMeta> rows = s.spec().members();
         byte[][] slot = new byte[rows.size()][];
         long[] slotAt = new long[rows.size()];
@@ -595,7 +595,7 @@ public final class BerObject {
      * Decodes a SEQUENCE OF's contents: the collection is emptied, then one
      * element is appended and decoded per TLV until the contents end.
      */
-    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) throws DecodeException {
         r.markValue(q, r.position(), r.position() + r.source().remaining());
         BerTagging framing = q.elemBerFraming();
         q.clear();
@@ -635,7 +635,7 @@ public final class BerObject {
     }
 
     /** Decode counterpart of {@link #encodeChoice}. */
-    private static void decodeChoice(Asn1Choice c, BerReader r) {
+    private static void decodeChoice(Asn1Choice c, BerReader r) throws DecodeException {
         Tag own = c.spec().ownTag();
         if (own == null) {
             decodeChoiceAlternative(c, r);
@@ -652,7 +652,7 @@ public final class BerObject {
      * CHOICE keeps a TLV no alternative matches as an unknown extension;
      * otherwise that TLV is an error.
      */
-    private static void decodeChoiceAlternative(Asn1Choice c, BerReader r) {
+    private static void decodeChoiceAlternative(Asn1Choice c, BerReader r) throws DecodeException {
         ChoiceSpec spec = c.spec();
         int start = r.position();
         Tag tag = r.peekTag();
@@ -697,7 +697,7 @@ public final class BerObject {
     }
 
     /** Reads one TLV that must carry {@code tag} and returns a reader over its contents. */
-    private static BerReader enter(BerReader r, Tag tag) {
+    private static BerReader enter(BerReader r, Tag tag) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().matchesIdentifier(tag)) {
@@ -707,7 +707,7 @@ public final class BerObject {
     }
 
     /** A tag's contents hold exactly one encoding (X.690 §8.14.2). */
-    private static void expectEnd(BerReader inner, Tag tag) {
+    private static void expectEnd(BerReader inner, Tag tag) throws DecodeException {
         if (!inner.atEnd() && !inner.options().relaxed()) {
             throw new DecodeException("trailing octets inside tag " + tag, inner.position());
         }

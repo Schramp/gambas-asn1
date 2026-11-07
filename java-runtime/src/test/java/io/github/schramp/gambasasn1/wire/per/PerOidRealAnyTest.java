@@ -32,7 +32,7 @@ class PerOidRealAnyTest {
 
     /** X.690 §8.5.2: REAL zero has no contents octets, so its PER field is the length 0. */
     @Test
-    void realZeroIsAnEmptyField() {
+    void realZeroIsAnEmptyField() throws DecodeException {
         assertArrayEquals(hex("00"), PerObject.encode(new Asn1Real(0.0)));
         Asn1Real r = new Asn1Real(7.0);
         PerObject.decode(r, hex("00"));

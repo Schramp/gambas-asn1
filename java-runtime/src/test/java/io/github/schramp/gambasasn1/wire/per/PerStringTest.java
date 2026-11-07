@@ -30,7 +30,7 @@ class PerStringTest {
     private static final Constraints NAMED = new Constraints(Constraints.NAMED_BITS, 0, 0, 0, 0, 0, 0, 0, 0, null, 0,
             null, 0, null, 0.0, 0.0);
 
-    private static void octets(Constraints c, String value, String uper) {
+    private static void octets(Constraints c, String value, String uper) throws DecodeException {
         assertArrayEquals(hex(uper), PerObject.encode(new Asn1OctetString(hex(value)), c), value);
         Asn1OctetString back = new Asn1OctetString();
         PerObject.decode(back, hex(uper), c);
@@ -47,7 +47,7 @@ class PerStringTest {
         return new Asn1BitString(packed, packed.length * 8 - binary.length());
     }
 
-    private static void bitString(Constraints c, String value, String uper, String decoded) {
+    private static void bitString(Constraints c, String value, String uper, String decoded) throws DecodeException {
         assertArrayEquals(hex(uper), PerObject.encode(bits(value), c), value);
         Asn1BitString back = new Asn1BitString();
         PerObject.decode(back, hex(uper), c);
@@ -56,7 +56,7 @@ class PerStringTest {
 
     /** X.691 §17.3: an extensible SIZE's bit, then the root count or a general length. */
     @Test
-    void octetStringSizes() {
+    void octetStringSizes() throws DecodeException {
         octets(size(1, 4, Constraints.EXTENSIBLE), "0102", "202040");
         octets(size(1, 4, Constraints.EXTENSIBLE), "0102030405", "82808101820280");
         octets(size(3, 3, 0), "010203", "010203");
@@ -65,7 +65,7 @@ class PerStringTest {
 
     /** X.691 §11.9.3.8: 16K octets and more are fragmented. */
     @Test
-    void fragmentedOctetString() {
+    void fragmentedOctetString() throws DecodeException {
         byte[] value = new byte[16385];
         Arrays.fill(value, (byte) 0xAB);
         byte[] uper = PerObject.encode(new Asn1OctetString(value));
@@ -79,14 +79,14 @@ class PerStringTest {
 
     /** X.691 §16.6: the extension bit of an extensible SIZE. */
     @Test
-    void bitStringSizes() {
+    void bitStringSizes() throws DecodeException {
         bitString(size(2, 3, Constraints.EXTENSIBLE), "101", "68", "101");
         bitString(size(2, 3, Constraints.EXTENSIBLE), "1011", "8258", "1011");
     }
 
     /** X.691 §16.2, §16.3: trailing 0 bits dropped with a NamedBitList, kept up to the SIZE's lower bound. */
     @Test
-    void namedBitsDropTrailingZeros() {
+    void namedBitsDropTrailingZeros() throws DecodeException {
         bitString(NAMED, "01000000", "0240", "01");
         bitString(NAMED, "00000000", "00", "");
         bitString(size(4, 8, Constraints.NAMED_BITS), "01000000", "08", "0100");

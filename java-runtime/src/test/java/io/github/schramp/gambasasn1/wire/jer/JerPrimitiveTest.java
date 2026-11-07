@@ -29,13 +29,13 @@ class JerPrimitiveTest {
         return new String(w.toByteArray(), StandardCharsets.UTF_8);
     }
 
-    private static <T extends Asn1Primitive> T decode(T p, Constraints c, String text) {
+    private static <T extends Asn1Primitive> T decode(T p, Constraints c, String text) throws DecodeException {
         JerPrimitive.decode(p, c, new JerReader(text.getBytes(StandardCharsets.UTF_8)));
         return p;
     }
 
     @Test
-    void stringsEscapeQuoteBackslashAndControlsOnly() {
+    void stringsEscapeQuoteBackslashAndControlsOnly() throws DecodeException {
         Asn1Utf8String s = new Asn1Utf8String();
         s.set("a<b&c>\"\\\u0001\t/é");
         assertEquals("\"a<b&c>\\\"\\\\\\u0001\\u0009/é\"", encode(s, NONE));
@@ -44,7 +44,7 @@ class JerPrimitiveTest {
 
     /** BMPString and UniversalString are their characters, JSON-escaped, never XML text (X.697 §38.1). */
     @Test
-    void wideStringsAreTheirCharacters() {
+    void wideStringsAreTheirCharacters() throws DecodeException {
         Asn1BmpString b = new Asn1BmpString();
         b.setOctets(new byte[] {0, 'a', 0, '<', 0, '&', 0, '"', 0, 1, 0x20, (byte) 0xAC});
         assertEquals("\"a<&\\\"\\u0001€\"", encode(b, NONE));
@@ -56,7 +56,7 @@ class JerPrimitiveTest {
     }
 
     @Test
-    void stringEscapesFollowRfc8259() {
+    void stringEscapesFollowRfc8259() throws DecodeException {
         assertEquals("A\b\f\n\r\t\"\\/", decode(new Asn1Utf8String(), NONE, "\"\\u0041\\b\\f\\n\\r\\t\\\"\\\\\\/\"").get());
         for (String bad : new String[] {"\"\\ud83dx\"", "\"\\ud83d\\u0041\"", "\"\\ude00\"", "\"\\u12\"", "\"\\u00g1\"", "\"\\x41\"", "\"open"}) {
             assertThrows(DecodeException.class, () -> decode(new Asn1Utf8String(), NONE, bad), bad);
@@ -64,7 +64,7 @@ class JerPrimitiveTest {
     }
 
     @Test
-    void unsignedIntegerUsesTheFull64Bits() {
+    void unsignedIntegerUsesTheFull64Bits() throws DecodeException {
         Asn1UInteger u = new Asn1UInteger();
         u.set(-1L);
         assertEquals("18446744073709551615", encode(u, NONE));
@@ -90,7 +90,7 @@ class JerPrimitiveTest {
     }
 
     @Test
-    void realDecodesNumbersStringsAndBase10Objects() {
+    void realDecodesNumbersStringsAndBase10Objects() throws DecodeException {
         assertEquals(-0.0, decode(new Asn1Real(), NONE, "\"-0\"").value());
         assertEquals(2.5, decode(new Asn1Real(), NONE, "\"2.5\"").value());
         assertEquals(1e-3, decode(new Asn1Real(), NONE, " 1E-3 ").value());
@@ -103,7 +103,7 @@ class JerPrimitiveTest {
 
     /** A DECIMAL value is its exact digits: bare under a base-10-only constraint, else in base10Value (X.697 §23.1.4, §23.4). */
     @Test
-    void decimalRealFormDependsOnTheBaseConstraint() {
+    void decimalRealFormDependsOnTheBaseConstraint() throws DecodeException {
         Asn1Real d = Asn1Real.decimal(true, "125", -2);
         assertEquals("{\"base10Value\":-125E-2}", encode(d, NONE));
         Constraints base10 = flags(Constraints.REAL_BASE_10, 0, 0);
@@ -113,7 +113,7 @@ class JerPrimitiveTest {
 
     /** X.697 §24.2, §24.3: a fixed, non-extensible SIZE gives a bare hex string; anything else the object form. */
     @Test
-    void bitStringFormDependsOnAFixedSize() {
+    void bitStringFormDependsOnAFixedSize() throws DecodeException {
         Asn1BitString b = new Asn1BitString(new byte[] {(byte) 0xA5, (byte) 0xF0}, 4);
         Constraints fixed12 = flags(Constraints.SIZE_CONSTRAINED, 12, 12);
         assertEquals("\"A5F0\"", encode(b, fixed12));

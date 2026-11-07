@@ -51,7 +51,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void berRelaxedSkipsTrailingMembersOfANonExtensibleSequence() {
+    void berRelaxedSkipsTrailingMembersOfANonExtensibleSequence() throws DecodeException {
         byte[] der = plain().der();
         byte[] contents = Arrays.copyOfRange(der, 2, der.length);
         // Plain's own first member repeated after its last one.
@@ -77,7 +77,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void aNullDecoderSettingMeansTheDefaults() {
+    void aNullDecoderSettingMeansTheDefaults() throws DecodeException {
         byte[] der = plain().der();
         Plain want = new Plain();
         BerObject.decode(want, der);
@@ -90,7 +90,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void berRelaxedTakesALongBoolean() {
+    void berRelaxedTakesALongBoolean() throws DecodeException {
         byte[] der = plain().der();
         // 01 01 FF (flag) becomes 01 02 00 FF.
         int at = 5;
@@ -105,7 +105,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void perRelaxedIgnoresTrailingOctets() {
+    void perRelaxedIgnoresTrailingOctets() throws DecodeException {
         byte[] uper = plain().asn1cUper();
         byte[] longer = concat(uper, new byte[] {0, 1});
         assertThrows(DecodeException.class, () -> PerObject.decode(new Plain(), longer));
@@ -117,7 +117,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void xerRelaxedTakesAsn1cTextBooleans() {
+    void xerRelaxedTakesAsn1cTextBooleans() throws DecodeException {
         byte[] xer = plain().asn1cXer().replace("<flag><true/></flag>", "<flag>true</flag>")
                 .getBytes(StandardCharsets.UTF_8);
         assertThrows(DecodeException.class, () -> XerObject.decode(new Plain(), xer));
@@ -127,7 +127,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void xerAndJerCheckConstraintsWhenAsked() {
+    void xerAndJerCheckConstraintsWhenAsked() throws DecodeException {
         Limits bad = new Limits();
         BerObject.decode(bad, Vectors.load("constraints_ber_test.vectors").get(0).der());
         bad.name().set("abcdefghi");
@@ -154,7 +154,7 @@ class DecodeRelaxedTest {
     }
 
     @Test
-    void traceListsEachMemberWithItsOffset() {
+    void traceListsEachMemberWithItsOffset() throws DecodeException {
         List<String> lines = new ArrayList<>();
         byte[] der = Vectors.load("sequence_ber_test.vectors").stream().filter(v -> v.type().equals("Outer"))
                 .findFirst().orElseThrow().der();

@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
@@ -38,25 +40,25 @@ class SequencePerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("sequence")
-    void sequenceSchema(Vectors.Vector vec) {
+    void sequenceSchema(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, SequenceBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("ext")
-    void extensionAdditions(Vectors.Vector vec) {
+    void extensionAdditions(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, ExtBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("defaults")
-    void defaultMembers(Vectors.Vector vec) {
+    void defaultMembers(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, DefaultBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("set")
-    void setInCanonicalOrder(Vectors.Vector vec) {
+    void setInCanonicalOrder(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, SetBerTest.TYPES);
     }
 
@@ -70,7 +72,7 @@ class SequencePerTest {
      */
     @ParameterizedTest(name = "{1}")
     @MethodSource("legs.ExtBerTest#versions")
-    void earlierVersionSkipsUnknownAdditions(String later, String earlier) {
+    void earlierVersionSkipsUnknownAdditions(String later, String earlier) throws DecodeException {
         Vectors.Vector from = row(later);
         Vectors.Vector to = row(earlier);
         Asn1Pdu sent = ExtBerTest.TYPES.get(from.type()).get();
@@ -86,7 +88,7 @@ class SequencePerTest {
      * the wire, and the unknown addition is skipped by its length.
      */
     @Test
-    void extensionBitmapWiderThan64() {
+    void extensionBitmapWiderThan64() throws DecodeException {
         PerWriter w = new PerWriter().putBits(1, 1).putBits(0, 1);
         PerLength.putUnconstrained(w, 5);
         PerLength.putNormallySmallLength(w, 200);

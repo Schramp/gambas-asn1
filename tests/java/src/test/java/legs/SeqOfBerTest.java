@@ -59,7 +59,7 @@ class SeqOfBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -72,7 +72,7 @@ class SeqOfBerTest {
     }
 
     @Test
-    void elementsDecodeInOrder() {
+    void elementsDecodeInOrder() throws DecodeException {
         Ints v = new Ints();
         BerObject.decode(v, hex("300A0201010201FE0202012C"));
         assertEquals(List.of(i(1), i(-2), i(300)), v.items());
@@ -80,7 +80,7 @@ class SeqOfBerTest {
 
     /** SET OF elements are written in DER order whatever order they were added in. */
     @Test
-    void setOfEncodesInDerOrder() {
+    void setOfEncodesInDerOrder() throws DecodeException {
         IntSet s = new IntSet();
         s.add(i(5));
         s.add(i(-1));
@@ -111,7 +111,7 @@ class SeqOfBerTest {
     }
 
     @Test
-    void decodeReplacesWhatTheCollectionHeld() {
+    void decodeReplacesWhatTheCollectionHeld() throws DecodeException {
         Ints v = new Ints();
         v.add(i(9));
         BerObject.decode(v, hex("3000"));

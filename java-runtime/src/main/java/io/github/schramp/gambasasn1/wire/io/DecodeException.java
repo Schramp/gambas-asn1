@@ -8,8 +8,13 @@ import java.util.HexFormat;
  * whatever the input. With rich errors on, it also names the path of the
  * value being decoded ({@code Type.member[index].member}) and shows the
  * input octets at the offset.
+ *
+ * <p>A checked exception: input comes from outside the program and may be
+ * malformed, so a caller of a {@code decode} method either handles it or
+ * declares it. Encode failures are {@link EncodeException}, which is
+ * unchecked.
  */
-public final class DecodeException extends Asn1Exception {
+public final class DecodeException extends Exception {
     private static final long serialVersionUID = 1L;
     /** How many input octets an error with rich errors on shows. */
     public static final int CONTEXT_OCTETS = 8;

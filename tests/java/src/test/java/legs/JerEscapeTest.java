@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  */
 class JerEscapeTest {
 
-    private static JeRec unjer(String json) {
+    private static JeRec unjer(String json) throws DecodeException {
         JeRec v = new JeRec();
         JerObject.decode(v, json.getBytes(StandardCharsets.UTF_8));
         return v;
@@ -39,7 +39,7 @@ class JerEscapeTest {
         "\\b\\f|`\b\f`",
         "\\\"\\\\\\/\\n\\r\\t|`\"\\/\n\r\t`",
     })
-    void escapesDecode(String escaped, String text) {
+    void escapesDecode(String escaped, String text) throws DecodeException {
         assertEquals(text, unjer(doc(escaped)).text().get());
     }
 
@@ -50,14 +50,14 @@ class JerEscapeTest {
     }
 
     @Test
-    void escapedMemberAndAlternativeNames() {
+    void escapedMemberAndAlternativeNames() throws DecodeException {
         JeRec r = unjer("{\"\\u0074ext\":\"hi\",\"al\\u0074\":{\"\\u006eame\":\"x\"}}");
         assertEquals("hi", r.text().get());
         assertEquals("x", r.alt().name().get());
     }
 
     @Test
-    void controlCharactersSurviveARoundTrip() {
+    void controlCharactersSurviveARoundTrip() throws DecodeException {
         JeRec c = new JeRec();
         c.text().setOctets("a\u0001\b\f\u001Fbé".getBytes(StandardCharsets.UTF_8));
         Asn1Integer n = new Asn1Integer();
@@ -72,7 +72,7 @@ class JerEscapeTest {
     }
 
     @Test
-    void unknownMembersAreSkipped() {
+    void unknownMembersAreSkipped() throws DecodeException {
         assertEquals("x", unjer("{\"zz\":{\"a\":[1,\"]\"]},\"text\":\"x\",\"alt\":{\"n\":2}}").text().get());
     }
 }

@@ -40,7 +40,7 @@ class RecursionBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -72,7 +72,7 @@ class RecursionBerTest {
     }
 
     @Test
-    void decodesUpToTheNestingLimit() {
+    void decodesUpToTheNestingLimit() throws DecodeException {
         byte[] der = list(Nesting.MAX_DECODE_DEPTH);
         List v = new List();
         BerObject.decode(v, der);
@@ -95,7 +95,7 @@ class RecursionBerTest {
     }
 
     @Test
-    void depthIsCountedPerDecode() {
+    void depthIsCountedPerDecode() throws DecodeException {
         byte[] der = list(Nesting.MAX_DECODE_DEPTH);
         for (int i = 0; i < 3; i++) {
             BerObject.decode(new List(), der);

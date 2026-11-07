@@ -1250,15 +1250,18 @@ record the codec cannot handle fails that one encode or decode; the
 process keeps running and the next record is unaffected. In C++ and Rust
 the failure is a return value. Java throws an exception for it, which the
 caller catches around each record: like any Java exception, one that
-nothing catches ends its thread, and on the main thread the program.
+nothing catches ends its thread, and on the main thread the program. A
+decode failure is a checked exception, so javac makes the caller handle it.
 
 **Decode** reports an error in every runtime: C++ `ICodec::decode` returns
 `Expected<void, DecodeError>`, Rust `<codec>::object::decode_pdu` returns
 `Result<T, DecodeError>` (PER: `per::reader::DecodeError`), and Java's
 `BerObject`/`XerObject`/`JerObject`/`PerObject.decode` throw
-`io.DecodeException`. It extends `RuntimeException`, so the compiler does not
-make callers catch or declare it, and does not warn when they forget: a
-decode loop that should survive a bad record catches it around each call:
+`io.DecodeException`. It is a checked exception (it extends `Exception`):
+malformed input comes from outside the program and is expected, so every
+caller either catches it or declares `throws DecodeException`, and javac
+rejects code that does neither. A decode loop that should survive a bad
+record catches it around each call:
 
 ```java
 for (byte[] record : records) {
@@ -1279,13 +1282,18 @@ for (byte[] record : records) {
 |---------|-------------------------------|
 | C++ | `encode_failed()` on the stream after `encode`: `BerEncodeStream` (via `BerWriter`), `XerEncodeStream`, `JerEncodeStream`, `PerEncodeStream`; nested values share the flag of the stream the caller passed |
 | Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
-| Java | `BerObject`/`XerObject`/`JerObject`/`PerObject.encode` throw `io.EncodeException`, a `RuntimeException` (callers need not catch or declare it) |
+| Java | `BerObject`/`XerObject`/`JerObject`/`PerObject.encode` throw `io.EncodeException`, an unchecked `RuntimeException`: a value that has no encoding (a CHOICE with no alternative selected, an INTEGER outside its PER range) is the caller's own, so it is treated as a programming error, like `IllegalArgumentException` |
 
-In Java both exceptions extend `io.Asn1Exception` (itself a
-`RuntimeException`), so one `catch (Asn1Exception e)` handles every encode
-and decode failure, for example in a loop that decodes and re-encodes each
-record. The Javadoc of every public `encode` and `decode` method names the
-exception it throws and when (`@throws`).
+To handle both in one place, catch them together:
+`catch (DecodeException | EncodeException e)`. The Javadoc of every public
+`encode` and `decode` method names the exception it throws and when
+(`@throws`).
+
+A decode method passed as a `java.util.function` lambda or method reference
+(`Function`, `BiConsumer`, a stream's `map`) does not compile, since those
+interfaces declare no checked exception. Declare a functional interface of
+your own whose method `throws DecodeException`, or catch it inside the
+lambda.
 
 Causes of a per-record error:
 

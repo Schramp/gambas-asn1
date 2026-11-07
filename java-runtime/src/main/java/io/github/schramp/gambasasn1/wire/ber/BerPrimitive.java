@@ -60,7 +60,7 @@ public final class BerPrimitive {
     }
 
     /** Decode counterpart of {@link #encode}: reads one TLV into {@code p}. */
-    public static void decode(Asn1Primitive p, BerTagging framing, BerReader r) {
+    public static void decode(Asn1Primitive p, BerTagging framing, BerReader r) throws DecodeException {
         if (p instanceof Asn1Any any) {
             decodeAny(any, framing, r);
             return;
@@ -117,7 +117,7 @@ public final class BerPrimitive {
         }
     }
 
-    private static void decodeTagged(Asn1Primitive p, Tag tag, BerReader r) {
+    private static void decodeTagged(Asn1Primitive p, Tag tag, BerReader r) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().equals(tag)) {
@@ -203,7 +203,7 @@ public final class BerPrimitive {
      *
      * @param pos the TLV's position, for the error
      */
-    public static long decodeInteger(ByteSource v, int pos) {
+    public static long decodeInteger(ByteSource v, int pos) throws DecodeException {
         int len = v.remaining();
         if (len == 0) {
             throw new DecodeException("INTEGER: empty contents", pos);
@@ -238,7 +238,7 @@ public final class BerPrimitive {
      *
      * @param pos the TLV's position, for the error
      */
-    public static long[] decodeObjectIdentifier(byte[] v, int pos) {
+    public static long[] decodeObjectIdentifier(byte[] v, int pos) throws DecodeException {
         if (v.length == 0) {
             return new long[0];
         }
@@ -259,7 +259,7 @@ public final class BerPrimitive {
      *
      * @param pos the TLV's position, for the error
      */
-    public static long[] decodeRelativeOid(byte[] v, int pos) {
+    public static long[] decodeRelativeOid(byte[] v, int pos) throws DecodeException {
         return decodeSubidentifiers(v, 0, new long[0], pos);
     }
 
@@ -278,7 +278,7 @@ public final class BerPrimitive {
      * Reads subidentifiers from {@code v[i..]}, one arc each, after the
      * arcs in {@code head}.
      */
-    private static long[] decodeSubidentifiers(byte[] v, int i, long[] head, int pos) {
+    private static long[] decodeSubidentifiers(byte[] v, int i, long[] head, int pos) throws DecodeException {
         long[] arcs = Arrays.copyOf(head, head.length + v.length);
         int n = head.length;
         long[] arc = new long[1];
@@ -307,7 +307,7 @@ public final class BerPrimitive {
      * @return the index after it
      * @throws DecodeException if it is truncated or exceeds {@code max}
      */
-    private static int readSubidentifier(byte[] v, int i, long max, long[] out, int pos) {
+    private static int readSubidentifier(byte[] v, int i, long max, long[] out, int pos) throws DecodeException {
         long value = 0;
         while (true) {
             if (i >= v.length) {
@@ -347,7 +347,7 @@ public final class BerPrimitive {
      * Decode counterpart of {@link #encodeAny}: captures every remaining
      * octet of the reader, or of the EXPLICIT tag's contents, verbatim.
      */
-    private static void decodeAny(Asn1Any any, BerTagging framing, BerReader r) {
+    private static void decodeAny(Asn1Any any, BerTagging framing, BerReader r) throws DecodeException {
         switch (framing.resolve()) {
             case BerTagging.Explicit(Tag tag) -> {
                 int start = r.position();
@@ -389,7 +389,7 @@ public final class BerPrimitive {
      *
      * @param pos the TLV's position, for the error
      */
-    public static long decodeUnsigned(ByteSource v, int pos) {
+    public static long decodeUnsigned(ByteSource v, int pos) throws DecodeException {
         int len = v.remaining();
         if (len == 0) {
             throw new DecodeException("INTEGER: empty contents", pos);

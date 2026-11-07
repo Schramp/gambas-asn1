@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  */
 class JerNullAbsentTest {
 
-    private static JnRec unjer(String json) {
+    private static JnRec unjer(String json) throws DecodeException {
         JnRec v = new JnRec();
         JerObject.decode(v, json.getBytes(StandardCharsets.UTF_8));
         return v;
@@ -32,7 +32,7 @@ class JerNullAbsentTest {
     }
 
     @Test
-    void nullMeansAbsent() {
+    void nullMeansAbsent() throws DecodeException {
         JnRec r = unjer("{\"a\":1,\"b\":null,\"c\":null,\"o\":null,\"s\":null}");
         assertEquals(1, r.a().get());
         assertNull(r.b());
@@ -42,14 +42,14 @@ class JerNullAbsentTest {
     }
 
     @Test
-    void sameAsLeavingTheMembersOut() {
+    void sameAsLeavingTheMembersOut() throws DecodeException {
         JnRec withNull = unjer("{\"a\":1,\"b\":null,\"c\":null,\"o\":null,\"s\":null}");
         assertEquals(jer(unjer("{\"a\":1}")), jer(withNull));
         assertFalse(jer(withNull).contains("null"));
     }
 
     @Test
-    void whitespaceAroundNull() {
+    void whitespaceAroundNull() throws DecodeException {
         JnRec r = unjer("{ \"a\" : 2 , \"b\" : null , \"n\" : null }");
         assertNull(r.b());
         assertNotNull(r.n(), "null for a NULL member is its value");

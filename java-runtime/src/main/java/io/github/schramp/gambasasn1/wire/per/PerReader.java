@@ -77,7 +77,7 @@ public final class PerReader {
      * @param n 0 to 64; 0 reads nothing and gives 0
      * @throws DecodeException when fewer than {@code n} bits are left
      */
-    public long getBits(int n) {
+    public long getBits(int n) throws DecodeException {
         if (n > remaining()) {
             throw error("PER: unexpected end of data");
         }
@@ -149,7 +149,7 @@ public final class PerReader {
     }
 
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */
-    public void enterLevel() {
+    public void enterLevel() throws DecodeException {
         if (++depth > Nesting.MAX_DECODE_DEPTH) {
             throw error(Nesting.tooDeep());
         }

@@ -131,7 +131,7 @@ class BerRealTest {
             new StorageVector("NR1 000 is plus zero (Double)", ascii(0x01, "000"), Asn1Real.Storage.DOUBLE, bytes()));
 
     @Test
-    void decodeVectorsMatchTheOtherRuntimes() {
+    void decodeVectorsMatchTheOtherRuntimes() throws DecodeException {
         for (DecodeVector v : DECODE_VECTORS) {
             if (v.bits() == null) {
                 assertThrows(DecodeException.class, () -> BerReal.decode(v.contents(), 0), v.label());
@@ -144,7 +144,7 @@ class BerRealTest {
     }
 
     @Test
-    void storageClassesMatchTheOtherRuntimes() {
+    void storageClassesMatchTheOtherRuntimes() throws DecodeException {
         for (StorageVector v : STORAGE_VECTORS) {
             Asn1Real got = BerReal.decode(v.contents(), 0);
             assertEquals(v.storage(), got.storage(), v.label());
@@ -154,7 +154,7 @@ class BerRealTest {
 
     /** The direct IEEE path for short mantissas agrees with the general {@link Asn1Real#binary} at every scale. */
     @Test
-    void shortMantissaPathMatchesGeneralBinary() {
+    void shortMantissaPathMatchesGeneralBinary() throws DecodeException {
         long x = 0x9E37_79B9_7F4A_7C15L;
         List<Long> mantissas = new ArrayList<>(List.of(1L, 3L, 0xFFL, (1L << 53) - 1, (1L << 53) + 1, (1L << 54) - 2, -1L));
         for (int i = 0; i < 64; i++) {
@@ -194,7 +194,7 @@ class BerRealTest {
     }
 
     @Test
-    void doublesRoundTripBitForBit() {
+    void doublesRoundTripBitForBit() throws DecodeException {
         for (double d : new double[] {1.0, -1.0, 0.5, 3.14159265358979, -2.71828, 1e10, -1e-10, 100.0, 65535.0, -0.0,
                 Double.MAX_VALUE, Double.MIN_NORMAL, Double.MIN_VALUE, Double.longBitsToDouble(0x000F_FFFF_FFFF_FFFFL),
                 -Double.MIN_VALUE, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
@@ -204,7 +204,7 @@ class BerRealTest {
     }
 
     @Test
-    void decimalAndBinaryValueSemantics() {
+    void decimalAndBinaryValueSemantics() throws DecodeException {
         Asn1Real pi = BerReal.decode(ascii(0x03, "3141592653589793238462643383279E-30"), 0);
         assertEquals(10, pi.base());
         assertEquals("3141592653589793238462643383279", new String(pi.exact().mantissa(), StandardCharsets.US_ASCII));
@@ -225,7 +225,7 @@ class BerRealTest {
     }
 
     @Test
-    void framingAppliesAroundTheContents() {
+    void framingAppliesAroundTheContents() throws DecodeException {
         BerTagging ctx5 = new BerTagging.Implicit(Tag.context(5, false));
         ByteSink out = new ByteSink();
         BerPrimitive.encode(new Asn1Real(1.0), ctx5, out);

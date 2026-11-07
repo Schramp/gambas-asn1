@@ -85,7 +85,7 @@ public final class JerObject {
      *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
      *         offset where decoding stopped
      */
-    public static void decode(AsMemberRef v, byte[] data) {
+    public static void decode(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, data, rootConstraints(v));
     }
 
@@ -98,7 +98,7 @@ public final class JerObject {
      *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
      *         offset where decoding stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c) {
+    public static void decode(AsMemberRef v, byte[] data, Constraints c) throws DecodeException {
         decode(v, data, c, DecodeOptions.DEFAULT);
     }
 
@@ -115,7 +115,7 @@ public final class JerObject {
      *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
      *         offset where decoding stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         decode(v, data, rootConstraints(v), opts);
     }
 
@@ -128,7 +128,7 @@ public final class JerObject {
      *         value that breaks its type's constraints; {@link DecodeException#position()} is the byte
      *         offset where decoding stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) throws DecodeException {
         JerReader r = new JerReader(data).withOptions(opts);
         DecodeOptions o = r.options();
         try {
@@ -181,7 +181,7 @@ public final class JerObject {
      * Decode counterpart of {@link #encodeValue}; a SEQUENCE, CHOICE or
      * SEQUENCE OF counts one nesting level.
      */
-    static void decodeValue(MemberRef m, Constraints c, JerReader r) {
+    static void decodeValue(MemberRef m, Constraints c, JerReader r) throws DecodeException {
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeLevel(m, c, r);
             return;
@@ -194,7 +194,7 @@ public final class JerObject {
         }
     }
 
-    private static void decodeLevel(MemberRef m, Constraints c, JerReader r) {
+    private static void decodeLevel(MemberRef m, Constraints c, JerReader r) throws DecodeException {
         switch (m) {
             case MemberRef.Absent a -> {
             }
@@ -236,7 +236,7 @@ public final class JerObject {
      * §27.3.4), unless its type is NULL or an open type, whose value
      * {@code null} can be.
      */
-    private static void decodeSequence(Asn1Seq s, JerReader r) {
+    private static void decodeSequence(Asn1Seq s, JerReader r) throws DecodeException {
         List<MemberMeta> members = s.spec().members();
         boolean[] seen = new boolean[members.size()];
         r.expect('{');
@@ -309,7 +309,7 @@ public final class JerObject {
         w.ascii("}");
     }
 
-    private static void decodeChoice(Asn1Choice ch, JerReader r) {
+    private static void decodeChoice(Asn1Choice ch, JerReader r) throws DecodeException {
         r.expect('{');
         if (r.consumeIf('}')) {
             return;
@@ -343,7 +343,7 @@ public final class JerObject {
         w.ascii("]");
     }
 
-    private static void decodeSeqOf(Asn1SeqOf q, Constraints c, JerReader r) {
+    private static void decodeSeqOf(Asn1SeqOf q, Constraints c, JerReader r) throws DecodeException {
         Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
         q.clear();
         r.expect('[');
@@ -392,7 +392,7 @@ public final class JerObject {
      * A hex string is decoded by the enclosing SEQUENCE or CHOICE, as in
      * BER; an inline value without {@code raw} gets its bytes from encoding it.
      */
-    private static void decodeContained(Asn1Contained f, ContainedSpec cs, JerReader r) {
+    private static void decodeContained(Asn1Contained f, ContainedSpec cs, JerReader r) throws DecodeException {
         if (r.peek() != '{') {
             f.setRawFromWire(JerPrimitive.hexPairs(r.readString()), ContainedEncoding.BER);
             return;
@@ -443,7 +443,7 @@ public final class JerObject {
      * A BER reader standing for this JER decode in the contained-value
      * decoders: no bytes of its own, the same nesting depth and settings.
      */
-    private static BerReader berAnchor(JerReader r) {
+    private static BerReader berAnchor(JerReader r) throws DecodeException {
         BerReader b = new BerReader(new byte[0]).withOptions(r.options());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();

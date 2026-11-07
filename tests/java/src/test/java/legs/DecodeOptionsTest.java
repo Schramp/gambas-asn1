@@ -42,7 +42,7 @@ class DecodeOptionsTest {
     }
 
     /** asn1c's first Limits vector with {@code change} applied, BER-encoded again. */
-    private static byte[] limitsWith(Consumer<Limits> change) {
+    private static byte[] limitsWith(Consumer<Limits> change) throws DecodeException {
         Limits v = new Limits();
         BerObject.decode(v, Vectors.load("constraints_ber_test.vectors").get(0).der());
         change.accept(v);
@@ -62,7 +62,7 @@ class DecodeOptionsTest {
     /** asn1c's encodings of valid values decode with checks on, and with rich errors. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("validVectors")
-    void validValuesPassTheChecks(Vectors.Vector vec) {
+    void validValuesPassTheChecks(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu plain = make(vec.type(), vec.der());
         if (plain == null) {
             return;
@@ -93,7 +93,7 @@ class DecodeOptionsTest {
     }
 
     @Test
-    void etsiSampleDecodesWithChecksOn() throws IOException {
+    void etsiSampleDecodesWithChecksOn() throws IOException, DecodeException {
         byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
         BerReader r = new BerReader(file).withOptions(RICH);
         int n = 0;
@@ -105,7 +105,7 @@ class DecodeOptionsTest {
     }
 
     @Test
-    void outOfRangeIntegerDecodesWithoutChecksAndFailsWithThem() {
+    void outOfRangeIntegerDecodesWithoutChecksAndFailsWithThem() throws DecodeException {
         byte[] der = limitsWith(v -> v.byte_().set(300));
         Limits v = new Limits();
         BerObject.decode(v, der);
@@ -145,7 +145,7 @@ class DecodeOptionsTest {
     }
 
     @Test
-    void anExtensibleRangeAdmitsOtherValues() {
+    void anExtensibleRangeAdmitsOtherValues() throws DecodeException {
         byte[] der = limitsWith(v -> v.neg().set(7));
         Limits v = new Limits();
         BerObject.decode(v, der, RICH);
@@ -217,7 +217,7 @@ class DecodeOptionsTest {
     }
 
     @Test
-    void traceNamesEachElement() {
+    void traceNamesEachElement() throws DecodeException {
         for (boolean per : new boolean[] {false, true}) {
             java.util.List<String> lines = new java.util.ArrayList<>();
             DecodeOptions o = DecodeOptions.DEFAULT.withTrace(lines::add);
@@ -234,7 +234,7 @@ class DecodeOptionsTest {
     }
 
     @Test
-    void positionsDecodeTakesTheSettingsToo() {
+    void positionsDecodeTakesTheSettingsToo() throws DecodeException {
         byte[] der = limitsWith(v -> v.byte_().set(300));
         assertThrows(DecodeException.class, () -> BerObject.decodeWithPositions(new Limits(), der, CHECKED));
         assertEquals(der.length, BerObject.decodeWithPositions(new Limits(), der, DecodeOptions.DEFAULT).bytesConsumed());

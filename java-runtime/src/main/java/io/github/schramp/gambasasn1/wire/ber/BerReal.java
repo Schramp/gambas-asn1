@@ -101,7 +101,7 @@ public final class BerReal {
      *      §8.5.7.4, bases 2/8/16 of §8.5.7.2, unnormalized mantissa of §8.5.7.5
      *      NOTE 1), §8.5.8 decimal form, §8.5.9 special values"
      */
-    public static Asn1Real decode(byte[] v, int pos) {
+    public static Asn1Real decode(byte[] v, int pos) throws DecodeException {
         if (v.length == 0) {
             return new Asn1Real(0.0);
         }
@@ -205,7 +205,7 @@ public final class BerReal {
      * {@code E}/{@code e}, an optional sign and exponent digits (the decimal
      * mark is optional in NR3). Anything else is an error.
      */
-    private static Asn1Real fromDecimal(int form, byte[] v, int from, int pos) {
+    private static Asn1Real fromDecimal(int form, byte[] v, int from, int pos) throws DecodeException {
         int i = from;
         while (i < v.length && v[i] == ' ') {
             i++;

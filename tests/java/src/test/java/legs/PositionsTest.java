@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,7 +53,7 @@ class PositionsTest {
     }
 
     @Test
-    void berNestedSequenceMembersStartAtTheirTagOctet() {
+    void berNestedSequenceMembersStartAtTheirTagOctet() throws DecodeException {
         // 30 11 | 30 0C | 02 01 01 | 01 01 00 | 0C 00 | 04 00 | 05 00 | 02 01 02
         byte[] der = hex("3011300C0201010101000C0004000500020102");
         Outer v = new Outer();
@@ -71,7 +73,7 @@ class PositionsTest {
     }
 
     @Test
-    void berSequenceOfElementsEachHaveTheirOwnPosition() {
+    void berSequenceOfElementsEachHaveTheirOwnPosition() throws DecodeException {
         // 30 10 | 30 06 02 01 01 02 01 02 | 30 06 02 01 03 02 01 04
         byte[] der = hex("301030060201010201023006020103020104");
         Points v = new Points();
@@ -83,7 +85,7 @@ class PositionsTest {
     }
 
     @Test
-    void berSetComponentsKeepTheirWirePositionsAfterReordering() {
+    void berSetComponentsKeepTheirWirePositionsAfterReordering() throws DecodeException {
         // 31 0A | 80 02 00 C7 (zeroth) | 81 01 00 (first) | 83 01 02 (third): table order is third, first, zeroth
         byte[] der = hex("310A800200C7810100830102");
         Rec v = new Rec();
@@ -96,7 +98,7 @@ class PositionsTest {
     }
 
     @Test
-    void berContainedValueIsPlacedAtItsContentsOctets() {
+    void berContainedValueIsPlacedAtItsContentsOctets() throws DecodeException {
         byte[] der = row("containing_test.vectors", "Holder", "<plain/>").der();
         Holder v = new Holder();
         Positions p = BerObject.decodeWithPositions(v, der, null).positions();
@@ -122,7 +124,7 @@ class PositionsTest {
     }
 
     @Test
-    void berContainedValueDecodedFromTransformedBytesIsNotPlaced() {
+    void berContainedValueDecodedFromTransformedBytesIsNotPlaced() throws DecodeException {
         Holder src = new Holder();
         BerObject.decode(src, row("containing_test.vectors", "Holder", "<plain/>").der());
         for (var c : java.util.List.of(src.viaConstraint(), src.viaAlias(), src.viaSized())) {
@@ -150,7 +152,7 @@ class PositionsTest {
     }
 
     @Test
-    void berRecordsReadBackToBackAreEachRelativeToTheirOwnStart() {
+    void berRecordsReadBackToBackAreEachRelativeToTheirOwnStart() throws DecodeException {
         byte[] one = hex("3011300C0201010101000C0004000500020102");
         byte[] two = hex("301030060201010201023006020103020104");
         byte[] both = new byte[one.length + two.length];
@@ -169,7 +171,7 @@ class PositionsTest {
     }
 
     @Test
-    void perMembersStartAtTheirFirstBit() {
+    void perMembersStartAtTheirFirstBit() throws DecodeException {
         byte[] uper = row("sequence_ber_test.vectors", "Outer", "<tail>2</tail>").asn1cUper();
         Outer v = new Outer();
         Decoded d = PerObject.decodeWithPositions(v, uper, null);
@@ -186,7 +188,7 @@ class PositionsTest {
     }
 
     @Test
-    void perContainedValueIsPlacedAtItsContentsBits() {
+    void perContainedValueIsPlacedAtItsContentsBits() throws DecodeException {
         byte[] uper = row("containing_test.vectors", "Holder", "<viaConstraint>008280").asn1cUper();
         Holder v = new Holder();
         Positions p = PerObject.decodeWithPositions(v, uper, null).positions();
@@ -202,7 +204,7 @@ class PositionsTest {
     }
 
     @Test
-    void berNodesSpanTheirWholeEncodingAndPrimitivesTheirContents() {
+    void berNodesSpanTheirWholeEncodingAndPrimitivesTheirContents() throws DecodeException {
         // 30 11 | 30 0C | 02 01 01 | 01 01 00 | 0C 00 | 04 00 | 05 00 | 02 01 02
         byte[] der = hex("3011300C0201010101000C0004000500020102");
         Outer v = new Outer();
@@ -224,7 +226,7 @@ class PositionsTest {
     }
 
     @Test
-    void berExplicitTagSpansTheOuterTlvAndItsContentsTheInnerOnes() {
+    void berExplicitTagSpansTheOuterTlvAndItsContentsTheInnerOnes() throws DecodeException {
         // 30 32 | 0A 01 02 | 02 01 00 | 61 03 [01 01 00] | 6D 03 [02 01 FB] | ...
         byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
                 + "160171A6083006020105020106");
@@ -241,7 +243,7 @@ class PositionsTest {
     }
 
     @Test
-    void berSetComponentEndsFollowTheirWirePlace() {
+    void berSetComponentEndsFollowTheirWirePlace() throws DecodeException {
         // 31 0A | 80 02 00 C7 (zeroth) | 81 01 00 (first) | 83 01 02 (third): table order is third, first, zeroth
         byte[] der = hex("310A800200C7810100830102");
         Rec v = new Rec();
@@ -257,7 +259,7 @@ class PositionsTest {
     }
 
     @Test
-    void berContainedInnerValueSpansItsOwnEncodingInsideTheFieldContents() {
+    void berContainedInnerValueSpansItsOwnEncodingInsideTheFieldContents() throws DecodeException {
         byte[] der = row("containing_test.vectors", "Holder", "<plain/>").der();
         Holder v = new Holder();
         Positions p = BerObject.decodeWithPositions(v, der, null).positions();
@@ -273,7 +275,7 @@ class PositionsTest {
     }
 
     @Test
-    void berEndsMoveWithTheBase() {
+    void berEndsMoveWithTheBase() throws DecodeException {
         byte[] one = hex("3011300C0201010101000C0004000500020102");
         byte[] two = hex("301030060201010201023006020103020104");
         byte[] both = new byte[one.length + two.length];
@@ -292,7 +294,7 @@ class PositionsTest {
     }
 
     @Test
-    void perNodesSpanTheirBits() {
+    void perNodesSpanTheirBits() throws DecodeException {
         byte[] uper = row("sequence_ber_test.vectors", "Outer", "<tail>2</tail>").asn1cUper();
         Outer v = new Outer();
         Decoded d = PerObject.decodeWithPositions(v, uper, null);
@@ -307,7 +309,7 @@ class PositionsTest {
     }
 
     @Test
-    void perContainedFieldContentsEndWithTheField() {
+    void perContainedFieldContentsEndWithTheField() throws DecodeException {
         byte[] uper = row("containing_test.vectors", "Holder", "<viaConstraint>008280").asn1cUper();
         Holder v = new Holder();
         Positions p = PerObject.decodeWithPositions(v, uper, null).positions();
@@ -318,7 +320,7 @@ class PositionsTest {
     }
 
     @Test
-    void aBuiltinAliasObjectIsTheSameNodeAsItsValue() {
+    void aBuiltinAliasObjectIsTheSameNodeAsItsValue() throws DecodeException {
         byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
                 + "160171A6083006020105020106");
         Refs v = new Refs();
@@ -330,7 +332,7 @@ class PositionsTest {
     }
 
     @Test
-    void berValueSpans() {
+    void berValueSpans() throws DecodeException {
         // 30 11 | 30 0C | 02 01 01 | 01 01 00 | 0C 00 | 04 00 | 05 00 | 02 01 02
         byte[] der = hex("3011300C0201010101000C0004000500020102");
         Outer v = new Outer();
@@ -345,7 +347,7 @@ class PositionsTest {
     }
 
     @Test
-    void berChoiceValueIsItsAlternativesAndEnumeratedItsContents() {
+    void berChoiceValueIsItsAlternativesAndEnumeratedItsContents() throws DecodeException {
         // 30 32 | 0A 01 02 (color) | ... | 16 01 7A (pick s "z") at 29
         byte[] der = hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
                 + "160171A6083006020105020106");
@@ -359,7 +361,7 @@ class PositionsTest {
     }
 
     @Test
-    void bitStringValueLeavesOutTheUnusedBitsOctetAndTheUnusedBits() {
+    void bitStringValueLeavesOutTheUnusedBitsOctetAndTheUnusedBits() throws DecodeException {
         io.github.schramp.gambasasn1.wire.types.Asn1BitString b = new io.github.schramp.gambasasn1.wire.types.Asn1BitString();
         // 03 03 04 A5 B0: unused-bits octet 4, value 1010 0101 1011 (12 bits).
         byte[] der = hex("030304A5B0");
@@ -377,7 +379,7 @@ class PositionsTest {
     }
 
     @Test
-    void perContainedAndOctetStringValues() {
+    void perContainedAndOctetStringValues() throws DecodeException {
         byte[] uper = row("containing_test.vectors", "Holder", "<viaConstraint>008280").asn1cUper();
         Holder v = new Holder();
         Positions p = PerObject.decodeWithPositions(v, uper, null).positions();
@@ -399,7 +401,7 @@ class PositionsTest {
      * contents span holds exactly its value.
      */
     @Test
-    void etsiSampleSpansNestAndOctetStringContentsAreTheirValue() throws java.io.IOException {
+    void etsiSampleSpansNestAndOctetStringContentsAreTheirValue() throws java.io.IOException, DecodeException {
         byte[] all = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(System.getProperty("etsi.sample")));
         BerReader r = new BerReader(all);
         int strings = 0;
@@ -432,7 +434,7 @@ class PositionsTest {
     }
 
     @Test
-    void plainDecodeRecordsNothing() {
+    void plainDecodeRecordsNothing() throws DecodeException {
         Outer v = new Outer();
         BerObject.decode(v, hex("3011300C0201010101000C0004000500020102"));
         Positions p = BerObject.decodeWithPositions(new Outer(), hex("3011300C0201010101000C0004000500020102"), null)

@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -97,7 +99,7 @@ class ExtractTest {
     }
 
     @Test
-    void etsiFusedPlanFindsWhatAWholeWalkFinds() throws IOException {
+    void etsiFusedPlanFindsWhatAWholeWalkFinds() throws IOException, DecodeException {
         byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
         java.util.List<Class<?>> targets = java.util.List.of(gen.etsi.LI_PS_PDU.EncryptedPayload.class,
                 gen.etsi.TS33128Payloads.Timestamp.class, gen.etsi.LI_PS_PDU.CCContents.class, gen.etsi.LI_PS_PDU.IRIContents.class,
@@ -133,7 +135,7 @@ class ExtractTest {
     }
 
     @Test
-    void planKeepsOnlyBranchesThatLeadToATarget() {
+    void planKeepsOnlyBranchesThatLeadToATarget() throws DecodeException {
         // Outer { inner Plain { num, flag, text, data, nul }, tail }: only flag is a BOOLEAN.
         ExtractPlan plan = ExtractPlan.of(Outer::new, Asn1Boolean.class);
         assertEquals("Outer\n  inner: Plain\n    flag: Asn1Boolean *Asn1Boolean\n", plan.toString());
@@ -146,7 +148,7 @@ class ExtractTest {
     }
 
     @Test
-    void everyElementOfASequenceOfIsAHit() {
+    void everyElementOfASequenceOfIsAHit() throws DecodeException {
         Points v = new Points();
         BerObject.decode(v, hex("301030060201010201023006020103020104"));
         assertEquals(v.items(), Extract.all(v, Point.class));
@@ -156,7 +158,7 @@ class ExtractTest {
     }
 
     @Test
-    void recursiveTypesAreFollowedAsDeepAsTheValueGoes() {
+    void recursiveTypesAreFollowedAsDeepAsTheValueGoes() throws DecodeException {
         List l = new List();
         Decoded d = BerObject.decodeWithPositions(l, hex("300D800101A108800102A103800103"), null);
         java.util.List<Extraction.Hit<List>> hits = Extract.all(l, d, List.class);
@@ -171,7 +173,7 @@ class ExtractTest {
     }
 
     @Test
-    void extensionAdditionsAreSearchedAndAbsentMembersAreNot() {
+    void extensionAdditionsAreSearchedAndAbsentMembersAreNot() throws DecodeException {
         Outer2 o = new Outer2();
         // inner V2 { id 6, flag TRUE, [[ level 2 ]], extra 'AA'H }, tail 7; note and name absent.
         BerObject.decode(o, hex("3011A00C8001068201FF8301028501AA810107"));
@@ -183,7 +185,7 @@ class ExtractTest {
     }
 
     @Test
-    void onlyDecodedContainedValuesAreSearched() {
+    void onlyDecodedContainedValuesAreSearched() throws DecodeException {
         java.util.List<Vectors.Vector> rows = Vectors.load("containing_test.vectors");
         Holder plain = new Holder();
         BerObject.decode(plain, rows.stream().filter(v -> v.type().equals("Holder") && v.xer().contains("<plain/>"))
@@ -199,7 +201,7 @@ class ExtractTest {
     }
 
     @Test
-    void aBuiltinAliasClassIsFoundAsItselfAndItsBuiltinAsTheBuiltin() throws IOException {
+    void aBuiltinAliasClassIsFoundAsItselfAndItsBuiltinAsTheBuiltin() throws IOException, DecodeException {
         byte[] file = Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
         gen.etsi.LI_PS_PDU.PS_PDU pdu = new gen.etsi.LI_PS_PDU.PS_PDU();
         Decoded d = BerObject.decodeWithPositions(pdu, file, null);
@@ -213,7 +215,7 @@ class ExtractTest {
     }
 
     @Test
-    void anInlineSequenceOfIsFoundByItsGeneratedClass() {
+    void anInlineSequenceOfIsFoundByItsGeneratedClass() throws DecodeException {
         gen.seqof_ber.Holder h = new gen.seqof_ber.Holder();
         BerObject.decode(h, hex("301930003100A000A10830060101FF010100300302010463003000"));
         assertSame(h.opt(), Extract.all(h, gen.seqof_ber.HolderOpt.class).get(0));
