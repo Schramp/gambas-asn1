@@ -13,6 +13,7 @@ RUNTIME_INC := ../../runtime/include
 RUNTIME_LIB := ../../build/runtime/libasn1cpp_runtime.a
 
 ASN1_FILE   := contact.asn1
+ASNCPP_FLAGS := --remove-stale
 GEN_DIR     := gen
 OBJ_DIR     := obj
 BINARY      := contact-book
@@ -26,7 +27,7 @@ CXXFLAGS    := -std=c++20 -O2 -Wall -I$(GEN_DIR) -I$(RUNTIME_INC)
 
 $(GEN_DIR)/sources.mk: $(ASN1_FILE) $(ASNCPP)
 	@mkdir -p $(GEN_DIR) $(OBJ_DIR)
-	$(ASNCPP) $(ASN1_FILE) --remove-stale -o $(GEN_DIR)
+	$(ASNCPP) $(ASN1_FILE) $(ASNCPP_FLAGS) -o $(GEN_DIR)
 	@ls $(GEN_DIR)/*.cpp | tr '\n' ' ' | sed 's/^/GEN_SRCS := /' > $@
 
 -include $(GEN_DIR)/sources.mk
@@ -73,7 +74,7 @@ RUST_PROBE_SRC := $(RUST_PROBE_DIR)/src
 rust-probe: $(ASN1_FILE) $(ASNCPP)
 	@rm -rf $(RUST_PROBE_SRC)
 	@mkdir -p $(RUST_PROBE_SRC)
-	$(ASNCPP) $(ASN1_FILE) --target=rust --remove-stale -o $(RUST_PROBE_SRC)
+	$(ASNCPP) $(ASN1_FILE) $(ASNCPP_FLAGS) --target=rust -o $(RUST_PROBE_SRC)
 	@echo "[GEN]  $$(ls $(RUST_PROBE_SRC)/*.rs | wc -l) .rs files written"
 	@echo "[CARGO] building $(RUST_PROBE_DIR) ..."
 	-cd $(RUST_PROBE_DIR) && cargo build 2>&1 | tee build.log

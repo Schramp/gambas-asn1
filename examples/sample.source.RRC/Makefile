@@ -27,7 +27,7 @@ LIB_DIR   := lib
 INC_DIR   := include
 LIBRARY   := $(LIB_DIR)/libasn1cpp_rrc.a
 
-ASNCPP_FLAGS :=
+ASNCPP_FLAGS := --remove-stale
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)
@@ -79,7 +79,7 @@ $(OBJ_DIR):
 $(GEN_DIR)/sources.mk: $(ASN_FILES) $(ASNCPP)
 	@echo "[GEN]  running asn1cpp on $(words $(ASN_FILES)) ASN.1 files ..."
 	@mkdir -p $(GEN_DIR) $(OBJ_DIR) $(LIB_DIR)
-	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) --remove-stale -o $(GEN_DIR) 2>&1 | grep -v '^warning:'
+	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) -o $(GEN_DIR) 2>&1 | grep -v '^warning:'
 	@ls $(GEN_DIR)/*.cpp | tr '\n' ' ' | sed 's/^/GEN_SRCS := /' > $@
 	@echo "[GEN]  $$(ls $(GEN_DIR)/*.cpp | wc -l) .cpp files written"
 	@ln -sfn ../$(GEN_DIR) $(INC_DIR)
