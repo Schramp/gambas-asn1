@@ -88,7 +88,7 @@ $(OBJ_DIR):
 $(GEN_DIR)/sources.mk: $(ASN_FILES) $(ASNCPP) $(CONTAINER_CONFIG)
 	@echo "[GEN]  running asn1cpp on $(words $(ASN_FILES)) ASN.1 files ..."
 	@mkdir -p $(GEN_DIR) $(OBJ_DIR) $(LIB_DIR)
-	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) -o $(GEN_DIR) 2>&1 | grep -v '^warning:'
+	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) --remove-stale -o $(GEN_DIR) 2>&1 | grep -v '^warning:'
 	@ls $(GEN_DIR)/*.cpp | tr '\n' ' ' | sed 's/^/GEN_SRCS := /' > $@
 	@echo "[GEN]  $$(ls $(GEN_DIR)/*.cpp | wc -l) .cpp files written"
 	@ln -sfn ../$(GEN_DIR) $(INC_DIR)
@@ -140,7 +140,7 @@ rust-probe: $(ASN_FILES) $(ASNCPP) $(CONTAINER_CONFIG)
 	@echo "[GEN]  running asn1cpp --target=rust on $(words $(ASN_FILES)) ASN.1 files ..."
 	@rm -rf $(RUST_PROBE_SRC)
 	@mkdir -p $(RUST_PROBE_SRC)
-	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) --target=rust -o $(RUST_PROBE_SRC)
+	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) --target=rust --remove-stale -o $(RUST_PROBE_SRC)
 	@echo "[GEN]  $$(ls $(RUST_PROBE_SRC)/*.rs | wc -l) .rs files written"
 	@echo "[CARGO] building $(RUST_PROBE_DIR) ..."
 	-cd $(RUST_PROBE_DIR) && cargo build 2>&1 | tee build.log

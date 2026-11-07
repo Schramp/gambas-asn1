@@ -5,6 +5,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <vector>
+#include <set>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -1534,8 +1535,13 @@ public:
     ///        each `.hpp`/`.cpp` pair is independently `#include`-able,
     ///        nothing to tie together) don't need this.
     /// @param out_dir Directory every generated file was written into.
-    virtual void finalize_output(const std::string& out_dir) const {
+    /// @param written Every file this run wrote or found up to date
+    ///        (Generator::written_files): the backend's own output, as
+    ///        opposed to whatever else the directory holds.
+    virtual void finalize_output(const std::string& out_dir,
+                                 const std::set<std::filesystem::path>& written) const {
         (void)out_dir;
+        (void)written;
     }
 
 protected:

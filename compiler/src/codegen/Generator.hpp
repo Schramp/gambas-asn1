@@ -145,6 +145,7 @@ class Generator {
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
     std::set<fs::path>      known_files_;         // every path emit_type_files() intended to (re)write
+    bool                    remove_stale_ = false; // --remove-stale: see update_manifest()
     // Type names already write_type_reference()'d for the current type's
     // declaration output. Cleared at the start of each emit_type_files()
     // call (one type's generation pass). Consulted when
@@ -178,6 +179,14 @@ public:
     /// @brief PER mode for SIZE on non-known-multiplier strings
     ///        (--per-nkm-size and sidecar overrides); null means strict.
     void set_per_nkm_size(const sema::PerNkmSize* p) { per_nkm_size_ = p; }
+    /// @brief --remove-stale: at the end of generate(), delete the files
+    ///        the previous run listed in the output directory's manifest
+    ///        and this run no longer writes. Off by default: cleaning the
+    ///        output directory is the build's job (make clean, mvn clean).
+    void set_remove_stale(bool on) { remove_stale_ = on; }
+    /// @brief Every file this run wrote or found up to date, for a
+    ///        backend's whole-output bookkeeping (Backend::finalize_output).
+    const std::set<fs::path>& written_files() const { return known_files_; }
 
     /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
     /// @param pr  Resolved parse result containing all input modules.
@@ -239,24 +248,24 @@ public:
                 }
         }
 
-        remove_stale_files();
+        update_manifest();
     }
 
-    /// @brief Delete generated files left over from a previous run that no
-    ///        longer correspond to any type this run produced: a SEQUENCE
-    ///        that became a plain alias (drops its `.cpp` file), a backend
-    ///        switching between a two-file and a single-file layout, or a
-    ///        module whose types are no longer generated (its whole
-    ///        sub-directory, under a backend whose `output_stem` places
-    ///        types below out_dir_).
-    /// @note Two sources of candidates, both limited to the backend's
-    ///       declaration/definition extensions: files directly in out_dir_
-    ///       or in a directory this run wrote into, and every file the
-    ///       previous run listed in out_dir_'s generated-files manifest.
-    ///       Directories left empty below out_dir_ are removed. Files no
-    ///       run of this generator wrote elsewhere (a hand-maintained
-    ///       sources.mk, a user's own sub-directory) are never touched.
-    void remove_stale_files() const;
+    /// @brief Rewrite the output directory's manifest (`.asn1cpp-generated`,
+    ///        one path per line relative to out_dir_): every file this run
+    ///        wrote, plus every file an earlier run listed that this run no
+    ///        longer writes and that is still there. With --remove-stale,
+    ///        those earlier files are deleted instead (and so drop out): a
+    ///        SEQUENCE that became a plain alias (drops its `.cpp` file), a
+    ///        backend switching between a two-file and a single-file layout,
+    ///        or a module whose types are no longer generated (its whole
+    ///        sub-directory, under a backend whose `output_stem` places types
+    ///        below out_dir_), then the directories that left empty.
+    /// @note Only manifest entries are ever deleted, and only those below
+    ///       out_dir_ with the backend's declaration/definition extension:
+    ///       a file no run listed (a user's own source, a hand-maintained
+    ///       sources.mk) is never touched, wherever it is.
+    void update_manifest() const;
 
     /// @brief The generated name of a type assignment, used for it
     ///        throughout code generation: the backend's module-scoped name

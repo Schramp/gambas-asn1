@@ -23,7 +23,7 @@ all: $(STAMP)
 
 $(GEN_DIR)/.stamp: ../contact.asn1 $(ASNCPP)
 	rm -rf $(GEN_DIR) && mkdir -p $(GEN_DIR)
-	$(ASNCPP) --target=java --package=contacts ../contact.asn1 -o $(GEN_DIR)/contacts
+	$(ASNCPP) --target=java --package=contacts --remove-stale ../contact.asn1 -o $(GEN_DIR)/contacts
 	touch $@
 
 $(STAMP): $(GEN_DIR)/.stamp Main.java $(shell find $(RUNTIME_SRC) -name '*.java')

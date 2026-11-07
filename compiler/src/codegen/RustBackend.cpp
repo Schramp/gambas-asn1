@@ -2529,10 +2529,12 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 
 /// @brief Write the crate root: a `const` assertion that the runtime is this
 ///        compiler's version (`asn1cpp_wire::version::runtime_version_is`),
-///        then one module declaration per generated `.rs` file in name
-///        order, so the
+///        then one module declaration per `.rs` file this run wrote
+///        directly in out_dir, in name order, so the
 ///        `use crate::<module>::<Type>;` paths emit_type_reference emits
 ///        actually resolve.
+/// @param out_dir Output directory; `lib.rs` goes here.
+/// @param written Files this run wrote (Generator::written_files).
 ///        WIP: flat mod-per-file list, no module tree mirroring
 ///        ASN.1 modules.
 /// @note The module *identifier* is the type identifier verbatim
@@ -2544,15 +2546,18 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 ///       emit_type_reference's `use` paths re-derive the same
 ///       `escape(stem)` so the two stay in sync without a second
 ///       source of truth.
-void RustBackend::finalize_output(const std::string& out_dir) const {
+void RustBackend::finalize_output(const std::string& out_dir,
+                                  const std::set<std::filesystem::path>& written) const {
     namespace fs = std::filesystem;
     fs::path lib_rs = fs::path(out_dir) / "lib.rs";
-    // Sorted, and written only on a change: directory order is unspecified,
-    // and regenerating with the same compiler must give the same bytes.
+    // The files this run wrote, not the directory's contents: a `.rs` file
+    // the compiler did not write (a user's own, or one a previous run left)
+    // is no module of this crate. Sorted (std::set order), and written only
+    // on a change: regenerating with the same compiler gives the same bytes.
     std::vector<std::string> stems;
-    for (const auto& entry : fs::directory_iterator(out_dir)) {
-        if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
-        stems.push_back(entry.path().stem().string());
+    for (const auto& path : written) {
+        if (path.extension() != ".rs" || path == lib_rs || path.parent_path() != fs::path(out_dir)) continue;
+        stems.push_back(path.stem().string());
     }
     std::sort(stems.begin(), stems.end());
     std::string lib = file_banner() + runtime_version_assert();

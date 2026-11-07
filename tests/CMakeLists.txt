@@ -2015,7 +2015,8 @@ add_test(NAME pdu_filter_absent
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
 # Stale generated files: a module dropped between runs, or a layout switch,
-# leaves no files behind (Generator::remove_stale_files and its manifest).
+# leaves no files behind with --remove-stale (Generator::update_manifest),
+# and never removes a file no run generated.
 add_test(NAME stale_files
     COMMAND ${CMAKE_COMMAND}
             -DCOMPILER=$<TARGET_FILE:asn1cpp>
@@ -2305,12 +2306,11 @@ add_custom_command(
 
 # gambas-asn1#282: broaden Rust SEQUENCE codegen past INTEGER-only (Point) to
 # a mixed-type flat SEQUENCE (bool/OCTET STRING/IA5String members). Own
-# output directory, not RUST_SIMPLE_SEQ_GEN_DIR — each asn1cpp invocation
-# deletes any .rs file in its out-dir that its own run didn't produce
-# (Generator::remove_stale_files, keeps generated dirs free of orphans from
-# renamed/removed types); two separate compiler invocations sharing one
-# out-dir would race to delete each other's output. build.rs
-# (tests/rust/roundtrip) copies Point.rs from RUST_SIMPLE_SEQ_GEN_DIR and
+# output directory, not RUST_SIMPLE_SEQ_GEN_DIR: each asn1cpp invocation
+# writes its output directory's lib.rs and .asn1cpp-generated manifest
+# for its own files only, so two invocations sharing one directory would
+# overwrite each other's. build.rs (tests/rust/roundtrip) copies Point.rs
+# from RUST_SIMPLE_SEQ_GEN_DIR and
 # Widget.rs from this directory separately.
 set(RUST_WIDE_TYPES_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_wide_types)
 add_custom_command(

@@ -157,6 +157,7 @@ Dependencies and options: ${asn1cpp.project}/blob/${asn1cpp.ref}/INSTALL.md
                 <argument>-require-version=${gambasasn1.version}</argument>
                 <argument>-target=java</argument>
                 <argument>-package=contacts</argument>
+                <argument>-remove-stale</argument>
                 <argument>${project.basedir}/../contact.asn1</argument>
                 <argument>-o</argument>
                 <argument>${asn1cpp.generated}/contacts</argument>

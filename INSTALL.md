@@ -190,7 +190,11 @@ By hand:
 asn1cpp --target=java --package=contacts contact.asn1 -o src/main/java/contacts
 ```
 
-The generated sources need nothing but `gambasasn1-wire` on the class path.
+`-o` is the directory of the `--package`, and the compiler owns it: keep
+your own sources outside it, and remove it on a clean build (or pass
+`--remove-stale`) so a renamed or removed type's old file does not stay
+(book.md, "The output directory"). The generated sources need nothing but
+`gambasasn1-wire` on the class path.
 
 From Maven, so that `mvn compile` regenerates the code with the matching
 compiler: run `asn1cpp` in the `generate-sources` phase with

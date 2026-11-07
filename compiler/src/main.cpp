@@ -38,6 +38,7 @@ static const struct option long_opts[] = {
     {"list-per-nkm-size",    no_argument,       nullptr, 'Z'},
     {"version",              no_argument,       nullptr, 'V'},
     {"require-version",      required_argument, nullptr, 'R'},
+    {"remove-stale",         no_argument,       nullptr, 'X'},
     {nullptr, 0, nullptr, 0}
 };
 
@@ -141,6 +142,11 @@ static void print_help(const char* prog) {
         "                              unless --flat-package is given.\n"
         "  --flat-package              (java) Put every type in the --package itself\n"
         "                              (default there: the unnamed package).\n"
+        "  --remove-stale              Delete the files the previous run into -o wrote\n"
+        "                              (listed in <outdir>/.asn1cpp-generated) that this\n"
+        "                              run no longer writes. Off by default: generate\n"
+        "                              into a directory the compiler owns, and clean it\n"
+        "                              as part of the build (make clean, mvn clean).\n"
         "  --version                   Print the compiler version and exit.\n"
         "  --require-version=<v>       Fail unless <v> (X.Y.Z, a -SNAPSHOT or other\n"
         "                              -qualifier ignored) is this compiler's version,\n"
@@ -158,7 +164,7 @@ static void usage(const char* prog) {
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " [--target=cpp|rust|java] [--package=<name>] [--flat-package] [--stdlib-dir=<dir>]"
-                 " [--container-config=<file>] [--per-nkm-size=strict|visible]"
+                 " [--container-config=<file>] [--per-nkm-size=strict|visible] [--remove-stale]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
@@ -206,6 +212,7 @@ int main(int argc, char** argv) {
     std::string target = "cpp";
     std::string java_package;
     bool java_flat = false;
+    bool remove_stale = false;
     std::string stdlib_dir = default_stdlib_dir();
     std::vector<std::string> input_files;
     std::string container_config;
@@ -261,6 +268,7 @@ int main(int argc, char** argv) {
         case 'L': list_contained = true; break;
         case 'J': java_package = optarg; break;
         case 'F': java_flat = true; break;
+        case 'X': remove_stale = true; break;
         case 'N':
             if (!asn1::sema::parse_nkm_size_mode(optarg, nkm_size_mode)) {
                 std::cerr << "error: unknown --per-nkm-size value '" << optarg
@@ -462,9 +470,10 @@ int main(int argc, char** argv) {
     // A construct the selected backend does not emit yet throws from its
     // Backend::emit_* default; report it rather than abort.
     gen.set_per_nkm_size(&nkm_size);
+    gen.set_remove_stale(remove_stale);
     try {
         gen.generate(pr);
-        backend.finalize_output(out_dir);
+        backend.finalize_output(out_dir, gen.written_files());
     } catch (const std::logic_error& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
