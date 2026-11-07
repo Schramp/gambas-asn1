@@ -1245,17 +1245,33 @@ for (auto& fail : report.failures())
 
 ### Error Handling
 
-Neither runtime aborts the process on anything a caller can trigger. A
+No runtime aborts the process on anything a caller can trigger. A
 record the codec cannot handle fails that one encode or decode; the
-process keeps running and the next record is unaffected.
+process keeps running and the next record is unaffected. In C++ and Rust
+the failure is a return value. Java throws an exception for it, which the
+caller catches around each record: like any Java exception, one that
+nothing catches ends its thread, and on the main thread the program.
 
 **Decode** reports an error in every runtime: C++ `ICodec::decode` returns
 `Expected<void, DecodeError>`, Rust `<codec>::object::decode_pdu` returns
 `Result<T, DecodeError>` (PER: `per::reader::DecodeError`), and Java's
 `BerObject`/`XerObject`/`JerObject`/`PerObject.decode` throw
 `io.DecodeException`. It extends `RuntimeException`, so the compiler does not
-make callers catch or declare it; catch it around a call to keep going after a
-bad record.
+make callers catch or declare it, and does not warn when they forget: a
+decode loop that should survive a bad record catches it around each call:
+
+```java
+for (byte[] record : records) {
+    PS_PDU pdu = new PS_PDU();
+    try {
+        BerObject.decode(pdu, record);
+    } catch (DecodeException e) {
+        System.err.println("skipped record: " + e.getMessage());
+        continue;
+    }
+    handle(pdu);
+}
+```
 
 **Encode** reports a failure the caller must check:
 
