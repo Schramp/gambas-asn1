@@ -1,22 +1,25 @@
 # gambas-asn1
 
-**A modern C++20 ASN.1 compiler and runtime.**
+**A modern ASN.1 compiler, with runtimes for C++20, Rust and Java.**
 
 ASN.1 underpins X.509 certificates, telecom signalling, lawful-interception
 records, and the air-interface messages of every generation of mobile
 network. The dominant open-source compiler, [asn1c](https://github.com/vlm/asn1c),
 generates C code with `void *` callback tables in a style from the early
 2000s. gambas-asn1 is that compiler written today: it reads ASN.1 schemas
-and generates clean, type-safe C++20 — with all codec logic living once in
-a runtime library, not duplicated per generated type.
+and generates clean, type-safe C++20, Rust or Java — with all codec logic
+living once in each language's runtime library, not duplicated per
+generated type.
 
 ```bash
-./build/compiler/asn1cpp path/to/schema.asn1 -o output/dir/
+./build/compiler/asn1cpp path/to/schema.asn1 -o output/dir/                 # C++
+./build/compiler/asn1cpp --target=rust path/to/schema.asn1 -o output/dir/
+./build/compiler/asn1cpp --target=java --package=com.example.asn1 path/to/schema.asn1 -o output/dir/com/example/asn1
 ```
 
 ## Features
 
-- **BER, XER, and UPER (PER)** encode/decode; JER (JSON) in progress
+- **BER, XER, JER (JSON) and UPER (PER)** encode/decode, in C++, Rust and Java
 - **Table-only generated code** — no codec logic per type, so adding an
   encoding rule means writing one runtime class, not touching generated files
 - **Constraint validation** (range, size, alphabet) with path-tracked reports
@@ -103,10 +106,23 @@ and [`examples/contact-book/maven`](examples/contact-book/maven).
 
 ## Status
 
-Compiler passes all asn1c parser conformance tests. BER and UPER codecs are
-complete for their target schemas; XER is complete; JER is a stub. See
-[Status and Conformance](doc/book.md#14-status-and-conformance) and
-[Known Limitations](doc/book.md#15-known-limitations) for the details.
+0.1.0 is the first release (see [Using a release](#using-a-release)).
+
+- **Compiler.** Reads every module of ETSI TS 102 232 and 3GPP TS 25.331.
+  Passes all 145 asn1c parser pass-tests and all 3 reject-tests, and handles
+  34 of the 35 semantic-error tests.
+- **Backends.** C++ (`--target=cpp`, the reference), Rust (`--target=rust`)
+  and Java (`--target=java`). All three emit the same descriptor tables,
+  checked by `validation-tools/table_diff`, and each runtime implements BER,
+  XER, JER and unaligned PER (UPER), with constraint validation.
+- **Cross-validation.** `validation-tools/xval_sweep` runs 72 schema/PDU
+  targets through every encode/decode path of the C++, Rust and Java codecs
+  and compares the results: on every pull request across the three runtimes
+  (with a decoder fuzz pass), on `main` also against asn1c. An Erlang/OTP
+  leg runs alongside for information.
+
+Details per codec: [Status and Conformance](doc/book.md#14-status-and-conformance).
+Open gaps: [Known Limitations](doc/book.md#15-known-limitations).
 
 ## Contributing
 
