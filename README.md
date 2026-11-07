@@ -1,17 +1,20 @@
 # gambas-asn1
 
-**A modern C++20 ASN.1 compiler and runtime.**
+**A modern ASN.1 compiler, with runtimes for C++20, Rust and Java.**
 
 ASN.1 underpins X.509 certificates, telecom signalling, lawful-interception
 records, and the air-interface messages of every generation of mobile
 network. The dominant open-source compiler, [asn1c](https://github.com/vlm/asn1c),
 generates C code with `void *` callback tables in a style from the early
 2000s. gambas-asn1 is that compiler written today: it reads ASN.1 schemas
-and generates clean, type-safe C++20 — with all codec logic living once in
-a runtime library, not duplicated per generated type.
+and generates clean, type-safe C++20, Rust or Java — with all codec logic
+living once in each language's runtime library, not duplicated per
+generated type.
 
 ```bash
-./build/compiler/asn1cpp path/to/schema.asn1 -o output/dir/
+./build/compiler/asn1cpp path/to/schema.asn1 -o output/dir/                 # C++
+./build/compiler/asn1cpp --target=rust path/to/schema.asn1 -o output/dir/
+./build/compiler/asn1cpp --target=java --package=com.example.asn1 path/to/schema.asn1 -o output/dir/com/example/asn1
 ```
 
 ## Features

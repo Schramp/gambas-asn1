@@ -1,6 +1,6 @@
 # gambas-asn1
 
-### A Modern C++20 ASN.1 Compiler and Runtime
+### A Modern ASN.1 Compiler, with Runtimes for C++20, Rust and Java
 
 ---
 
@@ -48,9 +48,9 @@ not the compiler you would write today.
 
 gambas-asn1 is that compiler written today.
 
-It reads ASN.1 module files and generates clean, type-safe C++20 code. The generated files
-contain only static descriptor tables — no codec logic. All encoding and decoding is
-handled by a compact runtime library. Changing the runtime does not require regenerating
+It reads ASN.1 module files and generates clean, type-safe C++20, Rust or Java code. The
+generated files contain only static descriptor tables — no codec logic. All encoding and
+decoding is handled by a compact runtime library, one per language. Changing the runtime does not require regenerating
 any schema. Adding a new encoding rule (say, JSON Encoding Rules) means writing one new
 codec class, not touching generated files at all.
 
@@ -622,8 +622,9 @@ stays hex in every form; its status and reason go to stderr.
 contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
 ```
 
-Both backends generate contained fields as a contained-value type:
-`asn1::Containing<T>` in C++, `asn1cpp_wire::containing::Containing<T>` in Rust. The
+All three backends generate contained fields as a contained-value type:
+`asn1::Containing<T>` in C++, `asn1cpp_wire::containing::Containing<T>` in Rust,
+`spec.Containing<T>` in Java. The
 inner type joins the `-pdu` reachable set. C++ generates no setters for these fields.
 
 **Runtime (C++).** A contained field is stored as `asn1::Containing<T>`
@@ -806,7 +807,7 @@ trailing 0 bits no meaning (X.680 §22.7), so PER sends such a value with its tr
 bits removed, then padded with 0 bits up to the `SIZE` lower bound when there is one
 (X.691 §15.2, §15.3). `'01000000'B` goes out as the 2 bits `01` in an unconstrained or
 `SIZE (2..8)` type, and as all 8 bits in `SIZE (8)`; decoding returns that transmitted
-form. This applies to inline members, named types and aliases of them, in both runtimes.
+form. This applies to inline members, named types and aliases of them, in all three runtimes.
 For the same reason the `SIZE` check on such a type only looks at the bits up to the last
 1 bit. A `BIT STRING` without named bits is sent at its own length. BER keeps the value
 as given (X.690 §8.6.2.4 allows either).
@@ -1020,8 +1021,8 @@ its BER encoding — but it is human-readable and toolchain-compatible.
 
 ### JSON Encoding Rules (JER)
 
-JER (X.697) maps ASN.1 to JSON. Both runtimes implement it (C++ `JerCodec`,
-Rust `asn1cpp_wire::jer::object`), and C++ and Rust write identical text.
+JER (X.697) maps ASN.1 to JSON. All three runtimes implement it (C++ `JerCodec`,
+Rust `asn1cpp_wire::jer::object`, Java `jer.JerObject`), and they write identical text.
 
 A REAL is a JSON number that converts back to exactly the same double. It is
 the shortest such digit string, in plain decimal notation when the decimal
@@ -1058,14 +1059,14 @@ members out and never writes `null` for them.
 
 ### Encoding Rule Comparison
 
-| Property | BER/DER | UPER | XER |
-|----------|---------|------|-----|
-| Self-describing | Yes | No | Yes |
-| Requires schema to decode | No | Yes | No |
-| Size | Medium | Minimum | Large |
-| Human readable | No | No | Yes |
-| Used for | General, PKI, telecom | Radio interfaces, 3GPP | Logging, diagnostics |
-| asn1cpp status | Complete | Complete | Complete |
+| Property | BER/DER | UPER | XER | JER |
+|----------|---------|------|-----|-----|
+| Self-describing | Yes | No | Yes | Yes |
+| Requires schema to decode | No | Yes | No | No |
+| Size | Medium | Minimum | Large | Large |
+| Human readable | No | No | Yes | Yes |
+| Used for | General, PKI, telecom | Radio interfaces, 3GPP | Logging, diagnostics | Web APIs, logging |
+| Status (C++, Rust, Java) | Complete | Complete | Complete | Complete |
 
 ---
 
@@ -1248,9 +1249,13 @@ Neither runtime aborts the process on anything a caller can trigger. A
 record the codec cannot handle fails that one encode or decode; the
 process keeps running and the next record is unaffected.
 
-**Decode** returns an error in both runtimes: C++ `ICodec::decode` returns
+**Decode** reports an error in every runtime: C++ `ICodec::decode` returns
 `Expected<void, DecodeError>`, Rust `<codec>::object::decode_pdu` returns
-`Result<T, DecodeError>` (PER: `per::reader::DecodeError`).
+`Result<T, DecodeError>` (PER: `per::reader::DecodeError`), and Java's
+`BerObject`/`XerObject`/`JerObject`/`PerObject.decode` throw
+`io.DecodeException`. It extends `RuntimeException`, so the compiler does not
+make callers catch or declare it; catch it around a call to keep going after a
+bad record.
 
 **Encode** reports a failure the caller must check:
 
@@ -1258,16 +1263,17 @@ process keeps running and the next record is unaffected.
 |---------|-------------------------------|
 | C++ | `encode_failed()` on the stream after `encode`: `BerEncodeStream` (via `BerWriter`), `XerEncodeStream`, `JerEncodeStream`, `PerEncodeStream`; nested values share the flag of the stream the caller passed |
 | Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
+| Java | `BerObject`/`XerObject`/`JerObject`/`PerObject.encode` throw `io.EncodeException`, a `RuntimeException` (callers need not catch or declare it) |
 
 Causes of a per-record error:
 
 - **Malformed input** — truncated or inconsistent TLVs, wrong tags, bad XML/JSON (decode).
 - **Input nested deeper than 256 constructed levels** — a self-referential
-  type (X.680 §29) lets an input nest without bound; every decoder in both
-  runtimes stops at 256 SEQUENCE/SET/CHOICE/SEQUENCE OF levels with
+  type (X.680 §29) lets an input nest without bound; every decoder in all
+  three runtimes stops at 256 SEQUENCE/SET/CHOICE/SEQUENCE OF levels with
   `nesting deeper than 256 levels` instead of exhausting the stack
   (C++ `kMaxDecodeDepth`, `codec/DecodeDepth.hpp`; Rust
-  `nesting::MAX_DECODE_DEPTH`). Levels are counted, not recursion
+  `nesting::MAX_DECODE_DEPTH`; Java `io.Nesting.MAX_DECODE_DEPTH`). Levels are counted, not recursion
   cycles. The count lives in the decoder's own reader, so concurrent
   decodes never share it.
 - **A PER list of more than 200 items encoded in zero bits** — NULL or
@@ -1306,9 +1312,9 @@ Causes of a per-record error:
 Each C++ encode failure is traced (with the reason) under `ASN1CPP_DEBUG`
 bit `0x10` (BER), `0x04` (XER and JER) or `0x08` (PER).
 
-Both runtimes' decoders are fuzzed by `validation-tools/xval_sweep/xval_sweep.py
+All three runtimes' decoders are fuzzed by `validation-tools/xval_sweep/xval_sweep.py
 --fuzz`: for every curated target it feeds BER corrupted by randgen's
-BerCorruptor and mutated PER/XER/JER records to every C++ and Rust decoder,
+BerCorruptor and mutated PER/XER/JER records to every C++, Rust and Java decoder,
 and fails only on a crash (signal, abort, Rust panic, hang); the xval Rust
 tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
 `rust_fuzz_smoke` (Rust) as fixed-seed smoke tests.
@@ -1397,7 +1403,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
-| `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
+| `--target=<lang>` | Output language: `cpp` (default; the reference backend, one `.hpp` + `.cpp` pair per type), `rust` (one `.rs` file per type plus `lib.rs`) or `java` (one `.java` file per type). All three generate the same descriptor tables and support BER, XER, JER and UPER; see [Backends](#backends). A construct a backend cannot generate stops generation with an `error: emit_<construct>: ...` message ending in `not implemented for this backend`. |
 | `--package=<name>` | `--target=java` only: the root Java package (e.g. `com.example.asn1`); required unless `--flat-package` is given, where it defaults to the unnamed package. Each ASN.1 module's types go in a sub-package named after the module, transliterated like a type name (`-` becomes `_`) and never recased: `MicroSecondTimeStamp` of module `LI-PS-PDU` is `com.example.asn1.LI_PS_PDU.MicroSecondTimeStamp`, in `-o <dir>/LI_PS_PDU/`. Point `-o` at the source directory of `<name>`. This layout needs `--package`, and its first segment may not be `value`, `index`, `unknown`, `code`, `ext`, `i`, `item`, `o`, `other` or `v`, names generated classes declare themselves. A type name defined in several modules keeps its ASN.1 name in each module's package, and a reference to another module's type uses its fully qualified name, so no imports are needed. `-fprefix` is rejected with `--target=java`. |
 | `--flat-package` | `--target=java` only: put every class directly in `--package`, files flat in `-o <dir>`. A type name defined in more than one module then gets its module's name in front (`EpsHI2OperationsIRI_Parameters`), as in C++ and Rust. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
@@ -1900,6 +1906,39 @@ compiler on ~200 asn1c test files and checks pass/fail outcomes. Known failures 
 listed in `tests/parser_known_failures.txt`; both the ctest harness and the convenience
 wrapper `asn1cpp-validation-tools/validate_parser.py` read from that file.
 
+### Backends
+
+Three backends generate code from the same compiler decisions: C++
+(`--target=cpp`, the reference), Rust (`--target=rust`, runtime crate
+`asn1cpp-wire` in `rust-runtime/wire/`) and Java (`--target=java`, runtime
+`io.github.schramp.gambasasn1:gambasasn1-wire` in `java-runtime/`, on Maven
+Central). Each emits descriptor tables only; in each runtime one
+table-driven walker per codec does the encoding. Every runtime implements
+BER, XER, JER and unaligned PER, constraint validation, contained values and
+the 256-level decode depth limit, so the codec sections below hold for all
+three.
+
+Two tools keep the backends in step, and CI runs both on every pull request:
+
+- `validation-tools/table_diff/table_diff.py` dumps each runtime's tables
+  as canonical JSON and diffs the Rust and Java tables against the C++ ones.
+- `validation-tools/xval_sweep/xval_sweep.py` runs 72 schema/PDU targets
+  (`targets.txt`) through every encode and decode path of the three runtimes
+  and compares the output; on `main` also against asn1c, with an Erlang/OTP
+  leg for information. Its `--fuzz` pass feeds corrupted input to every
+  decoder and fails only on a crash.
+
+Gaps between the backends:
+
+- Rust: a few member shapes (an OPTIONAL member whose type has no tag to
+  detect its presence, some SEQUENCE OF / SET OF element combinations)
+  generate, but every record using them fails to encode or decode with
+  `member '<name>' not supported: <reason>`.
+- Java: a DEFAULT member of a kind that has no default setter stops
+  generation.
+- INTEGER storage beyond 64 bits: none of the three (see [Known
+  Limitations](#15-known-limitations)).
+
 ### BER Codec
 
 BER encode and decode are complete for all types present in ETSI LI PS-PDU:
@@ -1995,10 +2034,16 @@ element, with an empty line between elements, as asn1c does:
 </items>
 ```
 
-The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
+The C++ decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
 to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
 text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for
 details.
+
+### JER Codec
+
+JER encode and decode (X.697) are complete in all three runtimes, which write
+identical text: xval_sweep's BER→JER and JER→BER legs compare them on every
+target. Details: [JSON Encoding Rules](#json-encoding-rules-jer).
 
 ### Constraint Validation
 
@@ -2133,7 +2178,7 @@ the Backend contract, the shared descriptor-table model every backend renders,
 the runtime shape, language-mapping decisions, naming rules, the construct order,
 and the validation ladder (including the cross-language table dump format).
 
-The Java runtime (`java-runtime/`, in progress) is a Gradle build with the
+The Java runtime (`java-runtime/`) is a Gradle build with the
 wrapper committed and a Java 21 toolchain:
 
 ```bash
