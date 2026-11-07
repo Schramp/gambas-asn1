@@ -18,6 +18,7 @@ import etsi.LI_PS_PDU.PS_PDU;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.query.Extract;
 import io.github.schramp.gambasasn1.wire.query.Extraction;
 import io.github.schramp.gambasasn1.wire.spec.ContainedText;
@@ -56,7 +57,14 @@ public final class CcOffsets {
         while (!reader.atEnd()) {
             long base = 8L * reader.source().position();
             PS_PDU pdu = new PS_PDU();
-            Decoded d = BerObject.decodeWithPositions(pdu, reader);
+            Decoded d;
+            try {
+                d = BerObject.decodeWithPositions(pdu, reader);
+            } catch (DecodeException e) {
+                System.err.printf("BER decode failed at offset %d (PDU #%d): %s%n", base / 8, pduNum + 1, e.getMessage());
+                System.exit(1);
+                return;
+            }
             Positions p = d.positions().withBase(base);
             ++pduNum;
             for (Extraction.Hit<IPCCContents> hit : Extract.all(pdu, d, IPCCContents.class)) {

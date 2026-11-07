@@ -1,5 +1,7 @@
 package io.github.schramp.gambasasn1.wire.per;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import java.io.ByteArrayOutputStream;
@@ -28,7 +30,7 @@ public final class PerLength {
     /** Reads {@code count} more items. */
     @FunctionalInterface
     public interface ItemReader {
-        void read(PerReader r, int count);
+        void read(PerReader r, int count) throws DecodeException;
     }
 
     /**
@@ -48,7 +50,7 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putLength}; a fragment header is an error here. */
-    public static int getLength(PerReader r) {
+    public static int getLength(PerReader r) throws DecodeException {
         int first = (int) r.getBits(8);
         if ((first & 0x80) == 0) {
             return first;
@@ -84,7 +86,7 @@ public final class PerLength {
      *
      * @return the total item count
      */
-    public static int getLengthAndItems(PerReader r, ItemReader items) {
+    public static int getLengthAndItems(PerReader r, ItemReader items) throws DecodeException {
         long total = 0;
         while (true) {
             int first = (int) r.getBits(8);
@@ -119,7 +121,7 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putOctets}. */
-    public static byte[] getOctets(PerReader r) {
+    public static byte[] getOctets(PerReader r) throws DecodeException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         getLengthAndItems(r, (in, count) -> {
             if (count * 8L > in.remaining()) {
@@ -147,7 +149,7 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putNormallySmallLength}. */
-    public static int getNormallySmallLength(PerReader r) {
+    public static int getNormallySmallLength(PerReader r) throws DecodeException {
         if (r.getBits(1) == 0) {
             return (int) r.getBits(6) + 1;
         }
@@ -174,7 +176,7 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putNormallySmall}. */
-    public static long getNormallySmall(PerReader r) {
+    public static long getNormallySmall(PerReader r) throws DecodeException {
         if (r.getBits(1) == 0) {
             return r.getBits(6);
         }
@@ -199,7 +201,7 @@ public final class PerLength {
      *
      * @return the offset, to be read as unsigned
      */
-    public static long getSemiConstrained(PerReader r) {
+    public static long getSemiConstrained(PerReader r) throws DecodeException {
         return PerWhole.fromNonNegative(wholeNumberOctets(r));
     }
 
@@ -213,12 +215,12 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putUnconstrained}. */
-    public static long getUnconstrained(PerReader r) {
+    public static long getUnconstrained(PerReader r) throws DecodeException {
         return PerWhole.fromTwosComplement(wholeNumberOctets(r));
     }
 
     /** The octets of a length-prefixed whole number: 1 to 8, beyond 64 bits rejected. */
-    private static byte[] wholeNumberOctets(PerReader r) {
+    private static byte[] wholeNumberOctets(PerReader r) throws DecodeException {
         int len = getLength(r);
         if (len == 0) {
             throw r.error("PER: whole number with no octets");
@@ -267,7 +269,7 @@ public final class PerLength {
      *
      * @return the item count
      */
-    public static int getSize(PerReader r, Constraints c, ItemReader items) {
+    public static int getSize(PerReader r, Constraints c, ItemReader items) throws DecodeException {
         if (!countIsConstrained(c)) {
             int n = getLengthAndItems(r, items);
             if ((c.flags() & Constraints.SIZE_CONSTRAINED) != 0 && (n < c.sizeLower() || n > c.sizeUpper())) {
@@ -302,7 +304,7 @@ public final class PerLength {
     }
 
     /** Decode counterpart of {@link #putExtSize}. */
-    public static int getExtSize(PerReader r, Constraints c, ItemReader items) {
+    public static int getExtSize(PerReader r, Constraints c, ItemReader items) throws DecodeException {
         if ((c.flags() & Constraints.EXTENSIBLE) != 0 && (c.flags() & Constraints.SIZE_CONSTRAINED) != 0
                 && r.getBits(1) == 1) {
             return getLengthAndItems(r, items);

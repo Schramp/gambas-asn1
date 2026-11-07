@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -38,7 +40,7 @@ class DefaultBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -57,7 +59,7 @@ class DefaultBerTest {
     }
 
     @Test
-    void absentMembersDecodeToTheirDefaults() {
+    void absentMembersDecodeToTheirDefaults() throws DecodeException {
         Rec r = new Rec();
         r.num().set(9);
         r.name().set("zz");

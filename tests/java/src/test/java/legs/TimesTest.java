@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,7 +21,7 @@ import org.junit.jupiter.api.Test;
 /** Every time value in the ETSI sample reads as a time. */
 class TimesTest {
     @Test
-    void etsiSampleTimesParse() throws IOException {
+    void etsiSampleTimesParse() throws IOException, DecodeException {
         ExtractPlan plan = ExtractPlan.of(gen.etsi.LI_PS_PDU.PS_PDU::new,
                 List.of(Asn1GeneralizedTime.class, Asn1UtcTime.class));
         BerReader r = new BerReader(Files.readAllBytes(Path.of(System.getProperty("etsi.sample"))));

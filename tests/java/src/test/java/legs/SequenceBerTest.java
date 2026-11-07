@@ -60,7 +60,7 @@ class SequenceBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         Asn1Seq s = (Asn1Seq) v;
@@ -98,7 +98,7 @@ class SequenceBerTest {
     }
 
     @Test
-    void decodedValuesEqualConstructedOnes() {
+    void decodedValuesEqualConstructedOnes() throws DecodeException {
         Point p = new Point();
         BerObject.decode(p, hex("30060201010201FE"));
         Point q = new Point();
@@ -112,7 +112,7 @@ class SequenceBerTest {
 
     /** An OPTIONAL untagged CHOICE member is present when the next tag is one of its alternatives'. */
     @Test
-    void optionalUntaggedChoiceIsDetectedByItsAlternativeTags() {
+    void optionalUntaggedChoiceIsDetectedByItsAlternativeTags() throws DecodeException {
         Refs r = new Refs();
         BerObject.decode(r, hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109160171A6083006020105020106"));
         Pick want = new Pick();
@@ -122,7 +122,7 @@ class SequenceBerTest {
     }
 
     @Test
-    void decodeResetsOptionalMembersTheInputLeavesOut() {
+    void decodeResetsOptionalMembersTheInputLeavesOut() throws DecodeException {
         Opt o = new Opt();
         o.a(new Asn1Integer(1));
         o.c(new Asn1OctetString(hex("01")));

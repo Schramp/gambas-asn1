@@ -23,13 +23,13 @@ class XerPrimitiveTest {
         return new String(w.toByteArray(), StandardCharsets.UTF_8);
     }
 
-    private static <T extends Asn1Primitive> T decode(T p, String content, boolean lenient) {
+    private static <T extends Asn1Primitive> T decode(T p, String content, boolean lenient) throws DecodeException {
         XerPrimitive.decode(p, new XerReader(content.getBytes(StandardCharsets.UTF_8), lenient));
         return p;
     }
 
     @Test
-    void textEscapesMarkupAndReadsEntitiesBack() {
+    void textEscapesMarkupAndReadsEntitiesBack() throws DecodeException {
         Asn1Utf8String s = new Asn1Utf8String();
         s.set("a<b&c>d\"e");
         assertEquals("a&lt;b&amp;c&gt;d\"e", encode(s, 0));
@@ -37,7 +37,7 @@ class XerPrimitiveTest {
     }
 
     @Test
-    void bitStringBreaksLinesAt64Bits() {
+    void bitStringBreaksLinesAt64Bits() throws DecodeException {
         Asn1BitString b = new Asn1BitString();
         byte[] bytes = new byte[9];
         bytes[8] = (byte) 0x80;
@@ -50,7 +50,7 @@ class XerPrimitiveTest {
     }
 
     @Test
-    void hexBitStringIsLenientOnly() {
+    void hexBitStringIsLenientOnly() throws DecodeException {
         assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), "A5", false));
         Asn1BitString b = decode(new Asn1BitString(), "A5", true);
         assertArrayEquals(new byte[] {(byte) 0xA5}, b.bytes());
@@ -58,12 +58,12 @@ class XerPrimitiveTest {
     }
 
     @Test
-    void octetStringHexAllowsWhitespaceBetweenPairs() {
+    void octetStringHexAllowsWhitespaceBetweenPairs() throws DecodeException {
         assertArrayEquals(new byte[] {1, (byte) 0xAB}, decode(new Asn1OctetString(), " 01\n ab ", false).get());
     }
 
     @Test
-    void unsignedIntegerUsesTheFull64Bits() {
+    void unsignedIntegerUsesTheFull64Bits() throws DecodeException {
         Asn1UInteger u = new Asn1UInteger();
         u.set(-1L);
         assertEquals("18446744073709551615", encode(u, 0));
@@ -77,7 +77,7 @@ class XerPrimitiveTest {
     }
 
     @Test
-    void realMatchesCPrintfAt15Decimals() {
+    void realMatchesCPrintfAt15Decimals() throws DecodeException {
         assertEquals("0.333333333333333", encode(new Asn1Real(1.0 / 3), 0));
         assertEquals("-0.0", encode(new Asn1Real(-1e-20), 0));
         assertEquals("100.0", encode(new Asn1Real(100), 0));
@@ -86,7 +86,7 @@ class XerPrimitiveTest {
     }
 
     @Test
-    void bmpStringIsUtf8TextOfItsCodePoints() {
+    void bmpStringIsUtf8TextOfItsCodePoints() throws DecodeException {
         Asn1BmpString s = new Asn1BmpString();
         s.setOctets(new byte[] {0, 'B', 0x20, (byte) 0xAC});
         assertEquals("B€", encode(s, 0));

@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -42,7 +44,7 @@ class ContainingJerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoesUnlessInline(Vectors.Vector vec, Supplier<Asn1Pdu> type) {
+    void encodesAsAsn1cDoesUnlessInline(Vectors.Vector vec, Supplier<Asn1Pdu> type) throws DecodeException {
         Asn1Pdu v = type.get();
         BerObject.decode(v, vec.der());
         String text = jer(v, null);
@@ -55,7 +57,7 @@ class ContainingJerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cJer(Vectors.Vector vec, Supplier<Asn1Pdu> type) {
+    void decodesAsn1cJer(Vectors.Vector vec, Supplier<Asn1Pdu> type) throws DecodeException {
         Asn1Pdu v = type.get();
         JerObject.decode(v, vec.asn1cJer().getBytes(StandardCharsets.UTF_8));
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -63,7 +65,7 @@ class ContainingJerTest {
 
     /** The inline form gives the inner value and the bytes its encoding stands for. */
     @Test
-    void decodesInlineForm() {
+    void decodesInlineForm() throws DecodeException {
         Pick p = new Pick();
         JerObject.decode(p, "{\"inner\":{\"containing\":{\"id\":5}}}".getBytes(StandardCharsets.UTF_8));
         assertEquals(ContainedStatus.DECODED, p.inner().status());
@@ -73,7 +75,7 @@ class ContainingJerTest {
 
     /** {@code raw} gives the bytes as they were, even where they differ from the value's own encoding. */
     @Test
-    void rawIsAuthoritative() {
+    void rawIsAuthoritative() throws DecodeException {
         Pick p = new Pick();
         JerObject.decode(p, PICK_INNER_INLINE_RAW.replace("3003800105", "300380010500").getBytes(StandardCharsets.UTF_8));
         assertEquals(5, p.inner().value().id().get());
@@ -87,7 +89,7 @@ class ContainingJerTest {
      * form gives asn1c's text.
      */
     @Test
-    void optionsOverrideTheRowsJerForm() {
+    void optionsOverrideTheRowsJerForm() throws DecodeException {
         Vectors.Vector vec = ContainingTest.vectors().filter(v -> v.type().equals("Holder")).findFirst().orElseThrow();
         Asn1Pdu h = ContainingTest.TYPES.get("Holder").get();
         BerObject.decode(h, vec.der());

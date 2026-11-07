@@ -43,20 +43,38 @@ public final class XerObject {
     private XerObject() {
     }
 
-    /** Encodes {@code v} as a BASIC-XER document. */
+    /**
+     * Encodes {@code v} as a BASIC-XER document.
+     *
+     * @throws EncodeException if {@code v} has no XER encoding: a CHOICE with no alternative
+     *         selected, or a value XER cannot carry
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, null);
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no XER encoding: a CHOICE with no alternative
+     *         selected, or a value XER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         XerWriter w = new XerWriter().withContained(opts);
         encodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), w, 0);
         return w.toByteArray();
     }
 
-    /** Decodes a BASIC-XER document into {@code v}. */
-    public static void decode(AsMemberRef v, byte[] data) {
+    /**
+     * Decodes a BASIC-XER document into {@code v}.
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
+    public static void decode(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, new XerReader(data));
     }
 
@@ -66,8 +84,14 @@ public final class XerObject {
      * extensions as {@link #decodeLenient} does, constraint checks run over
      * the decoded value, and rich errors name the failing value's type and
      * show the input there.
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         XerReader r = new XerReader(data).withOptions(opts);
         DecodeOptions o = r.options();
         try {
@@ -93,13 +117,27 @@ public final class XerObject {
     /**
      * {@link #decode(AsMemberRef, byte[])} that also accepts the asn1c
      * extensions (text BOOLEAN, hex BIT STRING).
+     *
+     * @throws DecodeException if {@code data} is not a valid XER encoding of the type of {@code v}
+     *         (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decodeLenient(AsMemberRef v, byte[] data) {
+    public static void decodeLenient(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, new XerReader(data, true));
     }
 
-    /** Decodes one document from {@code r} into {@code v}. */
-    public static void decode(AsMemberRef v, XerReader r) {
+    /**
+     * Decodes one document from {@code r} into {@code v}.
+     *
+     * @throws DecodeException if the next document in {@code r} is not a valid XER encoding of the
+     *         type of {@code v} (BASIC-XER, X.693): malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
+    public static void decode(AsMemberRef v, XerReader r) throws DecodeException {
         r.skipWhitespace();
         decodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), r);
     }
@@ -248,7 +286,7 @@ public final class XerObject {
     }
 
     /** Decode counterpart of {@link #encodeElement}: consumes element {@code name}. */
-    static void decodeElement(String name, MemberRef m, XerInstruction ins, XerReader r) {
+    static void decodeElement(String name, MemberRef m, XerInstruction ins, XerReader r) throws DecodeException {
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
             decodeElementLevel(name, m, ins, r);
             return;
@@ -261,7 +299,7 @@ public final class XerObject {
         }
     }
 
-    private static void decodeElementLevel(String name, MemberRef m, XerInstruction ins, XerReader r) {
+    private static void decodeElementLevel(String name, MemberRef m, XerInstruction ins, XerReader r) throws DecodeException {
         int at = r.position();
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, at);
@@ -320,7 +358,7 @@ public final class XerObject {
      * the next element is named by it, and otherwise set to its DEFAULT or
      * to absent.
      */
-    private static void decodeSequenceContent(Asn1Seq s, XerReader r, boolean empty) {
+    private static void decodeSequenceContent(Asn1Seq s, XerReader r, boolean empty) throws DecodeException {
         List<MemberMeta> members = s.spec().members();
         for (int i = 0; i < members.size(); i++) {
             MemberMeta meta = members.get(i);
@@ -338,7 +376,7 @@ public final class XerObject {
     }
 
     /** The alternative the next element names (X.693 §8.3.6). */
-    private static void decodeChoiceContent(Asn1Choice c, XerReader r) {
+    private static void decodeChoiceContent(Asn1Choice c, XerReader r) throws DecodeException {
         XerReader.TagInfo peek = r.peekTag();
         List<AltMeta> alts = c.spec().alternatives();
         for (int i = 0; i < alts.size(); i++) {
@@ -351,7 +389,7 @@ public final class XerObject {
     }
 
     /** Elements up to the collection's closing tag, read as {@link #encodeSeqOf} writes them. */
-    private static void decodeSeqOfContent(Asn1SeqOf q, XerReader r) {
+    private static void decodeSeqOfContent(Asn1SeqOf q, XerReader r) throws DecodeException {
         String override = q.elemXerName();
         while (true) {
             XerReader.TagInfo peek = r.peekTag();
@@ -408,7 +446,7 @@ public final class XerObject {
      * Decode counterpart of {@link #encodeContained}; accepts every form.
      * An inline value without a raw comment gets its bytes from encoding it.
      */
-    private static void decodeContained(String name, Asn1Contained f, ContainedSpec cs, XerReader r) {
+    private static void decodeContained(String name, Asn1Contained f, ContainedSpec cs, XerReader r) throws DecodeException {
         r.consumeOpenTag(name);
         XerReader.TagInfo peek = r.peekTag();
         if (peek.name().isEmpty() || peek.closing() || peek.name().startsWith("!")) {
@@ -439,7 +477,7 @@ public final class XerObject {
      * A BER reader standing for this XER decode in the contained-value
      * decoders: no bytes of its own, the same nesting depth and settings.
      */
-    private static BerReader berAnchor(XerReader r) {
+    private static BerReader berAnchor(XerReader r) throws DecodeException {
         BerReader b = new BerReader(new byte[0]).withOptions(r.options());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
@@ -460,7 +498,7 @@ public final class XerObject {
     }
 
     /** @see "X.693 §8.3.7 — ENUMERATED as an empty element named by its identifier" */
-    private static void decodeEnumerated(EnumSlot slot, EnumSpec spec, XerReader r) {
+    private static void decodeEnumerated(EnumSlot slot, EnumSpec spec, XerReader r) throws DecodeException {
         int at = r.position();
         r.skipWhitespace();
         XerReader.TagInfo peek = r.peekTag();

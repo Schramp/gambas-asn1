@@ -43,12 +43,22 @@ public final class BerObject {
     private BerObject() {
     }
 
-    /** Encodes {@code v} with its type's own framing. */
+    /**
+     * Encodes {@code v} with its type's own framing.
+     *
+     * @throws EncodeException if {@code v} has no BER encoding: a CHOICE with no alternative
+     *         selected, or a value BER cannot carry
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, null);
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults.
+     *
+     * @throws EncodeException if {@code v} has no BER encoding: a CHOICE with no alternative
+     *         selected, or a value BER cannot carry
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         ByteSink out = new ByteSink();
         encodeMemberRef(v.asMemberRef(), v.berFraming(), out, opts);
@@ -58,13 +68,27 @@ public final class BerObject {
     /**
      * Decodes the first value in {@code data} into {@code v}, with its
      * type's own framing.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data) {
+    public static void decode(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, new BerReader(data));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults. */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the decoder settings {@code opts}; null for the defaults.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         decode(v, new BerReader(data).withOptions(opts));
     }
 
@@ -72,8 +96,14 @@ public final class BerObject {
      * Decodes one value from {@code r} into {@code v}, under the reader's
      * {@link DecodeOptions}; the reader is left after it, so records can
      * be read back to back.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decode(AsMemberRef v, BerReader r) {
+    public static void decode(AsMemberRef v, BerReader r) throws DecodeException {
         DecodeOptions o = r.options();
         MemberRef m = v.asMemberRef();
         if (o.plain()) {
@@ -111,7 +141,7 @@ public final class BerObject {
      * the value against {@code c}; a violation is a {@link DecodeException}
      * at the value's first octet.
      */
-    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) {
+    private static void decodeChecked(MemberRef m, BerTagging framing, Constraints c, boolean check, BerReader r) throws DecodeException {
         int start = r.position();
         decodeMemberRef(m, framing, r);
         if (check) {
@@ -137,7 +167,7 @@ public final class BerObject {
      * @param r       the reader at the part's first octet
      */
     private static void decodePart(MemberRef m, BerTagging framing, Constraints c, String name, int index,
-            BerReader r) {
+            BerReader r) throws DecodeException {
         DecodeOptions o = r.options();
         if (o.trace() != null) {
             trace(o, r, segment(name, index), m);
@@ -168,8 +198,14 @@ public final class BerObject {
     /**
      * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
      * where every decoded node starts. {@code opts} may be null.
+     *
+     * @throws DecodeException if the start of {@code data} is not a valid BER encoding of the type
+     *         of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         return decodeWithPositions(v, new BerReader(data).withOptions(opts));
     }
 
@@ -178,8 +214,14 @@ public final class BerObject {
      * decoded node starts, in bits from the reader's position at the call;
      * records read back to back each get their own positions. The reader is
      * left after the value.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) {
+    public static Decoded decodeWithPositions(AsMemberRef v, BerReader r) throws DecodeException {
         Positions p = Positions.recording();
         Positions before = r.positions();
         int start = r.position();
@@ -192,7 +234,12 @@ public final class BerObject {
         return new Decoded(r.position() - start, p.withBase(-r.absoluteBit(start)));
     }
 
-    /** Encodes one member, alternative or element under its row's framing (X.690 §8.14). */
+    /**
+     * Encodes one member, alternative or element under its row's framing (X.690 §8.14).
+     *
+     * @throws EncodeException if the value of {@code m} has no BER encoding: a CHOICE with no
+     *         alternative selected, or a value BER cannot carry
+     */
     public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out) {
         encodeMemberRef(m, framing, out, null);
     }
@@ -201,6 +248,9 @@ public final class BerObject {
      * {@link #encodeMemberRef(MemberRef, BerTagging, ByteSink)} with the
      * contained-value settings {@code opts} (null for the defaults), used when
      * a modified contained value is re-encoded.
+     *
+     * @throws EncodeException if the value of {@code m} has no BER encoding: a CHOICE with no
+     *         alternative selected, or a value BER cannot carry
      */
     public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out, ContainedOptions opts) {
         switch (m) {
@@ -255,8 +305,14 @@ public final class BerObject {
      * or SEQUENCE OF/SET OF value enters one nesting level of {@code r}, so
      * a recursive type (X.680 §3.6.55) cannot recurse past
      * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
+     *
+     * @throws DecodeException if the next value in {@code r} is not a valid BER encoding of the
+     *         type of {@code m}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
+    public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) throws DecodeException {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);
         if (node != null) {
             r.markStart(node);
@@ -278,7 +334,7 @@ public final class BerObject {
     }
 
     /** The per-kind decode {@link #decodeMemberRef} dispatches to once it has counted the level. */
-    private static void decodeMemberRefLevel(MemberRef m, BerTagging framing, BerReader r) {
+    private static void decodeMemberRefLevel(MemberRef m, BerTagging framing, BerReader r) throws DecodeException {
         switch (m) {
             case MemberRef.Absent a -> {
             }
@@ -358,7 +414,7 @@ public final class BerObject {
      * One ENUMERATED TLV under {@code tag} into {@code slot} (X.690 §8.4);
      * a value that is not one of the type's items is an error.
      */
-    private static void decodeEnumerated(EnumSlot slot, Tag tag, BerReader r) {
+    private static void decodeEnumerated(EnumSlot slot, Tag tag, BerReader r) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().equals(tag)) {
@@ -393,7 +449,7 @@ public final class BerObject {
     }
 
     /** Decode counterpart of {@link #encodeSequence}. */
-    private static void decodeSequence(Asn1Seq s, BerReader r) {
+    private static void decodeSequence(Asn1Seq s, BerReader r) throws DecodeException {
         Tag tag = s.spec().tag();
         decodeSequenceContent(s, enter(r, tag), tag);
     }
@@ -408,7 +464,7 @@ public final class BerObject {
      * which are delimited and skipped (X.680 §7.1, §7.2); in a type without
      * an extension marker they are an error.
      */
-    private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
+    private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) throws DecodeException {
         r.markValue(s, r.position(), r.position() + r.source().remaining());
         SequenceSpec spec = s.spec();
         if (spec.isSet()) {
@@ -447,7 +503,7 @@ public final class BerObject {
      * order (X.680 §8.6). A TLV no member matches goes last, where the walk
      * reports it.
      */
-    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
+    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) throws DecodeException {
         List<MemberMeta> rows = s.spec().members();
         byte[][] slot = new byte[rows.size()][];
         long[] slotAt = new long[rows.size()];
@@ -539,7 +595,7 @@ public final class BerObject {
      * Decodes a SEQUENCE OF's contents: the collection is emptied, then one
      * element is appended and decoded per TLV until the contents end.
      */
-    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) throws DecodeException {
         r.markValue(q, r.position(), r.position() + r.source().remaining());
         BerTagging framing = q.elemBerFraming();
         q.clear();
@@ -579,7 +635,7 @@ public final class BerObject {
     }
 
     /** Decode counterpart of {@link #encodeChoice}. */
-    private static void decodeChoice(Asn1Choice c, BerReader r) {
+    private static void decodeChoice(Asn1Choice c, BerReader r) throws DecodeException {
         Tag own = c.spec().ownTag();
         if (own == null) {
             decodeChoiceAlternative(c, r);
@@ -596,7 +652,7 @@ public final class BerObject {
      * CHOICE keeps a TLV no alternative matches as an unknown extension;
      * otherwise that TLV is an error.
      */
-    private static void decodeChoiceAlternative(Asn1Choice c, BerReader r) {
+    private static void decodeChoiceAlternative(Asn1Choice c, BerReader r) throws DecodeException {
         ChoiceSpec spec = c.spec();
         int start = r.position();
         Tag tag = r.peekTag();
@@ -641,7 +697,7 @@ public final class BerObject {
     }
 
     /** Reads one TLV that must carry {@code tag} and returns a reader over its contents. */
-    private static BerReader enter(BerReader r, Tag tag) {
+    private static BerReader enter(BerReader r, Tag tag) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().matchesIdentifier(tag)) {
@@ -651,7 +707,7 @@ public final class BerObject {
     }
 
     /** A tag's contents hold exactly one encoding (X.690 §8.14.2). */
-    private static void expectEnd(BerReader inner, Tag tag) {
+    private static void expectEnd(BerReader inner, Tag tag) throws DecodeException {
         if (!inner.atEnd() && !inner.options().relaxed()) {
             throw new DecodeException("trailing octets inside tag " + tag, inner.position());
         }

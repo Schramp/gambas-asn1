@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -52,7 +54,7 @@ class SizeLowerBoundPerTest {
     }
 
     @Test
-    void lowerBoundOnlyUsesUnconstrainedLength() {
+    void lowerBoundOnlyUsesUnconstrainedLength() throws DecodeException {
         for (Object[] row : new Object[][] {
                 {probe(4, "abc", 8, 2), "040102030403c38b1845281140"},
                 {probe(5, "abcd", 9, 3), "05010203040504c38b1e409a58195c"}}) {
@@ -94,7 +96,7 @@ class SizeLowerBoundPerTest {
         assertArrayEquals(hex("80c8" + ab200), encodeOctets(Lb10Max.CONSTRAINTS, 200));
     }
 
-    private static void longRow(Constraints c, int n, int total, int[][] headers) {
+    private static void longRow(Constraints c, int n, int total, int[][] headers) throws DecodeException {
         byte[] buf = encodeOctets(c, n);
         byte[] want = new byte[total];
         Arrays.fill(want, (byte) 0xAB);
@@ -108,7 +110,7 @@ class SizeLowerBoundPerTest {
     }
 
     @Test
-    void fragmentedLengthsAtThe64KEdge() {
+    void fragmentedLengthsAtThe64KEdge() throws DecodeException {
         longRow(Ub65535.CONSTRAINTS, 65535, 65537, new int[][] {{0, 0xff}, {1, 0xff}});
         longRow(Ub65536.CONSTRAINTS, 65535, 65538, new int[][] {{0, 0xc3}, {49153, 0xbf}, {49154, 0xff}});
         longRow(Lb10Max.CONSTRAINTS, 16384, 16386, new int[][] {{0, 0xc1}, {16385, 0x00}});

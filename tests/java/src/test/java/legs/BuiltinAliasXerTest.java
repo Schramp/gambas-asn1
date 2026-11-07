@@ -29,7 +29,7 @@ class BuiltinAliasXerTest {
         return BuiltinAliasBerTest.vectors();
     }
 
-    private static AsMemberRef fromDer(Vectors.Vector vec) {
+    private static AsMemberRef fromDer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         return v;
@@ -37,7 +37,7 @@ class BuiltinAliasXerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoes(Vectors.Vector vec) {
+    void encodesAsAsn1cDoes(Vectors.Vector vec) throws DecodeException {
         assertEquals(vec.asn1cXer(), new String(XerObject.encode(fromDer(vec)), StandardCharsets.UTF_8));
     }
 
@@ -48,7 +48,7 @@ class BuiltinAliasXerTest {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cXer(Vectors.Vector vec) {
+    void decodesAsn1cXer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         byte[] text = vec.asn1cXer().getBytes(StandardCharsets.UTF_8);
         XerObject.decode(v, text);
@@ -66,7 +66,7 @@ class BuiltinAliasXerTest {
 
     /** asn1c also accepts the empty-element form for an empty value. */
     @Test
-    void decodesEmptyElement() {
+    void decodesEmptyElement() throws DecodeException {
         Bits v = new Bits();
         XerObject.decode(v, "<Bits/>".getBytes(StandardCharsets.UTF_8));
         assertEquals(0, v.value.bitCount());
@@ -74,7 +74,7 @@ class BuiltinAliasXerTest {
 
     /** Text BOOLEAN is an asn1c extension: lenient only. */
     @Test
-    void textBooleanIsLenientOnly() {
+    void textBooleanIsLenientOnly() throws DecodeException {
         byte[] text = "<Flag>true</Flag>".getBytes(StandardCharsets.UTF_8);
         assertThrows(DecodeException.class, () -> XerObject.decode(new Flag(), text));
         Flag v = new Flag();

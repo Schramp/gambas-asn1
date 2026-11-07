@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,7 +33,7 @@ class ValuePrinterTest {
     }
 
     @Test
-    void sequenceChoiceAndEnumeratedLayout() {
+    void sequenceChoiceAndEnumeratedLayout() throws DecodeException {
         Refs v = new Refs();
         BerObject.decode(v, hex("30320A010202010061030101006D030201FB300602010302010416017AA5030101FFA403020109"
                 + "160171A6083006020105020106"));
@@ -58,7 +60,7 @@ class ValuePrinterTest {
     }
 
     @Test
-    void absentMembersAndSequenceOfElements() {
+    void absentMembersAndSequenceOfElements() throws DecodeException {
         Opt o = new Opt();
         BerObject.decode(o, BerObject.encode(o));
         assertEquals("""
@@ -84,7 +86,7 @@ class ValuePrinterTest {
     }
 
     @Test
-    void containedValuesShowTheInnerValueOrTheirStatus() {
+    void containedValuesShowTheInnerValueOrTheirStatus() throws DecodeException {
         Holder h = new Holder();
         BerObject.decode(h, hex("30218001028101FF8205300380010583030102038400850B30098002FED48103616263"));
         String s = h.toString();
@@ -118,7 +120,7 @@ class ValuePrinterTest {
     }
 
     @Test
-    void everyEtsiSampleRecordPrints() throws IOException {
+    void everyEtsiSampleRecordPrints() throws IOException, DecodeException {
         BerReader r = new BerReader(Files.readAllBytes(Path.of(System.getProperty("etsi.sample"))));
         int n = 0;
         while (!r.atEnd()) {
@@ -133,7 +135,7 @@ class ValuePrinterTest {
     }
 
     @Test
-    void aFailedAssertionShowsBothValues() {
+    void aFailedAssertionShowsBothValues() throws DecodeException {
         Points a = new Points();
         BerObject.decode(a, hex("301030060201010201023006020103020104"));
         Points b = new Points();

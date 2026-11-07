@@ -41,19 +41,34 @@ public final class PerObject {
     private PerObject() {
     }
 
-    /** Encodes {@code v} as one complete encoding, under its own PDU constraints when it is a PDU. */
+    /**
+     * Encodes {@code v} as one complete encoding, under its own PDU constraints when it is a PDU.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v) {
         return encode(v, rootConstraints(v));
     }
 
-    /** {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type. */
+    /**
+     * {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v, Constraints c) {
         PerWriter w = new PerWriter();
         encodeValue(v.asMemberRef(), c, w);
         return w.toByteArray();
     }
 
-    /** {@link #encode(AsMemberRef)} with contained-value settings; {@code opts} may be null. */
+    /**
+     * {@link #encode(AsMemberRef)} with contained-value settings; {@code opts} may be null.
+     *
+     * @throws EncodeException if {@code v} has no PER encoding: a CHOICE with no alternative
+     *         selected, or a value outside its type's PER-visible constraints (X.691)
+     */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         PerWriter w = new PerWriter().withContained(opts);
         encodeValue(v.asMemberRef(), rootConstraints(v), w);
@@ -64,13 +79,27 @@ public final class PerObject {
      * Decodes one complete encoding into {@code v}; only the padding of
      * X.691 §11.1.3.1 may follow it, or the one zero octet that stands for
      * an empty encoding.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data) {
+    public static void decode(AsMemberRef v, byte[] data) throws DecodeException {
         decode(v, data, rootConstraints(v));
     }
 
-    /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c) {
+    /**
+     * {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c) throws DecodeException {
         decodeWhole(v, data, c, new PerReader(data));
     }
 
@@ -78,13 +107,27 @@ public final class PerObject {
      * {@link #decode(AsMemberRef, byte[])} under the decoder settings
      * {@code opts} ({@link DecodeOptions#DEFAULT} for the defaults; a null
      * also means the defaults, cast to {@code DecodeOptions}).
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static void decode(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         decode(v, data, rootConstraints(v), opts);
     }
 
-    /** {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type. */
-    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) {
+    /**
+     * {@link #decode(AsMemberRef, byte[], DecodeOptions)} under the constraints {@code c} of {@code v}'s type.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
+     */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, DecodeOptions opts) throws DecodeException {
         decodeWhole(v, data, c, new PerReader(data).withOptions(opts));
     }
 
@@ -94,7 +137,7 @@ public final class PerObject {
      * anything. With rich errors on, an error names the type and shows the
      * input there.
      */
-    private static void decodeWhole(AsMemberRef v, byte[] data, Constraints c, PerReader r) {
+    private static void decodeWhole(AsMemberRef v, byte[] data, Constraints c, PerReader r) throws DecodeException {
         MemberRef m = v.asMemberRef();
         try {
             if (r.options().trace() != null) {
@@ -144,7 +187,7 @@ public final class PerObject {
      * @param index the element's index, when {@code name} is null
      * @param r     the reader at the part's first bit
      */
-    private static void decodePart(MemberRef m, Constraints c, String name, int index, PerReader r) {
+    private static void decodePart(MemberRef m, Constraints c, String name, int index, PerReader r) throws DecodeException {
         if (r.options().trace() != null) {
             trace(r, segment(name, index), m);
         }
@@ -172,8 +215,13 @@ public final class PerObject {
      * padding a decoder removes.
      *
      * @return the octets the encoding takes, its padding included (X.691 §11.1.3.1)
+     * @throws DecodeException if the start of the data of {@code r} is not a valid PER encoding of
+     *         the type of {@code v}: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static int decodePrefix(AsMemberRef v, PerReader r) {
+    public static int decodePrefix(AsMemberRef v, PerReader r) throws DecodeException {
         decodeValue(v.asMemberRef(), rootConstraints(v), r);
         return (int) Math.max(1, (r.bitPos() + 7) / 8);
     }
@@ -182,8 +230,14 @@ public final class PerObject {
      * {@link #decode(AsMemberRef, byte[], DecodeOptions)} that also records
      * where every decoded node starts, in bits from the start of
      * {@code data}. {@code opts} may be null.
+     *
+     * @throws DecodeException if {@code data} is not a valid PER encoding of the type of {@code v}
+     *         followed by its padding only: malformed or truncated input, nesting deeper than
+     *         {@code Nesting.MAX_DECODE_DEPTH} levels, or, with constraint checks on, a value that breaks
+     *         its type's constraints; {@link DecodeException#position()} is the byte offset where decoding
+     *         stopped
      */
-    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) {
+    public static Decoded decodeWithPositions(AsMemberRef v, byte[] data, DecodeOptions opts) throws DecodeException {
         Positions p = Positions.recording();
         PerReader r = new PerReader(data).withOptions(opts).withPositions(p, 0);
         decodeWhole(v, data, rootConstraints(v), r);
@@ -214,7 +268,7 @@ public final class PerObject {
     }
 
     /** Decode counterpart of {@link #encodeValue}; a constructed value counts one nesting level. */
-    static void decodeValue(MemberRef m, Constraints c, PerReader r) {
+    static void decodeValue(MemberRef m, Constraints c, PerReader r) throws DecodeException {
         Object node = r.positions() == null ? null : Positions.nodeOf(m);
         if (node != null) {
             r.markStart(node);
@@ -262,7 +316,7 @@ public final class PerObject {
         }
     }
 
-    private static void decodeLevel(MemberRef m, Constraints c, PerReader r) {
+    private static void decodeLevel(MemberRef m, Constraints c, PerReader r) throws DecodeException {
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw r.error(reason);
             case MemberRef.Primitive(var p, var owner) -> {
@@ -419,7 +473,7 @@ public final class PerObject {
      * DEFAULT member takes its DEFAULT; an addition this table does not know
      * is skipped by its length (X.691 §19.9).
      */
-    static void decodeSequence(Asn1Seq s, PerReader r) {
+    static void decodeSequence(Asn1Seq s, PerReader r) throws DecodeException {
         SequenceSpec spec = s.spec();
         int end = rootEnd(spec);
         boolean extended = spec.extAt() >= 0 && r.getBits(1) == 1;
@@ -478,7 +532,7 @@ public final class PerObject {
      * The decode context a contained value's inner decode starts from: this
      * decode's nesting depth and contained-value settings.
      */
-    private static BerReader berAnchor(PerReader r) {
+    private static BerReader berAnchor(PerReader r) throws DecodeException {
         BerReader b = new BerReader(new byte[0]).withOptions(r.options()).withPositions(r.positions());
         for (int i = 0; i < r.depth(); i++) {
             b.enterLevel();
@@ -496,7 +550,7 @@ public final class PerObject {
      * @param r a reader over the group's open-type octets
      * @see "X.691 §19.9"
      */
-    private static void decodeGroup(Asn1Seq s, Addition a, PerReader r) {
+    private static void decodeGroup(Asn1Seq s, Addition a, PerReader r) throws DecodeException {
         List<Boolean> optional = s.spec().groupMemberOptional();
         boolean[] present = new boolean[a.end() - a.begin()];
         for (int i = a.begin(); i < a.end(); i++) {
@@ -552,7 +606,7 @@ public final class PerObject {
      * this table does not know is kept as an unknown extension: its open-type
      * contents under a context tag numbered by its extension index.
      */
-    static void decodeChoice(Asn1Choice ch, PerReader r) {
+    static void decodeChoice(Asn1Choice ch, PerReader r) throws DecodeException {
         ChoiceSpec spec = ch.spec();
         int root = rootCount(spec);
         boolean inExt = spec.extAt() >= 0 && r.getBits(1) == 1;
@@ -581,7 +635,7 @@ public final class PerObject {
         decodeContainedAlternative(ch, r);
     }
 
-    private static void decodeContainedAlternative(Asn1Choice ch, PerReader r) {
+    private static void decodeContainedAlternative(Asn1Choice ch, PerReader r) throws DecodeException {
         if (ch.spec().hasContained()) {
             ContainedValues.decodeAlternative(ch, ContainedEncoding.PER_UNALIGNED, berAnchor(r));
         }
@@ -651,7 +705,7 @@ public final class PerObject {
      * @throws DecodeException for a malformed or bomb-sized list
      * @see "X.691 §20.6, §11.9.3.8"
      */
-    static void decodeSeqOf(Asn1SeqOf q, Constraints c, PerReader r) {
+    static void decodeSeqOf(Asn1SeqOf q, Constraints c, PerReader r) throws DecodeException {
         Constraints elem = c.element() != null ? c.element() : Constraints.UNCONSTRAINED;
         q.clear();
         // A length of 16K items or more comes in fragments (X.691 §11.9.3.8),

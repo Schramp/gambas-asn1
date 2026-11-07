@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -37,7 +39,7 @@ class CcOffsetsTest {
         return Files.readAllBytes(Path.of(System.getProperty("etsi.sample")));
     }
 
-    private static List<PS_PDU> decodeAll(byte[] file) {
+    private static List<PS_PDU> decodeAll(byte[] file) throws DecodeException {
         List<PS_PDU> out = new ArrayList<>();
         BerReader r = new BerReader(file);
         while (!r.atEnd()) {
@@ -71,7 +73,7 @@ class CcOffsetsTest {
     }
 
     /** Every iPPackets of every record in {@code file}, with its byte range in the file. */
-    private static List<Range> packetRanges(byte[] file) {
+    private static List<Range> packetRanges(byte[] file) throws DecodeException {
         List<Range> out = new ArrayList<>();
         BerReader r = new BerReader(file);
         while (!r.atEnd()) {
@@ -91,7 +93,7 @@ class CcOffsetsTest {
     }
 
     @Test
-    void sampleRangesHoldTheDecodedPackets() throws IOException {
+    void sampleRangesHoldTheDecodedPackets() throws IOException, DecodeException {
         byte[] file = sample();
         List<Range> ranges = packetRanges(file);
         assertEquals(1, ranges.size());
@@ -101,7 +103,7 @@ class CcOffsetsTest {
     }
 
     @Test
-    void ipv4PacketsInEncryptedPayloadsAreFoundAtTheirFileOffsets() throws IOException {
+    void ipv4PacketsInEncryptedPayloadsAreFoundAtTheirFileOffsets() throws IOException, DecodeException {
         List<PS_PDU> records = decodeAll(sample());
         PS_PDU carrier = null;
         PS_PDU filler = null;

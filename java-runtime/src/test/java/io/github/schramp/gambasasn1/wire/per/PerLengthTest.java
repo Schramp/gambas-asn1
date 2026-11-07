@@ -32,7 +32,7 @@ class PerLengthTest {
 
     /** X.691 §11.9.3.6, §11.9.3.7: one octet up to 127, two octets below 16K. */
     @Test
-    void shortAndLongForm() {
+    void shortAndLongForm() throws DecodeException {
         int[] ns = {0, 1, 127, 128, 200, 16383};
         String[] wire = {"00", "01", "7F", "8080", "80C8", "BFFF"};
         for (int i = 0; i < ns.length; i++) {
@@ -45,7 +45,7 @@ class PerLengthTest {
         assertThrows(DecodeException.class, () -> PerLength.getLength(new PerReader(hex("C1"))));
     }
 
-    private static byte[] fragmentRoundTrip(int n) {
+    private static byte[] fragmentRoundTrip(int n) throws DecodeException {
         byte[] data = new byte[n];
         for (int i = 0; i < n; i++) {
             data[i] = (byte) (i % 251);
@@ -59,7 +59,7 @@ class PerLengthTest {
 
     /** X.691 §11.9.3.8: 16K-unit fragments, the largest multiplier first, a closing length. */
     @Test
-    void fragmentHeaders() {
+    void fragmentHeaders() throws DecodeException {
         byte[] b = fragmentRoundTrip(16383);
         assertEquals((byte) 0xBF, b[0]);
         assertEquals((byte) 0xFF, b[1]);
@@ -89,7 +89,7 @@ class PerLengthTest {
 
     /** X.691 §11.9.3.4: 1..64 as n - 1 in 6 bits behind a 0 bit. */
     @Test
-    void normallySmallLength() {
+    void normallySmallLength() throws DecodeException {
         PerWriter w = new PerWriter();
         PerLength.putNormallySmallLength(w, 3);
         assertArrayEquals(hex("04"), w.toByteArray());
@@ -107,7 +107,7 @@ class PerLengthTest {
      * then this field.
      */
     @Test
-    void normallySmallMatchesAsn1c() {
+    void normallySmallMatchesAsn1c() throws DecodeException {
         long[] ns = {0, 63, 64};
         String[] uper = {"80", "BF", "C05000"};
         for (int i = 0; i < ns.length; i++) {
@@ -128,7 +128,7 @@ class PerLengthTest {
 
     /** X.691 §11.7.4: minimum non-negative octets after their count. */
     @Test
-    void semiConstrained() {
+    void semiConstrained() throws DecodeException {
         long[] ns = {0, 255, 256, -1};
         String[] wire = {"0100", "01FF", "020100", "08FFFFFFFFFFFFFFFF"};
         for (int i = 0; i < ns.length; i++) {
@@ -144,7 +144,7 @@ class PerLengthTest {
 
     /** X.691 §11.8.3: minimum 2's-complement octets after their count. */
     @Test
-    void unconstrained() {
+    void unconstrained() throws DecodeException {
         long[] ns = {0, 127, 128, -128, -129, Long.MIN_VALUE};
         String[] wire = {"0100", "017F", "020080", "0180", "02FF7F", "088000000000000000"};
         for (int i = 0; i < ns.length; i++) {
@@ -156,7 +156,7 @@ class PerLengthTest {
     }
 
     @Test
-    void fixedSizeWritesNothing() {
+    void fixedSizeWritesNothing() throws DecodeException {
         PerWriter w = new PerWriter();
         PerLength.putSize(w, sized(5, 5, false), 5, NO_ITEMS);
         assertEquals(0, w.bitPos());
@@ -165,7 +165,7 @@ class PerLengthTest {
 
     /** X.691 §11.9.4.1: ub below 64K takes the offset from lb in the fewest bits. */
     @Test
-    void constrainedSize() {
+    void constrainedSize() throws DecodeException {
         Constraints c = sized(1, 8, false);
         PerWriter w = new PerWriter();
         PerLength.putSize(w, c, 5, NO_ITEMS);
@@ -180,7 +180,7 @@ class PerLengthTest {
     }
 
     @Test
-    void unconstrainedSizeIsAGeneralLength() {
+    void unconstrainedSizeIsAGeneralLength() throws DecodeException {
         PerWriter w = new PerWriter();
         PerLength.putSize(w, Constraints.UNCONSTRAINED, 200, NO_ITEMS);
         assertArrayEquals(hex("80C8"), w.toByteArray());
@@ -204,7 +204,7 @@ class PerLengthTest {
 
     /** X.691 §17.3, §16.6, §20.4: an extensible SIZE adds the extension bit. */
     @Test
-    void extensibleSize() {
+    void extensibleSize() throws DecodeException {
         Constraints c = sized(1, 4, true);
         PerWriter w = new PerWriter();
         PerLength.putExtSize(w, c, 2, NO_ITEMS);

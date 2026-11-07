@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
@@ -24,7 +26,7 @@ final class PerLeg {
         return vectors.filter(v -> v.asn1cUper() != null && types.contains(v.type()));
     }
 
-    static void check(Vectors.Vector vec, Map<String, ? extends Supplier<? extends AsMemberRef>> types) {
+    static void check(Vectors.Vector vec, Map<String, ? extends Supplier<? extends AsMemberRef>> types) throws DecodeException {
         AsMemberRef v = types.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.asn1cUper(), PerObject.encode(v), "encode " + vec.xer());

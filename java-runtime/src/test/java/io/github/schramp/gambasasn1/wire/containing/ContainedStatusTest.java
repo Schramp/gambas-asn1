@@ -100,7 +100,7 @@ class ContainedStatusTest {
         }
     }
 
-    private static void postDecode(Holder h, ContainedOptions opts) {
+    private static void postDecode(Holder h, ContainedOptions opts) throws DecodeException {
         ContainedValues.decodeMembers(h, ContainedEncoding.BER, new BerReader(new byte[0]).withContained(opts));
     }
 
@@ -114,7 +114,7 @@ class ContainedStatusTest {
     }
 
     @Test
-    void wireBytesDecodeInThePostDecodePass() {
+    void wireBytesDecodeInThePostDecodePass() throws DecodeException {
         Holder h = new Holder(PLAIN);
         h.payload.setRawFromWire(FIVE, ContainedEncoding.BER);
         assertEquals(ContainedStatus.NOT_DECODED, h.payload.status());
@@ -127,7 +127,7 @@ class ContainedStatusTest {
 
     /** Bytes from the wire replace a decoded, even a modified, value: the old value no longer matches them. */
     @Test
-    void wireBytesDropTheInnerValueAndResetTheStatus() {
+    void wireBytesDropTheInnerValueAndResetTheStatus() throws DecodeException {
         Holder h = new Holder(PLAIN);
         h.payload.set(new Asn1Integer(9));
         assertTrue(h.payload.dirty());
@@ -146,7 +146,7 @@ class ContainedStatusTest {
      * value's own encoding (JER {@code raw}, XER raw comment).
      */
     @Test
-    void inlineDecodedValueIsKeptByThePostDecodePass() {
+    void inlineDecodedValueIsKeptByThePostDecodePass() throws DecodeException {
         Holder h = new Holder(PLAIN);
         Asn1Integer inline = new Asn1Integer(5);
         h.payload.setRawFromWire(SEVEN, ContainedEncoding.BER);
@@ -158,7 +158,7 @@ class ContainedStatusTest {
     }
 
     @Test
-    void notEagerIsSkipped() {
+    void notEagerIsSkipped() throws DecodeException {
         Holder h = new Holder(spec(false, -1, false));
         h.payload.setRawFromWire(FIVE, ContainedEncoding.BER);
         postDecode(h, null);
@@ -168,7 +168,7 @@ class ContainedStatusTest {
     }
 
     @Test
-    void decodingOffIsSkipped() {
+    void decodingOffIsSkipped() throws DecodeException {
         Holder h = new Holder(PLAIN);
         h.payload.setRawFromWire(FIVE, ContainedEncoding.BER);
         postDecode(h, new ContainedOptions(null, true));
@@ -177,7 +177,7 @@ class ContainedStatusTest {
     }
 
     @Test
-    void whenMismatchIsSkippedWithTheReason() {
+    void whenMismatchIsSkippedWithTheReason() throws DecodeException {
         Holder h = new Holder(spec(true, 0, false));
         h.kind.set(2);
         h.payload.setRawFromWire(FIVE, ContainedEncoding.BER);
@@ -191,7 +191,7 @@ class ContainedStatusTest {
     }
 
     @Test
-    void badBytesFailAndAreKept() {
+    void badBytesFailAndAreKept() throws DecodeException {
         Holder h = new Holder(PLAIN);
         h.payload.setRawFromWire(JUNK, ContainedEncoding.BER);
         postDecode(h, null);
@@ -210,7 +210,7 @@ class ContainedStatusTest {
 
     /** A set or edited value is dirty: encode writes its encoding, not the raw bytes. */
     @Test
-    void setAndEditMarkTheValueDirty() {
+    void setAndEditMarkTheValueDirty() throws DecodeException {
         Holder h = new Holder(PLAIN);
         h.payload.set(new Asn1Integer(7));
         assertEquals(ContainedStatus.DECODED, h.payload.status());

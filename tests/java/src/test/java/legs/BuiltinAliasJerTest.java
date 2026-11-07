@@ -45,7 +45,7 @@ class BuiltinAliasJerTest {
         }
     }
 
-    private static AsMemberRef fromDer(Vectors.Vector vec) {
+    private static AsMemberRef fromDer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         return v;
@@ -57,13 +57,13 @@ class BuiltinAliasJerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoes(Vectors.Vector vec) {
+    void encodesAsAsn1cDoes(Vectors.Vector vec) throws DecodeException {
         assertEquals(Json.parse(vec.asn1cJer()), Json.parse(jer(fromDer(vec))));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cJer(Vectors.Vector vec) {
+    void decodesAsn1cJer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         JerObject.decode(v, vec.asn1cJer().getBytes(StandardCharsets.UTF_8), constraints(v));
         assertEquals(fromDer(vec).asMemberRef(), v.asMemberRef());
@@ -73,7 +73,7 @@ class BuiltinAliasJerTest {
     /** Our own text reads back to the same value (JER round trip). */
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void roundTrips(Vectors.Vector vec) {
+    void roundTrips(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = fromDer(vec);
         AsMemberRef back = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         JerObject.decode(back, jer(v).getBytes(StandardCharsets.UTF_8), constraints(back));
@@ -83,7 +83,7 @@ class BuiltinAliasJerTest {
 
     /** The compact layout of the C++ and Rust runtimes: no whitespace between tokens. */
     @Test
-    void writesCompactText() {
+    void writesCompactText() throws DecodeException {
         Num n = new Num();
         n.value.set(-129);
         assertEquals("-129", jer(n));

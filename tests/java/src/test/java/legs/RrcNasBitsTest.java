@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -34,7 +36,7 @@ class RrcNasBitsTest {
     }
 
     @Test
-    void nasMessageValueBitsAreTheDecodedOctets() {
+    void nasMessageValueBitsAreTheDecodedOctets() throws DecodeException {
         DownlinkDirectTransfer msg = new DownlinkDirectTransfer();
         Positions p = PerObject.decodeWithPositions(msg, UPER, null).positions();
         var ies = msg.r3().downlinkDirectTransfer_r3();

@@ -75,7 +75,7 @@ public final class JerPrimitive {
      *
      * @param c its own constraints
      */
-    public static void decode(Asn1Primitive p, Constraints c, JerReader r) {
+    public static void decode(Asn1Primitive p, Constraints c, JerReader r) throws DecodeException {
         int at = r.position();
         switch (p) {
             case Asn1Boolean b -> b.set(decodeBoolean(r));
@@ -116,7 +116,7 @@ public final class JerPrimitive {
     }
 
     /** Decode counterpart of {@link #encodeEnumerated}: an identifier, or a bare number. */
-    public static void decodeEnumerated(EnumSlot slot, EnumSpec spec, JerReader r) {
+    public static void decodeEnumerated(EnumSlot slot, EnumSpec spec, JerReader r) throws DecodeException {
         int at = r.position();
         long v;
         if (r.peek() == '"') {
@@ -137,7 +137,7 @@ public final class JerPrimitive {
         }
     }
 
-    private static boolean decodeBoolean(JerReader r) {
+    private static boolean decodeBoolean(JerReader r) throws DecodeException {
         int at = r.position();
         String t = r.readToken();
         return switch (t) {
@@ -147,7 +147,7 @@ public final class JerPrimitive {
         };
     }
 
-    private static long parseLong(JerReader r, boolean unsigned) {
+    private static long parseLong(JerReader r, boolean unsigned) throws DecodeException {
         int at = r.position();
         String t = r.readToken();
         try {
@@ -239,7 +239,7 @@ public final class JerPrimitive {
      * {@code DECIMAL} value; a number also does when the base constraint
      * admits only 10 (§23.1.4).
      */
-    private static Asn1Real decodeReal(JerReader r, Constraints c) {
+    private static Asn1Real decodeReal(JerReader r, Constraints c) throws DecodeException {
         int at = r.position();
         if (r.peek() == '{') {
             r.expect('{');
@@ -278,7 +278,7 @@ public final class JerPrimitive {
     }
 
     /** {@code [+-]digits[.digits][(e|E)[+-]digits]} as an exact base-10 value. */
-    private static Asn1Real parseDecimal(String t, int at) {
+    private static Asn1Real parseDecimal(String t, int at) throws DecodeException {
         int i = 0;
         boolean negative = false;
         if (i < t.length() && (t.charAt(i) == '+' || t.charAt(i) == '-')) {
@@ -339,7 +339,7 @@ public final class JerPrimitive {
         w.ascii("{\"value\":").hexString(b.bytes()).ascii(",\"length\":" + b.bitCount() + "}");
     }
 
-    private static void decodeBits(Asn1BitString b, Constraints c, JerReader r) {
+    private static void decodeBits(Asn1BitString b, Constraints c, JerReader r) throws DecodeException {
         int at = r.position();
         int first = r.peek();
         if (first == '"') {

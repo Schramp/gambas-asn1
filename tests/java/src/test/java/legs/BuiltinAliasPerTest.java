@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -46,7 +48,7 @@ class BuiltinAliasPerTest {
                         && hasPerField(BuiltinAliasBerTest.TYPES.get(vec.type()).get()));
     }
 
-    private static AsMemberRef fromDer(Vectors.Vector vec) {
+    private static AsMemberRef fromDer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         return v;
@@ -54,14 +56,14 @@ class BuiltinAliasPerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoes(Vectors.Vector vec) {
+    void encodesAsAsn1cDoes(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = fromDer(vec);
         assertArrayEquals(vec.asn1cUper(), PerObject.encode(v, BuiltinAliasJerTest.constraints(v)));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cUper(Vectors.Vector vec) {
+    void decodesAsn1cUper(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = BuiltinAliasBerTest.TYPES.get(vec.type()).get();
         PerObject.decode(v, vec.asn1cUper(), BuiltinAliasJerTest.constraints(v));
         assertEquals(fromDer(vec).asMemberRef(), v.asMemberRef());
@@ -70,7 +72,7 @@ class BuiltinAliasPerTest {
 
     /** Expected bytes: asn1c's UPER of the same value as a SEQUENCE member, without the member's preamble. */
     @Test
-    void asn1cDeviations() {
+    void asn1cDeviations() throws DecodeException {
         String[][] cases = {
             {"Numeric", "0801230456", "0812340567"},
             {"Utc", "0D3234303131353134333030305A", "0D64D183162D58B466C1830B40"},
