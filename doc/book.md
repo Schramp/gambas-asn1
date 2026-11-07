@@ -2624,7 +2624,10 @@ checks the output, then repeats that from a copy of the generated code with
 runtime from Maven Central.
 
 `./java-runtime/gradlew -p java-runtime publishToMavenLocal` installs a
-snapshot (`0.1.0-SNAPSHOT`, or `-Pversion=...`) into `~/.m2`.
+snapshot (`X.Y.Z-SNAPSHOT`, `VERSION` plus `-SNAPSHOT`, or `-Pversion=...`)
+into `~/.m2`. A released runtime is on Maven Central as
+`io.github.schramp.gambasasn1:gambasasn1-wire:X.Y.Z`, the compiler of that
+version in the release tarball (README, "Using a release").
 
 **Releasing.** One version covers the compiler and every runtime. Start the
 `release` workflow (`.github/workflows/release.yml`) on `main`, by hand, with

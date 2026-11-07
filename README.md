@@ -64,6 +64,43 @@ library and cross-validation setup: [**doc/QUICKSTART.md**](doc/QUICKSTART.md).
 Installing the compiler and the Java runtime (into the local Maven
 repository, `~/.m2`): [**INSTALL.md**](INSTALL.md).
 
+## Using a release
+
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.schramp.gambasasn1/gambasasn1-wire)](https://central.sonatype.com/artifact/io.github.schramp.gambasasn1/gambasasn1-wire)
+
+Each [release](https://github.com/Schramp/gambas-asn1/releases) has the
+compiler with the C++ and Rust runtimes for linux-x86_64 as a tarball. The
+Java runtime is on Maven Central as
+`io.github.schramp.gambasasn1:gambasasn1-wire`. The compiler and the runtime
+must be the same version; generated code does not compile against a runtime
+of another version.
+
+Generating Java and building it with Maven, for release `V`:
+
+```bash
+V=0.1.0
+curl -LO https://github.com/Schramp/gambas-asn1/releases/download/v$V/asn1cpp-$V-linux-x86_64.tar.gz
+tar xzf asn1cpp-$V-linux-x86_64.tar.gz
+export PATH=$PWD/asn1cpp-$V/bin:$PATH
+asn1cpp --target=java --package=contacts contact.asn1 -o src/main/java/contacts
+```
+
+`-o` is the directory of the `--package`, and the compiler owns it: keep your
+own sources outside it.
+
+```xml
+<dependency>
+  <groupId>io.github.schramp.gambasasn1</groupId>
+  <artifactId>gambasasn1-wire</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+Gradle: `implementation("io.github.schramp.gambasasn1:gambasasn1-wire:0.1.0")`
+with `mavenCentral()`. A Maven build that runs the compiler itself, or
+compiles generated code that is checked in: [INSTALL.md](INSTALL.md#generating-java)
+and [`examples/contact-book/maven`](examples/contact-book/maven).
+
 ## Status
 
 Compiler passes all asn1c parser conformance tests. BER and UPER codecs are
