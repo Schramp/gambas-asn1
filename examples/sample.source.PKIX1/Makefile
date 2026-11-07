@@ -27,7 +27,7 @@ LIB_DIR   := lib
 INC_DIR   := include
 LIBRARY   := $(LIB_DIR)/libasn1cpp_pkix1.a
 
-ASNCPP_FLAGS := -fallow-newer-modules
+ASNCPP_FLAGS := --remove-stale -fallow-newer-modules
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)

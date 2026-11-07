@@ -1414,7 +1414,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 |------|--------|
 | `-h`, `--help` | Print option summary and exit. |
 | `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
-| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`). Each run lists the files it wrote in `<dir>/.asn1cpp-generated` and removes the generated files of the previous run that it no longer writes, in sub-directories too (a module dropped from the input, a switch to `--flat-package`); files no run generated are left alone. |
+| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`), which the compiler owns: generate into an empty directory, or one only `asn1cpp` writes to, and keep your own sources outside it. Each run lists the files it wrote in `<dir>/.asn1cpp-generated`, plus the files earlier runs listed that are still there. A file this run no longer writes (a type renamed, a module dropped) stays unless `--remove-stale` is given; see [The output directory](#the-output-directory). |
+| `--remove-stale` | Delete the files earlier runs listed in `<dir>/.asn1cpp-generated` that this run no longer writes, then the directories that left empty, in sub-directories too (a module dropped from the input, a switch to `--flat-package`). Only listed files with the target's extensions are deleted; a file no run listed is never touched. Off by default: cleaning is the build's job. |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
@@ -1429,6 +1430,40 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--version` | Print `asn1cpp X.Y.Z` and exit. |
 | `--require-version=<v>` | Stop with an error unless `<v>` is this compiler's version (the top-level `VERSION` file, which the runtimes share). Generated code uses the runtime API of the compiler that produced it, so a build passes its runtime version here (`0.1.0-SNAPSHOT`; the part after a `-` is ignored) and cannot pair code from one compiler with another version's runtime. `examples/contact-book/maven/pom.xml` does this for Maven. |
 | `--stdlib-dir=<dir>` | Directory holding `ASN1C-UsefulInformationObjectClasses.asn1` (X.681 TYPE-IDENTIFIER and ABSTRACT-SYNTAX, X.208 EXTERNAL), which is read before every input. By default an installed compiler (`cmake --install`, see [INSTALL.md](../INSTALL.md)) reads `<prefix>/share/asn1cpp/predefined`, found relative to its own path, so an install tree can be moved. A compiler run from its build tree reads `compiler/predefined` in the source tree. `--help` prints the directory in use. |
+
+### The output directory
+
+`-o <dir>` belongs to the compiler. Generate into an empty directory, or
+into one only `asn1cpp` writes to, and keep hand-written sources, build
+files and anything else outside it. A run writes only files whose content
+changed, so an unchanged type keeps its file's modification time and a
+build does not recompile it.
+
+When a type is renamed or removed, or a module dropped from the input, its
+old file stays in `<dir>` after the next run, and a build that compiles
+every file there (`gen/*.cpp`, a Java source root, a crate) still sees it.
+Three ways to keep the directory clean:
+
+- Remove it in the build's clean step (`make clean`, `mvn clean`, which
+  removes `target/generated-sources`) and generate from scratch.
+- Generate into an empty scratch directory and synchronise it into the real
+  one, which keeps unchanged files' modification times:
+
+  ```bash
+  rm -rf gen.new && mkdir gen.new
+  asn1cpp schema.asn1 -o gen.new
+  rsync -rc --delete gen.new/ gen/ && rm -rf gen.new
+  ```
+
+- Pass `--remove-stale`: the run deletes the files earlier runs wrote and
+  this one does not, as listed in `<dir>/.asn1cpp-generated`. The example
+  libraries under `examples/` do this. Files nobody listed are never
+  deleted, but a list a run keeps for a directory you share with your own
+  files is no reason to share it.
+
+`--target=rust` also writes `<dir>/lib.rs`, declaring one module per
+`.rs` file the run wrote; other `.rs` files in `<dir>` are not modules of
+it.
 
 ### Comparison with asn1c CLI
 

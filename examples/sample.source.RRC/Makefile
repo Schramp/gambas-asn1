@@ -27,7 +27,7 @@ LIB_DIR   := lib
 INC_DIR   := include
 LIBRARY   := $(LIB_DIR)/libasn1cpp_rrc.a
 
-ASNCPP_FLAGS :=
+ASNCPP_FLAGS := --remove-stale
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)

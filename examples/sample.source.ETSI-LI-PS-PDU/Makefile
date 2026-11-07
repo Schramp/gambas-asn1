@@ -31,7 +31,7 @@ LIBRARY   := $(LIB_DIR)/libasn1cpp_etsi.a
 # BER-encoded EncryptedPayload plus cipher padding (TS 102 232-1 Annex G) — the
 # schema says so only in a comment, so the sidecar declares it.
 CONTAINER_CONFIG := container_fields.json
-ASNCPP_FLAGS := -fallow-newer-modules -pdu=PS-PDU -pdu=EncryptedPayload --container-config=$(CONTAINER_CONFIG)
+ASNCPP_FLAGS := --remove-stale -fallow-newer-modules -pdu=PS-PDU -pdu=EncryptedPayload --container-config=$(CONTAINER_CONFIG)
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)

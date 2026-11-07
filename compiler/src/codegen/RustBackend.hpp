@@ -242,7 +242,8 @@ public:
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
                                    const std::string& member_type, TypeOutputSession& session) const override;
-    void finalize_output(const std::string& out_dir) const override;
+    void finalize_output(const std::string& out_dir,
+                         const std::set<std::filesystem::path>& written) const override;
 
     // Single-file mode: Rust has no header/impl split.
     // Returning the same extension from both methods makes
