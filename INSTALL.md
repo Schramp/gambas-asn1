@@ -136,6 +136,12 @@ sudo xargs rm -f < build/install_manifest.txt
 
 ## 3. Install the Java runtime into the local Maven repository
 
+A released runtime is on Maven Central
+(`io.github.schramp.gambasasn1:gambasasn1-wire:X.Y.Z`, see "Using a release"
+in the README) and needs no install. A runtime built from a checkout, such as
+`main`, is version `X.Y.Z-SNAPSHOT` (`VERSION` plus `-SNAPSHOT`) and goes
+into the local Maven repository.
+
 Needs JDK 21. The Gradle wrapper is checked in, so you do not need to install
 Gradle. `cmake --install` does not install the Java runtime; Maven and Gradle
 take it from the local Maven repository:
@@ -144,7 +150,7 @@ take it from the local Maven repository:
 ./java-runtime/gradlew -p java-runtime publishToMavenLocal
 ```
 
-This installs `io.github.schramp.gambasasn1:gambasasn1-wire:0.1.0-SNAPSHOT`
+This installs `io.github.schramp.gambasasn1:gambasasn1-wire:X.Y.Z-SNAPSHOT`
 into `~/.m2/repository/io/github/schramp/gambasasn1/gambasasn1-wire/`: the jar,
 its POM and Gradle module file, and the `-sources` and `-javadoc` jars. No
 signing key is needed for a local install. Options:
@@ -162,7 +168,7 @@ again after you update the checkout.
 <dependency>
   <groupId>io.github.schramp.gambasasn1</groupId>
   <artifactId>gambasasn1-wire</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>X.Y.Z-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -178,7 +184,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.schramp.gambasasn1:gambasasn1-wire:0.1.0-SNAPSHOT")
+    implementation("io.github.schramp.gambasasn1:gambasasn1-wire:X.Y.Z-SNAPSHOT")
 }
 ```
 
@@ -200,7 +206,7 @@ not the version of the runtime:
 
 ```xml
 <properties>
-  <gambasasn1.version>0.1.0-SNAPSHOT</gambasasn1.version>
+  <gambasasn1.version>X.Y.Z-SNAPSHOT</gambasasn1.version>
   <asn1cpp.executable>asn1cpp</asn1cpp.executable>
   <asn1cpp.generated>${project.build.directory}/generated-sources/asn1cpp</asn1cpp.generated>
 </properties>
