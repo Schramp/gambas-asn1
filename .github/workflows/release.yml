@@ -110,11 +110,20 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Gradle for ctest's Java legs only; the cache holds the wrapper's
+      # distribution and the test dependencies. publish-java, which builds
+      # the artifacts for Maven Central, does not use it.
       - name: Install JDK 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            java-runtime/*.gradle.kts
+            java-runtime/gradle/libs.versions.toml
+            java-runtime/gradle/wrapper/gradle-wrapper.properties
+            tests/java/*.gradle.kts
 
       - name: Set version
         env:
