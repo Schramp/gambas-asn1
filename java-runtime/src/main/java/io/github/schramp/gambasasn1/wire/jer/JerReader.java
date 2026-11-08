@@ -56,7 +56,7 @@ public final class JerReader {
     }
 
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */
-    public void enterLevel() {
+    public void enterLevel() throws DecodeException {
         if (++depth > Nesting.MAX_DECODE_DEPTH) {
             throw new DecodeException(Nesting.tooDeep(), pos);
         }
@@ -98,7 +98,7 @@ public final class JerReader {
     }
 
     /** Consumes {@code c} after optional whitespace. */
-    public void expect(char c) {
+    public void expect(char c) throws DecodeException {
         if (peek() != c) {
             throw new DecodeException("JER: expected '" + c + "'", pos);
         }
@@ -121,7 +121,7 @@ public final class JerReader {
      * combines into one code point. A lone surrogate, a short escape or an
      * unknown escape character is a decode error.
      */
-    public byte[] readString() {
+    public byte[] readString() throws DecodeException {
         if (peek() != '"') {
             throw new DecodeException("JER: expected '\"'", pos);
         }
@@ -172,11 +172,11 @@ public final class JerReader {
     }
 
     /** {@link #readString} as text. */
-    public String readStringText() {
+    public String readStringText() throws DecodeException {
         return new String(readString(), StandardCharsets.UTF_8);
     }
 
-    private int hex4() {
+    private int hex4() throws DecodeException {
         if (pos + 4 > buf.length) {
             throw new DecodeException("JER: malformed \\u escape", pos);
         }
@@ -193,7 +193,7 @@ public final class JerReader {
     }
 
     /** Reads a number, {@code true}, {@code false} or {@code null} as its raw text. */
-    public String readToken() {
+    public String readToken() throws DecodeException {
         skipWhitespace();
         int start = pos;
         while (pos < buf.length) {
@@ -210,7 +210,7 @@ public final class JerReader {
     }
 
     /** Skips one JSON value of any kind, nested objects and arrays included. */
-    public void skipValue() {
+    public void skipValue() throws DecodeException {
         int c = peek();
         if (c == 0) {
             throw new DecodeException("JER: unexpected end in value", pos);

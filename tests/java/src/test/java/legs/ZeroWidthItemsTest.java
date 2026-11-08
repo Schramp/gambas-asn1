@@ -28,7 +28,8 @@ class ZeroWidthItemsTest {
         return HexFormat.of().parseHex(s);
     }
 
-    private static <T extends AsMemberRef & Asn1SeqOf> void accepts(Supplier<T> type, String h, int count) {
+    private static <T extends AsMemberRef & Asn1SeqOf> void accepts(Supplier<T> type, String h, int count)
+            throws DecodeException {
         T v = type.get();
         PerObject.decode(v, hex(h));
         assertEquals(count, v.size());
@@ -40,7 +41,7 @@ class ZeroWidthItemsTest {
     }
 
     @Test
-    void nullsUpToTheLimitDecode() {
+    void nullsUpToTheLimitDecode() throws DecodeException {
         accepts(Nulls::new, "80c8", 200);
         refuses(new Nulls(), "80c9");
     }
@@ -51,13 +52,13 @@ class ZeroWidthItemsTest {
     }
 
     @Test
-    void singleValueIntegersCountAsZeroWidth() {
+    void singleValueIntegersCountAsZeroWidth() throws DecodeException {
         accepts(Fives::new, "00c8", 200);
         refuses(new Fives(), "ea60");
     }
 
     @Test
-    void elementsThatTakeInputAreNotLimited() {
+    void elementsThatTakeInputAreNotLimited() throws DecodeException {
         accepts(Flags::new, "83e8" + "ff".repeat(125), 1000);
         accepts(Rows::new, "812c" + "80c8".repeat(300), 300);
         accepts(Rows::new, "80c9" + "00".repeat(201), 201);

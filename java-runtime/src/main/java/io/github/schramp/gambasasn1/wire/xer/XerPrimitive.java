@@ -68,7 +68,7 @@ public final class XerPrimitive {
     }
 
     /** Decodes the content at the cursor into {@code p}; the caller consumes the element around it. */
-    public static void decode(Asn1Primitive p, XerReader r) {
+    public static void decode(Asn1Primitive p, XerReader r) throws DecodeException {
         int at = r.position();
         switch (p) {
             case Asn1Boolean b -> b.set(decodeBoolean(r));
@@ -91,7 +91,7 @@ public final class XerPrimitive {
         }
     }
 
-    private static long parse(XerReader r, int at, String what, boolean unsigned) {
+    private static long parse(XerReader r, int at, String what, boolean unsigned) throws DecodeException {
         String t = r.readTrimmedText();
         try {
             return unsigned ? Long.parseUnsignedLong(t) : Long.parseLong(t);
@@ -101,7 +101,7 @@ public final class XerPrimitive {
     }
 
     /** BASIC-XER {@code <true/>}/{@code <false/>}; lenient also accepts text (EXTENDED-XER §10). */
-    private static boolean decodeBoolean(XerReader r) {
+    private static boolean decodeBoolean(XerReader r) throws DecodeException {
         int at = r.position();
         String text = r.readTrimmedText();
         if (!text.isEmpty()) {
@@ -168,7 +168,7 @@ public final class XerPrimitive {
         return (d < 0 && s.charAt(0) != '-' ? "-" : "") + s.substring(0, last + 1);
     }
 
-    private static double decodeReal(XerReader r) {
+    private static double decodeReal(XerReader r) throws DecodeException {
         int at = r.position();
         XerReader.TagInfo peek = r.peekTag();
         if (!peek.name().isEmpty() && !peek.closing()) {
@@ -207,7 +207,7 @@ public final class XerPrimitive {
     }
 
     /** xmlbstring (X.680 §22); lenient also accepts hex pairs, an asn1c extension. */
-    private static void decodeBits(Asn1BitString b, XerReader r) {
+    private static void decodeBits(Asn1BitString b, XerReader r) throws DecodeException {
         int at = r.position();
         StringBuilder content = new StringBuilder();
         boolean hex = false;

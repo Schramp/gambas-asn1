@@ -37,7 +37,7 @@ public final class PerWhole {
      *
      * @throws DecodeException for a field value beyond the range
      */
-    public static long getConstrained(PerReader r, long lb, long ub) {
+    public static long getConstrained(PerReader r, long lb, long ub) throws DecodeException {
         long offset = r.getBits(rangeBits(lb, ub));
         if (Long.compareUnsigned(offset, ub - lb) > 0) {
             throw r.error("PER: constrained whole number beyond " + lb + ".." + ub);

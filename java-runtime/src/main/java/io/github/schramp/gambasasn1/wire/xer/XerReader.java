@@ -82,7 +82,7 @@ public final class XerReader {
     }
 
     /** Counts one more nesting level; fails past {@link Nesting#MAX_DECODE_DEPTH}. */
-    public void enterLevel() {
+    public void enterLevel() throws DecodeException {
         if (++depth > Nesting.MAX_DECODE_DEPTH) {
             throw new DecodeException(Nesting.tooDeep(), pos);
         }
@@ -156,7 +156,7 @@ public final class XerReader {
     }
 
     /** Consumes {@code <name>}; anything else is an error. */
-    public void consumeOpenTag(String name) {
+    public void consumeOpenTag(String name) throws DecodeException {
         int at = pos;
         TagInfo t = consumeTag();
         if (!t.name().equals(name) || t.closing() || t.selfClosing()) {
@@ -169,7 +169,7 @@ public final class XerReader {
      *
      * @return true for the empty form, which has no content and no closing tag
      */
-    public boolean consumeOpenOrEmptyTag(String name) {
+    public boolean consumeOpenOrEmptyTag(String name) throws DecodeException {
         int at = pos;
         TagInfo t = consumeTag();
         if (!t.name().equals(name) || t.closing()) {
@@ -179,7 +179,7 @@ public final class XerReader {
     }
 
     /** Consumes {@code </name>}; anything else is an error. */
-    public void consumeCloseTag(String name) {
+    public void consumeCloseTag(String name) throws DecodeException {
         int at = pos;
         TagInfo t = consumeTag();
         if (!t.closing() || !t.name().equals(name)) {

@@ -224,7 +224,7 @@ class BuiltinAliasBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDer(Vectors.Vector vec) {
+    void decodesAsn1cDer(Vectors.Vector vec) throws DecodeException {
         AsMemberRef v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         AsMemberRef expected = TYPES.get(vec.type()).get();
@@ -245,7 +245,7 @@ class BuiltinAliasBerTest {
      * the captured encoding, as the C++ runtime does.
      */
     @Test
-    void explicitAnyWrapsTheCapturedEncoding() {
+    void explicitAnyWrapsTheCapturedEncoding() throws DecodeException {
         ExplicitAny v = new ExplicitAny();
         v.value.set(HexFormat.of().parseHex("0101FF"));
         byte[] der = HexFormat.of().parseHex("B5030101FF");

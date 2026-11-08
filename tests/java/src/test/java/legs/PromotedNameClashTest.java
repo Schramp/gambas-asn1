@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,7 +39,7 @@ class PromotedNameClashTest {
     }
 
     @Test
-    void collectionMemberRoundTripsAsSequenceOf() {
+    void collectionMemberRoundTripsAsSequenceOf() throws DecodeException {
         Rec r = new Rec();
         r.parties().add(new Asn1Integer(1));
         r.parties().add(new Asn1Integer(2));

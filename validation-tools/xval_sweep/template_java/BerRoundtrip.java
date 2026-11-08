@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /**
@@ -100,7 +99,7 @@ public final class BerRoundtrip {
             Asn1Pdu v = type.getDeclaredConstructor().newInstance();
             try {
                 BerObject.decode(v, r);
-            } catch (RuntimeException e) {
+            } catch (DecodeException | RuntimeException e) {
                 System.err.println("record " + n + " at offset " + r.position() + ": " + e);
                 Files.write(Path.of(args[2]), out.toByteArray());
                 System.exit(1);
@@ -161,7 +160,7 @@ public final class BerRoundtrip {
             int offset = r.position();
             try {
                 BerObject.decode(v, r);
-            } catch (RuntimeException e) {
+            } catch (DecodeException | RuntimeException e) {
                 System.err.println("BER decode failed record #" + n + " at offset " + offset + ": " + e);
                 errors++;
                 break;
@@ -181,7 +180,13 @@ public final class BerRoundtrip {
         return errors > 0 ? 1 : 0;
     }
 
-    private static int textToBer(String codec, BiConsumer<Asn1Pdu, byte[]> decode, List<byte[]> records,
+    /** XerObject::decode, JerObject::decode or PerObject::decode. */
+    @FunctionalInterface
+    private interface TextDecoder {
+        void decode(Asn1Pdu v, byte[] data) throws DecodeException;
+    }
+
+    private static int textToBer(String codec, TextDecoder decode, List<byte[]> records,
             Class<? extends Asn1Pdu> type, Path out) throws Exception {
         ByteArrayOutputStream ber = new ByteArrayOutputStream();
         int n = 0;
@@ -189,9 +194,9 @@ public final class BerRoundtrip {
         for (byte[] rec : records) {
             Asn1Pdu v = type.getDeclaredConstructor().newInstance();
             try {
-                decode.accept(v, rec);
+                decode.decode(v, rec);
                 ber.writeBytes(BerObject.encode(v));
-            } catch (RuntimeException e) {
+            } catch (DecodeException | RuntimeException e) {
                 System.err.println(codec + " record #" + n + ": " + e);
                 errors++;
             }

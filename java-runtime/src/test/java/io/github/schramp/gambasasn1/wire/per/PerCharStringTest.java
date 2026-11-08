@@ -52,7 +52,8 @@ class PerCharStringTest {
                 alphabet, alphabet.length, null, 0.0, 0.0);
     }
 
-    private static void roundTrip(Supplier<? extends Asn1CharString> kind, Constraints c, String value, String uper) {
+    private static void roundTrip(Supplier<? extends Asn1CharString> kind, Constraints c, String value, String uper)
+            throws DecodeException {
         Asn1CharString v = kind.get();
         v.set(value);
         assertArrayEquals(hex(uper), PerObject.encode(v, c), value);
@@ -63,7 +64,7 @@ class PerCharStringTest {
 
     /** §30.5.4: NumericString maps space to 0 and the digits to 1..10, in 4 bits. */
     @Test
-    void numericString() {
+    void numericString() throws DecodeException {
         roundTrip(Asn1NumericString::new, size(1, 8, false), "12 3", "646080");
         assertThrows(EncodeException.class, () -> PerObject.encode(new Asn1NumericString("1a")));
         // 4-bit value 11 is no NumericString character.
@@ -72,7 +73,7 @@ class PerCharStringTest {
 
     /** §30.5.2: the 128-character kinds take 7 bits, unmapped. */
     @Test
-    void sevenBitKinds() {
+    void sevenBitKinds() throws DecodeException {
         roundTrip(Asn1PrintableString::new, Constraints.UNCONSTRAINED, "Ab 1", "0483890310");
         roundTrip(Asn1VisibleString::new, size(2, 4, true), "abc", "387163");
         roundTrip(Asn1VisibleString::new, size(2, 4, true), "abcdef", "8361C58F265CC0");
@@ -81,7 +82,7 @@ class PerCharStringTest {
 
     /** §30.5.4: a FROM alphabet whose largest character does not fit the index bits is remapped. */
     @Test
-    void permittedAlphabet() {
+    void permittedAlphabet() throws DecodeException {
         roundTrip(Asn1Ia5String::new, from("ABC", null), "CAB", "0384");
         roundTrip(Asn1Ia5String::new, from("0123456789", size(1, 4, false)), "0912", "C24480");
         roundTrip(Asn1VisibleString::new, from("0123456789ABCDEF", null), "F0A", "03F0A0");
@@ -93,7 +94,7 @@ class PerCharStringTest {
 
     /** §30.5.2: BMPString 16 bits, UniversalString 32 bits a character. */
     @Test
-    void wideKinds() {
+    void wideKinds() throws DecodeException {
         roundTrip(Asn1BmpString::new, size(1, 4, false), "A€", "4010482B00");
         roundTrip(Asn1UniversalString::new, Constraints.UNCONSTRAINED, "A", "0100000041");
     }

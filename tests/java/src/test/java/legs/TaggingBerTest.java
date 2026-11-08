@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -38,7 +40,7 @@ class TaggingBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -47,7 +49,7 @@ class TaggingBerTest {
     /** A decoded value equals one decoded again from its own encoding. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void reencodingIsStable(Vectors.Vector vec) {
+    void reencodingIsStable(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu a = TYPES.get(vec.type()).get();
         BerObject.decode(a, vec.der());
         Asn1Pdu b = TYPES.get(vec.type()).get();

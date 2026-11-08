@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,7 +24,7 @@ class RealJerBaseTest {
         return new String(JerObject.encode(v), StandardCharsets.UTF_8);
     }
 
-    private static Bases unjer(String text) {
+    private static Bases unjer(String text) throws DecodeException {
         Bases v = new Bases();
         JerObject.decode(v, text.getBytes(StandardCharsets.UTF_8));
         return v;
@@ -46,12 +48,12 @@ class RealJerBaseTest {
     }
 
     @Test
-    void everyMemberDecodesBackToTheSameDecimal() {
+    void everyMemberDecodesBackToTheSameDecimal() throws DecodeException {
         assertEquals(allD(), unjer(jer(allD())));
     }
 
     @Test
-    void aJsonNumberIsBase10OnlyWhereTheBaseIsConstrainedTo10() {
+    void aJsonNumberIsBase10OnlyWhereTheBaseIsConstrainedTo10() throws DecodeException {
         Bases n = unjer("{\"b10\":14.56,\"b2\":14.56,\"inline\":14.56,\"x697\":14.56,\"both\":14.56,\"plain\":14.56}");
         assertEquals(D, n.b10().value);
         assertEquals(D, n.inline());

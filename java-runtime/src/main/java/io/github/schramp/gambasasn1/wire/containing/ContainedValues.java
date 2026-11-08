@@ -99,7 +99,7 @@ public final class ContainedValues {
 
     /** Decodes one contained field and stores the outcome in it; a field decoded from its inline XER/JER form is kept. */
     private static ContainedResult runOne(Asn1Contained field, ContainedSpec spec, Object outer,
-            ContainedEncoding outerEncoding, BerReader parent, String whenFail) {
+            ContainedEncoding outerEncoding, BerReader parent, String whenFail) throws DecodeException {
         if (field.status() == ContainedStatus.DECODED && field.value() != null) {
             return ContainedResult.ok();
         }
@@ -130,7 +130,7 @@ public final class ContainedValues {
     }
 
     /** {@code on_error: fail} turns a failed inner decode into a failed outer one. */
-    private static void finish(String name, ContainedSpec spec, ContainedResult r, BerReader parent) {
+    private static void finish(String name, ContainedSpec spec, ContainedResult r, BerReader parent) throws DecodeException {
         if (r.status() == ContainedStatus.FAILED && spec.failOnError()) {
             throw new DecodeException(name + ": " + r.message(), parent.position());
         }
@@ -143,7 +143,7 @@ public final class ContainedValues {
      * @throws DecodeException for a failure on a field with {@code on_error: fail}
      * @see "X.682 §11.4"
      */
-    public static void decodeMembers(Asn1Seq s, ContainedEncoding outerEncoding, BerReader parent) {
+    public static void decodeMembers(Asn1Seq s, ContainedEncoding outerEncoding, BerReader parent) throws DecodeException {
         for (int i : s.spec().containedMembers()) {
             MemberMeta meta = s.spec().members().get(i);
             ContainedSpec cs = meta.contained();
@@ -167,7 +167,7 @@ public final class ContainedValues {
      *
      * @throws DecodeException for a failure on a field with {@code on_error: fail}
      */
-    public static void decodeAlternative(Asn1Choice c, ContainedEncoding outerEncoding, BerReader parent) {
+    public static void decodeAlternative(Asn1Choice c, ContainedEncoding outerEncoding, BerReader parent) throws DecodeException {
         int i = c.activeIndex();
         if (i < 0) {
             return;

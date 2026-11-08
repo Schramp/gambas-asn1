@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -64,7 +66,7 @@ class ExtBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -72,7 +74,7 @@ class ExtBerTest {
 
     @ParameterizedTest(name = "{1}")
     @MethodSource("versions")
-    void earlierVersionSkipsUnknownAdditions(String later, String earlier) {
+    void earlierVersionSkipsUnknownAdditions(String later, String earlier) throws DecodeException {
         Vectors.Vector from = row(later);
         Vectors.Vector to = row(earlier);
         Asn1Pdu v = TYPES.get(to.type()).get();
@@ -85,7 +87,7 @@ class ExtBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("versions")
-    void laterVersionKeepsEveryAddition(String later, String earlier) {
+    void laterVersionKeepsEveryAddition(String later, String earlier) throws DecodeException {
         Vectors.Vector from = row(later);
         Asn1Pdu v = TYPES.get(from.type()).get();
         BerObject.decode(v, from.der());

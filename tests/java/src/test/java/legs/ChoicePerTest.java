@@ -37,19 +37,19 @@ class ChoicePerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("choice")
-    void choiceSchema(Vectors.Vector vec) {
+    void choiceSchema(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, ChoiceBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("refs")
-    void sequenceHoldingChoice(Vectors.Vector vec) {
+    void sequenceHoldingChoice(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, SequenceBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("mixed")
-    void setHoldingChoice(Vectors.Vector vec) {
+    void setHoldingChoice(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, SetBerTest.TYPES);
     }
 
@@ -58,7 +58,7 @@ class ChoicePerTest {
      * not know (asn1c's Ext {@code b TRUE}) as its open-type contents.
      */
     @Test
-    void earlierVersionKeepsUnknownAlternative() {
+    void earlierVersionKeepsUnknownAlternative() throws DecodeException {
         ExtRoot v = new ExtRoot();
         PerObject.decode(v, HexFormat.of().parseHex("800180"));
         assertEquals(-1, v.activeIndex());

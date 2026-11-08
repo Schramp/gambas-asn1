@@ -77,7 +77,7 @@ class ChoiceBerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         Asn1Choice c = (Asn1Choice) v;
@@ -116,7 +116,7 @@ class ChoiceBerTest {
     }
 
     @Test
-    void accessorsAnswerOnlyForTheSelectedAlternative() {
+    void accessorsAnswerOnlyForTheSelectedAlternative() throws DecodeException {
         Plain p = new Plain();
         BerObject.decode(p, hex("0101FF"));
         assertEquals(new Asn1Boolean(true), p.flag());
@@ -125,7 +125,7 @@ class ChoiceBerTest {
     }
 
     @Test
-    void decodedValuesEqualConstructedOnes() {
+    void decodedValuesEqualConstructedOnes() throws DecodeException {
         Typed t = new Typed();
         BerObject.decode(t, hex("020200FF"));
         Typed u = new Typed();
@@ -137,7 +137,7 @@ class ChoiceBerTest {
 
     /** An extensible CHOICE keeps an alternative it does not know and replays it (X.680 §6). */
     @Test
-    void unknownExtensionAlternativeIsKeptAndReplayed() {
+    void unknownExtensionAlternativeIsKeptAndReplayed() throws DecodeException {
         ExtRoot r = new ExtRoot();
         BerObject.decode(r, hex("0101FF"));
         assertEquals(-1, r.activeIndex());

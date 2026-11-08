@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,7 +48,7 @@ class ContainingXerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoesUnlessInline(Vectors.Vector vec, Supplier<Asn1Pdu> type) {
+    void encodesAsAsn1cDoesUnlessInline(Vectors.Vector vec, Supplier<Asn1Pdu> type) throws DecodeException {
         Asn1Pdu v = type.get();
         BerObject.decode(v, vec.der());
         String expected = java.util.Arrays.equals(vec.der(), PICK_INNER) ? PICK_INNER_INLINE : vec.asn1cXer();
@@ -55,7 +57,7 @@ class ContainingXerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cXer(Vectors.Vector vec, Supplier<Asn1Pdu> type) {
+    void decodesAsn1cXer(Vectors.Vector vec, Supplier<Asn1Pdu> type) throws DecodeException {
         Asn1Pdu v = type.get();
         XerObject.decode(v, vec.asn1cXer().getBytes(StandardCharsets.UTF_8));
         assertArrayEquals(vec.der(), BerObject.encode(v));
@@ -63,7 +65,7 @@ class ContainingXerTest {
 
     /** The inline form gives the inner value and the bytes its encoding stands for. */
     @Test
-    void decodesInlineForm() {
+    void decodesInlineForm() throws DecodeException {
         Pick p = new Pick();
         XerObject.decode(p, PICK_INNER_INLINE.getBytes(StandardCharsets.UTF_8));
         assertEquals(ContainedStatus.DECODED, p.inner().status());
@@ -77,7 +79,7 @@ class ContainingXerTest {
      * bytes.
      */
     @Test
-    void optionsOverrideTheRowsXerForm() {
+    void optionsOverrideTheRowsXerForm() throws DecodeException {
         Vectors.Vector vec = ContainingTest.vectors().filter(v -> v.type().equals("Holder")).findFirst().orElseThrow();
         Asn1Pdu h = ContainingTest.TYPES.get("Holder").get();
         BerObject.decode(h, vec.der());
@@ -95,7 +97,7 @@ class ContainingXerTest {
 
     /** A raw comment after the inline value gives the bytes as they were. */
     @Test
-    void decodesInlineRawForm() {
+    void decodesInlineRawForm() throws DecodeException {
         String text = PICK_INNER_INLINE.replace("</Inner>\n", "</Inner>\n        <!-- raw: 3003800105 -->\n");
         Pick p = new Pick();
         XerObject.decode(p, text.getBytes(StandardCharsets.UTF_8));

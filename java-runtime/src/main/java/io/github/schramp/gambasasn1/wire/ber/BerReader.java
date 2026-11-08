@@ -175,7 +175,7 @@ public final class BerReader {
      * @throws DecodeException when the decode is already
      *         {@link Nesting#MAX_DECODE_DEPTH} levels deep
      */
-    public void enterLevel() {
+    public void enterLevel() throws DecodeException {
         if (depth >= Nesting.MAX_DECODE_DEPTH) {
             throw new DecodeException(Nesting.tooDeep(), position());
         }
@@ -235,7 +235,7 @@ public final class BerReader {
     }
 
     /** Identifier octets (X.690 §8.1.2). Tag numbers above 2^31-1 are rejected. */
-    public Tag readTag() {
+    public Tag readTag() throws DecodeException {
         int start = src.position();
         Tag t = peekTag();
         if (t == null) {
@@ -250,7 +250,7 @@ public final class BerReader {
      * only on a constructed encoding; its contents end at the matching
      * end-of-contents octets.
      */
-    public Tlv readTlv() {
+    public Tlv readTlv() throws DecodeException {
         Tag tag = readTag();
         int lenPos = src.position();
         int len = readLength();
@@ -287,7 +287,7 @@ public final class BerReader {
     }
 
     /** Definite length, or -1 for the indefinite form. */
-    private int readLength() {
+    private int readLength() throws DecodeException {
         int first = src.read("length");
         if (first == 0x80) {
             return -1;

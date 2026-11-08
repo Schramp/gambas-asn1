@@ -24,7 +24,7 @@ public final class ContainedDecoders {
     /** Fills {@code args.inner()} from {@code args.raw()}. */
     @FunctionalInterface
     public interface Decoder {
-        ContainedResult decode(ContainedDecodeArgs args);
+        ContainedResult decode(ContainedDecodeArgs args) throws DecodeException;
     }
 
     /** The field's bytes from {@code args.inner()}. */

@@ -37,14 +37,14 @@ class PerIntegerTest {
                 0, 0, lb, ub, 0, 0, 0, null, 0, null, 0, null, 0.0, 0.0);
     }
 
-    private static void signed(Constraints c, long v, String uper) {
+    private static void signed(Constraints c, long v, String uper) throws DecodeException {
         assertArrayEquals(hex(uper), PerObject.encode(new Asn1Integer(v), c), "value " + v);
         Asn1Integer back = new Asn1Integer();
         PerObject.decode(back, hex(uper), c);
         assertEquals(v, back.get());
     }
 
-    private static void unsigned(Constraints c, long v, String uper) {
+    private static void unsigned(Constraints c, long v, String uper) throws DecodeException {
         assertArrayEquals(hex(uper), PerObject.encode(new Asn1UInteger(v), c), "value " + Long.toUnsignedString(v));
         Asn1UInteger back = new Asn1UInteger();
         PerObject.decode(back, hex(uper), c);
@@ -53,7 +53,7 @@ class PerIntegerTest {
 
     /** X.691 §13.2.2, §11.5.6: the offset from lb in the fewest bits; none for a single value. */
     @Test
-    void constrained() {
+    void constrained() throws DecodeException {
         signed(range(0, 7, false), 3, "60");
         signed(range(-1000, -990, false), -995, "50");
         signed(range(42, 42, false), 42, "00");
@@ -62,7 +62,7 @@ class PerIntegerTest {
 
     /** X.691 §13.1: an extensible range adds a bit; outside it, the unconstrained form. */
     @Test
-    void extensibleRange() {
+    void extensibleRange() throws DecodeException {
         Constraints c = range(0, 7, true);
         signed(c, 3, "30");
         signed(c, 8, "808400");
@@ -71,7 +71,7 @@ class PerIntegerTest {
 
     /** X.691 §13.2.3, §11.7: the offset from lb as a non-negative-binary-integer. */
     @Test
-    void semiConstrained() {
+    void semiConstrained() throws DecodeException {
         Constraints c = semi(5, true);
         signed(c, 5, "008000");
         signed(c, 300, "01009380");
@@ -82,7 +82,7 @@ class PerIntegerTest {
 
     /** X.691 §11.5.6: a range of 2^64 values is a 64-bit field. */
     @Test
-    void sixtyFourBitRange() {
+    void sixtyFourBitRange() throws DecodeException {
         Constraints c = range(Long.MIN_VALUE, Long.MAX_VALUE, false);
         signed(c, Long.MIN_VALUE, "0000000000000000");
         signed(c, -1, "7FFFFFFFFFFFFFFF");
@@ -90,7 +90,7 @@ class PerIntegerTest {
     }
 
     @Test
-    void unsignedStorage() {
+    void unsignedStorage() throws DecodeException {
         unsigned(urange(0, -1L, false), -1L, "FFFFFFFFFFFFFFFF");
         unsigned(urange(1L << 63, -1L, false), 1L << 63, "0000000000000000");
         unsigned(urange(0, -1L, false), 5, "0000000000000005");

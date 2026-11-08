@@ -47,7 +47,7 @@ public final class ByteSource {
         return offset >= 0 && offset < end - pos ? data[pos + offset] & 0xFF : -1;
     }
 
-    public int read(String what) {
+    public int read(String what) throws DecodeException {
         if (pos >= end) {
             throw new DecodeException("unexpected end of data reading " + what, pos);
         }
@@ -55,7 +55,7 @@ public final class ByteSource {
     }
 
     /** The next {@code len} bytes as a window over the same array; consumes them. */
-    public ByteSource sub(int len, String what) {
+    public ByteSource sub(int len, String what) throws DecodeException {
         require(len, what);
         ByteSource s = new ByteSource(data, pos, pos + len);
         pos += len;
@@ -74,7 +74,7 @@ public final class ByteSource {
     }
 
     /** The next {@code len} bytes as a copy; consumes them. */
-    public byte[] readBytes(int len, String what) {
+    public byte[] readBytes(int len, String what) throws DecodeException {
         require(len, what);
         byte[] out = Arrays.copyOfRange(data, pos, pos + len);
         pos += len;
@@ -86,7 +86,7 @@ public final class ByteSource {
         return Arrays.copyOfRange(data, start, pos);
     }
 
-    public void skip(int len, String what) {
+    public void skip(int len, String what) throws DecodeException {
         require(len, what);
         pos += len;
     }
@@ -108,7 +108,7 @@ public final class ByteSource {
         return Arrays.copyOfRange(data, pos, end);
     }
 
-    private void require(int len, String what) {
+    private void require(int len, String what) throws DecodeException {
         if (len < 0 || len > end - pos) {
             throw new DecodeException("need " + len + " bytes for " + what + " but only " + (end - pos) + " remain", pos);
         }

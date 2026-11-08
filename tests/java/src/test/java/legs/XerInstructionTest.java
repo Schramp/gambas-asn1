@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -45,7 +47,7 @@ class XerInstructionTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void encodesAsAsn1cDoes(Vectors.Vector vec, Supplier<AsMemberRef> type) {
+    void encodesAsAsn1cDoes(Vectors.Vector vec, Supplier<AsMemberRef> type) throws DecodeException {
         AsMemberRef v = type.get();
         BerObject.decode(v, vec.der());
         assertEquals(vec.asn1cXer().replaceAll("\n\n+", "\n"),
@@ -54,7 +56,7 @@ class XerInstructionTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cXer(Vectors.Vector vec, Supplier<AsMemberRef> type) {
+    void decodesAsn1cXer(Vectors.Vector vec, Supplier<AsMemberRef> type) throws DecodeException {
         AsMemberRef v = type.get();
         XerObject.decode(v, vec.asn1cXer().getBytes(StandardCharsets.UTF_8));
         assertArrayEquals(vec.der(), BerObject.encode(v));

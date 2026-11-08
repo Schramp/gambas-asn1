@@ -49,7 +49,7 @@ class PerBitsTest {
     }
 
     @Test
-    void sixtyFourBitField() {
+    void sixtyFourBitField() throws DecodeException {
         PerWriter w = new PerWriter().putBits(1, 1).putBits(0x8000000000000001L, 64);
         assertArrayEquals(hex("C00000000000000080"), w.toByteArray());
         PerReader r = new PerReader(w.toByteArray());
@@ -65,7 +65,7 @@ class PerBitsTest {
     }
 
     @Test
-    void readerReadsBackAndStopsAtTheEnd() {
+    void readerReadsBackAndStopsAtTheEnd() throws DecodeException {
         PerReader r = new PerReader(hex("B7ABCD"));
         assertEquals(0b10110, r.getBits(5));
         assertEquals(1, r.getBits(1));
@@ -89,7 +89,7 @@ class PerBitsTest {
     }
 
     @Test
-    void constrainedWholeNumberRoundTrips() {
+    void constrainedWholeNumberRoundTrips() throws DecodeException {
         long[][] cases = {{5, 5, 5}, {0, 0, 1}, {200, 0, 255}, {-3, -3, 3}, {3, -3, 3},
             {Long.MIN_VALUE, Long.MIN_VALUE, Long.MAX_VALUE}, {Long.MAX_VALUE, Long.MIN_VALUE, Long.MAX_VALUE}, {-1, Long.MIN_VALUE, Long.MAX_VALUE}};
         for (long[] c : cases) {
@@ -140,7 +140,7 @@ class PerBitsTest {
 
     /** X.691 §12: one bit; §18: no field, so a NULL alone is the one zero octet of §11.1.3.1. */
     @Test
-    void booleanAndNull() {
+    void booleanAndNull() throws DecodeException {
         assertArrayEquals(hex("80"), PerObject.encode(new Asn1Boolean(true)));
         assertArrayEquals(hex("00"), PerObject.encode(new Asn1Boolean(false)));
         assertArrayEquals(hex("00"), PerObject.encode(new Asn1Null()));

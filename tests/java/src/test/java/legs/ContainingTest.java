@@ -1,5 +1,7 @@
 package legs;
 
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -51,14 +53,14 @@ class ContainingTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
-    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) {
+    void decodesAsn1cDerAndReencodesIt(Vectors.Vector vec) throws DecodeException {
         Asn1Pdu v = TYPES.get(vec.type()).get();
         BerObject.decode(v, vec.der());
         assertArrayEquals(vec.der(), BerObject.encode(v));
     }
 
     @Test
-    void decodesEachContainedMember() {
+    void decodesEachContainedMember() throws DecodeException {
         Holder h = new Holder();
         BerObject.decode(h, row("Holder", "<plain/>").der());
         assertEquals(ContainedStatus.DECODED, h.viaConstraint().status());
@@ -71,7 +73,7 @@ class ContainingTest {
     }
 
     @Test
-    void keepsRawBytesOfAnUndecodedOrFailedMember() {
+    void keepsRawBytesOfAnUndecodedOrFailedMember() throws DecodeException {
         Holder h = new Holder();
         byte[] der = row("Holder", "<scrambled/>").der();
         BerObject.decode(h, der);
@@ -85,7 +87,7 @@ class ContainingTest {
     }
 
     @Test
-    void decodesNothingWhenContainedDecodingIsOff() {
+    void decodesNothingWhenContainedDecodingIsOff() throws DecodeException {
         Holder h = new Holder();
         byte[] der = row("Holder", "<plain/>").der();
         BerObject.decode(h, der, DecodeOptions.DEFAULT.withContained(new ContainedOptions(null, true)));
@@ -95,7 +97,7 @@ class ContainingTest {
     }
 
     @Test
-    void reencodesAnEditedInnerValue() {
+    void reencodesAnEditedInnerValue() throws DecodeException {
         Holder h = new Holder();
         BerObject.decode(h, row("Holder", "<plain/>").der());
         h.viaAlias().edit().id().set(5);
@@ -108,7 +110,7 @@ class ContainingTest {
     }
 
     @Test
-    void encodesAContainedChoiceAlternative() {
+    void encodesAContainedChoiceAlternative() throws DecodeException {
         Pick p = new Pick();
         p.select(0);
         Inner in = new Inner();
@@ -122,7 +124,7 @@ class ContainingTest {
     }
 
     @Test
-    void containsItsOwnType() {
+    void containsItsOwnType() throws DecodeException {
         Envelope inner = new Envelope();
         inner.depth().set(1);
         Envelope e = new Envelope();

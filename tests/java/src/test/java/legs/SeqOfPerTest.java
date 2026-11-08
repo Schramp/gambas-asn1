@@ -39,19 +39,19 @@ class SeqOfPerTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("seqof")
-    void seqOfSchema(Vectors.Vector vec) {
+    void seqOfSchema(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, SeqOfBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("constraints")
-    void sizeAndElementConstraints(Vectors.Vector vec) {
+    void sizeAndElementConstraints(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, ConstraintsBerTest.TYPES);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("recursion")
-    void recursiveTypes(Vectors.Vector vec) {
+    void recursiveTypes(Vectors.Vector vec) throws DecodeException {
         PerLeg.check(vec, RecursionBerTest.TYPES);
     }
 
@@ -60,7 +60,7 @@ class SeqOfPerTest {
      * writes it sorted; asn1c's {5, -1, 300, 2} with its components reversed.
      */
     @Test
-    void setOfIsWrittenSorted() {
+    void setOfIsWrittenSorted() throws DecodeException {
         IntSet v = new IntSet();
         PerObject.decode(v, hex("0402012C01FF01050102"));
         assertArrayEquals(hex("040102010501FF02012C"), PerObject.encode(v));
