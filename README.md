@@ -117,8 +117,8 @@ and [`examples/contact-book/maven`](examples/contact-book/maven).
   XER, JER and unaligned PER (UPER), with constraint validation.
 - **Cross-validation.** `validation-tools/xval_sweep` runs 72 schema/PDU
   targets through every encode/decode path of the C++, Rust and Java codecs
-  and compares the results: on every pull request across the three runtimes
-  (with a decoder fuzz pass), on `main` also against asn1c. An Erlang/OTP
+  and compares the results across the three runtimes and against asn1c, with
+  a decoder fuzz pass, on every pull request and on `main`. An Erlang/OTP
   leg runs alongside for information.
 
 Details per codec: [Status and Conformance](doc/book.md#14-status-and-conformance).
