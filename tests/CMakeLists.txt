@@ -517,13 +517,16 @@ set_tests_properties(cpp_runtime_library_mismatch PROPERTIES
 
 # tools/set-version.sh, on a local clone of the committed tree: setting the
 # next patch version passes the configure step's version checks, and setting
-# VERSION back leaves the tree as it was.
+# the clone's own VERSION back leaves the tree as it was. The clone's VERSION,
+# not this build's: the release workflow runs ctest with VERSION set to the
+# new release but not yet committed.
 set(_dir ${CMAKE_CURRENT_BINARY_DIR}/set_version)
 add_test(NAME set_version_roundtrip
     COMMAND sh -c "set -e; rm -rf '${_dir}'; git clone -q --local '${CMAKE_SOURCE_DIR}' '${_dir}'; cd '${_dir}'; \
+                   v=$(cat VERSION); \
                    tools/set-version.sh ${ASN1CPP_OTHER_VERSION}; \
                    test \"$(git status --porcelain | wc -l)\" -gt 4; \
-                   tools/set-version.sh --no-check ${PROJECT_VERSION}; \
+                   tools/set-version.sh --no-check $v; \
                    test -z \"$(git status --porcelain)\"; echo roundtrip-clean")
 set_tests_properties(set_version_roundtrip PROPERTIES TIMEOUT 300
     PASS_REGULAR_EXPRESSION "configure step's version checks pass.*roundtrip-clean")
