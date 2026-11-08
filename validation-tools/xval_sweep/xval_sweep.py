@@ -52,8 +52,8 @@ Usage:
                    matches NAME (substring match); default: all targets.
   --limit N        cap the target list to the first N (after --target
                    filtering) — a quick sanity slice before a full run.
-  --shard K/N      keep only the build groups (targets sharing a schema,
-                   built once) at index i with i mod N == K, after
+  --shard K/N      keep the K-th of N size-balanced shards of the build
+                   groups (targets sharing a schema, built once), after
                    --target/--limit, so N runners can split one sweep
                    without building any schema twice.
   --java           add the Java leg (BER round trip and the XER, JER and
@@ -1677,6 +1677,26 @@ def group_key(t):
     return (t[0], tuple(t[3]), tuple(t[4]))
 
 
+def shard_groups(targets, k, n):
+    """The build groups of shard `k` of `n`: whole groups, so no schema is
+    built twice, each one, largest schema first, going to the shard with the
+    fewest schema bytes so far. Build time follows schema size, so a large
+    schema shares its runner with little else; table_diff.py --shard uses
+    the same rule, so a schema lands on the same runner in both tools."""
+    size = {}
+    for t in targets:
+        key = group_key(t)
+        if key not in size:
+            size[key] = sum(os.path.getsize(f) for f in schema_files(t[0], t[3])[0])
+    load, mine = [0] * n, set()
+    for key in sorted(size, key=lambda g: (-size[g], g)):
+        s = load.index(min(load))
+        load[s] += size[key]
+        if s == k:
+            mine.add(key)
+    return mine
+
+
 def schema_files(schema_rel, extra_files=()):
     """(asn1 files, testbuild slug base) of a target's schema: a directory
     means every .asn/.asn1 file under it (a multi-module schema such as
@@ -2220,7 +2240,7 @@ def main():
                           "useful for a quick sanity pass over a small slice of a large "
                           "--corpus=asn1c-compiler run before committing to the full sweep")
     ap.add_argument("--shard", default=None, metavar="K/N",
-                     help="keep only build groups at index i with i mod N == K (0 <= K < N)")
+                     help="keep the K-th of N size-balanced shards of the build groups (0 <= K < N)")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--asn1c-dir", default=None,
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
@@ -2344,9 +2364,7 @@ def main():
         except ValueError:
             print(f"--shard: expected K/N with 0 <= K < N, got {opts.shard!r}")
             sys.exit(1)
-        # Whole build groups go to one shard, so a schema is never built twice.
-        keys = list(dict.fromkeys(group_key(t) for t in targets))
-        mine = set(keys[k::n])
+        mine = shard_groups(targets, k, n)
         targets = [t for t in targets if group_key(t) in mine]
         print(f"shard {k}/{n}: {len(targets)} target(s)")
         if not targets:
