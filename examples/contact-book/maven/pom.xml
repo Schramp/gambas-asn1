@@ -35,7 +35,7 @@
   <version>1</version>
 
   <properties>
-    <gambasasn1.version>0.1.1-SNAPSHOT</gambasasn1.version>
+    <gambasasn1.version>0.2.0-SNAPSHOT</gambasasn1.version>
     <asn1cpp.executable>asn1cpp</asn1cpp.executable>
     <asn1cpp.project>https://github.com/Schramp/gambas-asn1</asn1cpp.project>
     <asn1cpp.generated>${project.build.directory}/generated-sources/asn1cpp</asn1cpp.generated>

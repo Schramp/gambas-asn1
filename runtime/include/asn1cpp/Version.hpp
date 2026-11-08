@@ -4,9 +4,9 @@
 // configure step checks that), the same as the compiler's, because
 // generated code uses the runtime API of the compiler that produced it.
 #define ASN1CPP_RUNTIME_VERSION_MAJOR 0
-#define ASN1CPP_RUNTIME_VERSION_MINOR 1
-#define ASN1CPP_RUNTIME_VERSION_PATCH 1
-#define ASN1CPP_RUNTIME_VERSION "0.1.1"
+#define ASN1CPP_RUNTIME_VERSION_MINOR 2
+#define ASN1CPP_RUNTIME_VERSION_PATCH 0
+#define ASN1CPP_RUNTIME_VERSION "0.2.0"
 
 #define ASN1CPP_RUNTIME_VERSION_SYMBOL_(a, b, c) runtime_version_##a##_##b##_##c
 #define ASN1CPP_RUNTIME_VERSION_SYMBOL_X(a, b, c) ASN1CPP_RUNTIME_VERSION_SYMBOL_(a, b, c)
