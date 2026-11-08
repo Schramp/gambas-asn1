@@ -1989,8 +1989,8 @@ Two tools keep the backends in step, and CI runs both on every pull request:
   as canonical JSON and diffs the Rust and Java tables against the C++ ones.
 - `validation-tools/xval_sweep/xval_sweep.py` runs 72 schema/PDU targets
   (`targets.txt`) through every encode and decode path of the three runtimes
-  and compares the output; on `main` also against asn1c, with an Erlang/OTP
-  leg for information. Its `--fuzz` pass feeds corrupted input to every
+  and compares the output, also against asn1c, with an Erlang/OTP leg for
+  information. Its `--fuzz` pass feeds corrupted input to every
   decoder and fails only on a crash.
 
 Gaps between the backends:
@@ -2999,7 +2999,7 @@ ctest --test-dir build/tests --output-on-failure
 
 The `smoke_matrix` test takes ~2 minutes. It is disabled by default
 (`-DWITH_SMOKE_MATRIX=OFF`) so routine development cycles stay fast. CI enables it
-automatically on pushes to `main`.
+on every run, pull requests included.
 
 ### Open Work
 
