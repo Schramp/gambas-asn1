@@ -22,6 +22,6 @@ length_ff.ber	-	-	error length-field-too-long 1
 tag_too_long.ber	-	0+12	error tag-too-long 12
 tag_too_large.ber	-	-	error tag-too-long 0
 too_large.ber	-	0+12	error frame-too-large 12
-limit.ber	300	0+12,12+311	error frame-too-large 12
+limit.ber	300	0+12	error frame-too-large 12
 limit_exact.ber	311	0+311	end
-limit_indefinite.ber	16	0+12,12+28	error frame-too-large 12
+limit_indefinite.ber	16	0+12	error frame-too-large 12
