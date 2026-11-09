@@ -169,6 +169,89 @@ class BerFramesTest {
         assertNull(frames.next());
     }
 
+    /**
+     * A stream longer than 4 GiB, generated on the fly (never on disk): 4400
+     * pairs of a 1 MiB OCTET STRING record and a 3-octet INTEGER record, then
+     * a truncated record. The same stream as the C++ {@code
+     * test_ber_frames_large} and the Rust {@code stream_longer_than_four_gib}.
+     */
+    private static final class Generated extends InputStream {
+        static final byte[] BIG_HEADER = {0x04, (byte) 0x83, 0x10, 0x00, 0x00};
+        static final byte[] SMALL = {0x02, 0x01, 0x05};
+        static final byte[] TAIL = {0x04, 0x05, 0x00};
+        static final long BIG = 5 + (1L << 20);
+        static final long PAIR = BIG + 3;
+        static final long PAIRS = 4400;
+        static final long TOTAL = PAIRS * PAIR + 3;
+        long pos;
+
+        @Override
+        public int read() {
+            byte[] one = new byte[1];
+            return read(one, 0, 1) < 0 ? -1 : one[0] & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            if (pos >= TOTAL) {
+                return -1;
+            }
+            int n = 0;
+            while (n < len && pos < TOTAL) {
+                long q = pos % PAIR;
+                if (pos >= PAIRS * PAIR) {
+                    b[off + n++] = TAIL[(int) (pos++ - PAIRS * PAIR)];
+                } else if (q < 5) {
+                    b[off + n++] = BIG_HEADER[(int) q];
+                    pos++;
+                } else if (q < BIG) {
+                    int run = (int) Math.min(BIG - q, len - n);
+                    Arrays.fill(b, off + n, off + n + run, (byte) 0);
+                    n += run;
+                    pos += run;
+                } else {
+                    b[off + n++] = SMALL[(int) (q - BIG)];
+                    pos++;
+                }
+            }
+            return n;
+        }
+    }
+
+    @Test
+    void streamLongerThanFourGib() throws IOException {
+        Runtime rt = Runtime.getRuntime();
+        BerFrames frames = new BerFrames(new Generated());
+        long count = 0;
+        long peak = 0;
+        DecodeException end = null;
+        while (end == null) {
+            Frame f;
+            try {
+                f = frames.next();
+            } catch (DecodeException e) {
+                end = e;
+                break;
+            }
+            assertTrue(f != null, "stream ended without the truncated tail");
+            long want = (count / 2) * Generated.PAIR + (count % 2 == 1 ? Generated.BIG : 0);
+            long len = count % 2 == 1 ? 3 : Generated.BIG;
+            if (f.offset() != want || f.bytes().length != len) {
+                assertEquals(want + "+" + len, f.offset() + "+" + f.bytes().length, "frame " + count);
+            }
+            count++;
+            if (count % 1000 == 0) {
+                peak = Math.max(peak, rt.totalMemory() - rt.freeMemory());
+            }
+        }
+        assertEquals(2 * Generated.PAIRS, count);
+        assertTrue(end.reason().startsWith("truncated:"), end.getMessage());
+        assertEquals(Generated.TOTAL, end.position());
+        // The framer holds one record (1 MiB) plus the frame it hands out;
+        // garbage from earlier frames is the collector's.
+        assertTrue(peak < 256L << 20, "heap in use " + (peak >> 20) + " MiB");
+    }
+
     @Test
     void offsetsPastTwoGibAreLongs() {
         DecodeException e = new DecodeException("truncated: input ends inside a record", 5L << 30);
