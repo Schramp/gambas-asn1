@@ -38,6 +38,7 @@ endif()
 
 add_library(asn1cpp_runtime_objs OBJECT
     src/BerCursor.cpp
+    src/BerFrames.cpp
     src/BerProjection.cpp
     src/BerInspect.cpp
     src/BerCodec.cpp
