@@ -604,7 +604,21 @@ encryption container's raw bytes, which IntegrityCheck hashes are computed over,
 decoded `EncryptedPayload`. The two TS 33.128 fields that carry a contents constraint
 (`threeGPP33128DefinedCC`/`IRI`) need no entry.
 
-The example's `nested-decoder` prints each PS-PDU as XER from that one decode.
+The example's `nested-decoder` prints each PS-PDU as XER from that one decode. It reads
+the file one record at a time through `asn1::BerFrameReader` (see "Reading Records from
+Files and Streams"), so a file of any size takes the memory of one record. A record that
+does not decode is reported on stderr and skipped, for example:
+
+```
+Outer BER decode failed at offset 0 (record #1): wrong tag for PS-PDU.pSHeader
+```
+
+A framing error ends the run, with the reason and the absolute offset:
+
+```
+Cannot read record #2 at offset 7: truncated: input ends inside a record
+```
+
 `--xer-form hex|inline|inline_raw` sets `ContainedOptions::xer` for the output:
 
 | `--xer-form` | Output |
@@ -2591,8 +2605,10 @@ the `java-runtime` sources and the compiler in the tree:
   `Main.java` builds a `Contact`, BER-encodes it, decodes it back and prints
   it as XER, the same steps and output as `examples/contact-book/main.cpp`.
 - `examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/`: the ETSI LI
-  nested PS-PDU decoder. It generates the PS-PDU modules with
-  `container_fields.json`, so one `BerObject.decode` of a `PS_PDU` also
+  nested PS-PDU decoder. It reads the file one record at a time through
+  `BerFrames` and skips a record that does not decode, as the C++
+  `nested-decoder` does. It generates the PS-PDU modules with
+  `container_fields.json`, so one `BerFrames.decode` of a `PS_PDU` also
   decodes `EncryptionContainer.encryptedPayload` as an `EncryptedPayload`
   (`Containing<EncryptedPayload>`: `status()`, `error()`, `value()`,
   `bytes()`). `--xer-form hex|inline|inline_raw` sets the XER form of the
@@ -2673,9 +2689,12 @@ records nothing and costs one null check per node.
 
 Two worked examples. `CcOffsets.java` in
 `examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/` (`make offsets
-IN=<file.etsi>`) prints the file byte range of every CC IP packet
+IN=<file.etsi>`) reads the file one record at a time (`BerFrames`) and
+prints the file byte range of every CC IP packet
 (`IPCCContents.iPPackets`, ETSI TS 102 232-3), also inside an
-`EncryptedPayload`, and checks the file bytes there are the decoded packet.
+`EncryptedPayload`, from `BerFrames.decodeWithPositions`, whose positions
+are already file offsets. It checks the record's bytes there are the
+decoded packet.
 The committed sample's field values are random, so its one packet prints as
 `not IPv4`; `CcOffsetsTest` checks ranges of real IPv4 packets.
 Under unaligned PER the offsets are exact bits: in an RRC

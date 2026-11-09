@@ -2,12 +2,12 @@
  * Prints where the IP packets of the CC payloads (ETSI TS 102 232-3
  * IPCCContents.iPPackets) lie in a file of BER-encoded PS-PDU records.
  *
- * Each record is decoded with positions, based at the record's offset in the
- * file, so every offset is a file offset, also for a packet inside a decoded
+ * The file is read one record at a time (BerFrames). Each record is decoded
+ * with positions, based at the record's offset in the file, so every offset is a file offset, also for a packet inside a decoded
  * EncryptionContainer.encryptedPayload (container_fields.json). For each
  * packet it prints the byte range of its contents octets and, when they hold
  * an IPv4 header whose total length matches, its addresses and protocol.
- * It checks that the file bytes at that range are the decoded packet and
+ * It checks that the record's bytes at that range are the decoded packet and
  * exits with status 1 when they are not.
  *
  * Usage: java CcOffsets <file.etsi>
@@ -15,8 +15,9 @@
 
 import etsi.IPAccessPDU.IPCCContents;
 import etsi.LI_PS_PDU.PS_PDU;
-import io.github.schramp.gambasasn1.wire.ber.BerObject;
-import io.github.schramp.gambasasn1.wire.ber.BerReader;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
+import io.github.schramp.gambasasn1.wire.ber.BerFrames;
+import io.github.schramp.gambasasn1.wire.ber.Frame;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.query.Extract;
@@ -25,7 +26,9 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.Decoded;
 import io.github.schramp.gambasasn1.wire.spec.Positions;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -50,31 +53,38 @@ public final class CcOffsets {
             System.err.println("Usage: java CcOffsets <file.etsi>");
             System.exit(1);
         }
-        byte[] file = Files.readAllBytes(Path.of(args[0]));
-        BerReader reader = new BerReader(file).withContained(new ContainedOptions(null, false, ContainedText.HEX, null));
+        DecodeOptions opts = DecodeOptions.DEFAULT
+                .withContained(new ContainedOptions(null, false, ContainedText.HEX, null));
+        InputStream in = new BufferedInputStream(Files.newInputStream(Path.of(args[0])));
+        BerFrames frames = new BerFrames(in);
         int pduNum = 0;
         boolean ok = true;
-        while (!reader.atEnd()) {
-            long base = 8L * reader.source().position();
+        for (;;) {
+            Frame frame;
             PS_PDU pdu = new PS_PDU();
             Decoded d;
             try {
-                d = BerObject.decodeWithPositions(pdu, reader);
+                frame = frames.next();
+                if (frame == null) {
+                    break;
+                }
+                d = BerFrames.decodeWithPositions(pdu, frame, opts);
             } catch (DecodeException e) {
-                System.err.printf("BER decode failed at offset %d (PDU #%d): %s%n", base / 8, pduNum + 1, e.getMessage());
+                System.err.printf("BER decode failed (PDU #%d): %s%n", pduNum + 1, e.getMessage());
                 System.exit(1);
                 return;
             }
-            Positions p = d.positions().withBase(base);
+            Positions p = d.positions();
             ++pduNum;
             for (Extraction.Hit<IPCCContents> hit : Extract.all(pdu, d, IPCCContents.class)) {
                 Asn1OctetString packet = hit.value().iPPackets();
                 if (packet == null) {
                     continue;
                 }
-                int from = (int) (p.contentsBitOffset(packet) / 8);
-                int to = (int) (p.contentsEndBitOffset(packet) / 8);
-                byte[] atRange = Arrays.copyOfRange(file, from, to);
+                long from = p.contentsBitOffset(packet) / 8;
+                long to = p.contentsEndBitOffset(packet) / 8;
+                byte[] atRange = Arrays.copyOfRange(frame.bytes(),
+                        (int) (from - frame.offset()), (int) (to - frame.offset()));
                 boolean same = Arrays.equals(atRange, packet.get());
                 ok &= same;
                 System.out.printf("PS-PDU #%d  iPPackets  bytes %d..%d (%d octets)  %s%s%n",
