@@ -1353,6 +1353,72 @@ The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed
 record #N ...`) and exit 1; a panic, abort or signal is always a bug.
 
+### Reading Records from Files and Streams
+
+A BER file is often many records back to back with nothing between them,
+like an ETSI LI file of PS-PDUs. Such files can be far larger than memory.
+Every runtime has a *framer* for them: it reads one record at a time from a
+file, a stream or a buffer, so memory holds one record, never the whole file.
+The C++, Rust and Java framers follow one contract, and all three are
+tested against the same vectors (`tests/framing/`).
+
+Only BER and DER can be split this way: a BER record states its own length.
+PER, XER and JER records carry no length of their own, so a file of them
+needs a convention of its own (a length prefix, one JSON value per line)
+that is up to the application.
+
+**A frame** is one complete top-level TLV: its tag, length and contents, and
+for an indefinite-length record also the closing end-of-contents octets.
+The framer returns it as raw bytes, together with its offset in the input
+as a 64-bit number, ready to decode. The framer does not decode the record
+or interpret its tag: a record of the wrong type, or with broken contents,
+is still one frame, and its decode fails on its own. The next frame is then
+read as usual.
+
+- **Tag:** a tag number of at most 5 octets that fits in 31 bits (X.690 §8.1.2).
+- **Length:** the short form, or the long form with 1 to 8 length octets
+  (X.690 §8.1.3.4, §8.1.3.5; a non-minimal long form is accepted, as BER
+  allows). The indefinite form (`0x80`, X.690 §8.1.3.6) is accepted on a
+  constructed encoding. The framer finds its end by walking the nested
+  headers down to the matching end-of-contents octets. It copies definite
+  contents inside it without looking at them. At most 256 indefinite-length
+  levels are nested, the record itself included, the same limit the decoders
+  have.
+- **Size limit:** a record longer than the limit is refused before anything
+  is allocated, since a corrupt length field can claim gigabytes. The limit
+  is 64 MiB unless the caller sets another (`max_frame`). It counts the
+  whole frame, header included. An indefinite-length record is refused as
+  soon as the octets read so far exceed the limit. Java cannot go above
+  2 GiB (the size of an array).
+- **End of input:** at the start of a record, the end of the input is the
+  normal end, and the framer reports that there is no next frame. Inside a
+  record it is an error (`truncated`).
+- **Exact reads:** the framer never reads past the end of the record it
+  returns. The input is left exactly at the next record, so a caller can mix
+  the framer with reads of its own. The framer does no buffering of its own.
+  Wrap a file in a buffered stream: C++ `std::istream` and `FILE*` buffer
+  already; in Rust use `std::io::BufReader`, in Java `BufferedInputStream`.
+
+**Errors.** A malformed header stops the framer: there is no next frame
+after one, since the framer cannot know where the next record starts. It
+does not guess. A frame error is the runtime's ordinary decode error
+(C++ `DecodeError`, Rust `DecodeError`, Java `DecodeException`). Its message
+starts with one of these reason keys, and its offset is absolute in the
+input:
+
+| Message | Offset |
+|---|---|
+| `truncated: input ends inside a record` | the end of the input |
+| `tag-too-long: tag number longer than 5 octets or above 2^31-1` | the first tag octet |
+| `length-field-too-long: length field of N octets (at most 8)` | the first length octet |
+| `indefinite-primitive: indefinite length on a primitive encoding` | the length octet `0x80` |
+| `frame-too-large: record longer than M octets` | the first octet of the record |
+| `too-deep: more than 256 nested indefinite-length levels` | the tag of the level that is one too deep |
+
+A failure to read the input itself is not a frame error: C++ reports
+`read error: <reason>`, Rust returns the `std::io::Error`, Java throws the
+`IOException`.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for
