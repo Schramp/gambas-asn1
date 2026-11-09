@@ -175,6 +175,12 @@ Malformed input must give a decode error, never a crash, panic, uncaught excepti
 
 A fuzz smoke test is part of the validation ladder (§10).
 
+### Reading records from a stream
+
+A file of BER records back to back is read with the runtime's *framer*, not by each tool parsing headers itself. The framer returns one record at a time with its 64-bit offset, and memory holds only that record. It lives in the BER codec module, on top of the I/O base, and is runtime-only: generated code does not change.
+
+Every runtime implements the same contract: the limits, the end-of-input rules, the "never read past the record" rule and the reason keys of its errors (book.md, "Reading Records from Files and Streams"). Prove it with the shared vectors in `tests/framing/` (`framing.vectors`: expected frames and the error reason and offset per file). Run each vector through the stream reader, the in-memory reader, and an input that delivers one octet per read; all three must give the same result.
+
 ---
 
 ## 5. Language mapping decisions
