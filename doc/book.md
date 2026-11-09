@@ -1455,6 +1455,32 @@ a `std::span<const uint8_t>` and returns views into it, without copying.
 Its optional third argument is the span's offset in a larger input; it is
 added to every offset it reports.
 
+**Rust** (`asn1cpp_wire::ber::frames`). `ReadFrames` reads from any
+`std::io::Read`. `next_frame()` returns `Ok(Some(frame))`, `Ok(None)` at the
+end of the input, or a `FrameError`: `Io(std::io::Error)` when reading
+failed, `Decode(DecodeError)` for a malformed record. The frame borrows the
+reader's buffer until the next call; `into_owned()` turns the reader into an
+iterator of `OwnedFrame`s, at one allocation per record. `decode_frame`
+decodes a frame and makes the offset of a decode error absolute:
+
+```rust
+use asn1cpp_wire::ber::frames::{decode_frame, ReadFrames};
+
+let file = std::io::BufReader::new(std::fs::File::open("capture.etsi")?);
+let mut frames = ReadFrames::new(file);   // or ReadFrames::with_limits(file, FrameLimits { max_frame: 256 << 20 })
+while let Some(frame) = frames.next_frame()? {
+    match decode_frame::<PS_PDU>(&frame) {
+        Ok(pdu) => handle(pdu),
+        Err(e) => eprintln!("record at byte {}: {e}", frame.offset),   // the next record is read as usual
+    }
+}
+```
+
+`SliceFrames::new(&data)` frames a slice (or a memory-mapped file, e.g.
+through the `memmap2` crate) without copying. It is an iterator of
+`Result<Frame, DecodeError>` that ends after the first error; `with_base`
+sets the slice's offset in a larger input.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for
