@@ -120,21 +120,14 @@ struct ReadSource<'r, R: Read> {
 
 impl<R: Read> Source for ReadSource<'_, R> {
     fn fill(&mut self, n: usize) -> Result<bool, io::Error> {
-        while self.buf.len() < n {
-            let old = self.buf.len();
-            self.buf.resize(n, 0);
-            match self.inner.read(&mut self.buf[old..]) {
-                Ok(got) => {
-                    self.buf.truncate(old + got);
-                    if got == 0 {
-                        return Ok(false);
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => self.buf.truncate(old),
-                Err(e) => {
-                    self.buf.truncate(old);
-                    return Err(e);
-                }
+        if self.buf.len() < n {
+            // `take` stops the read at exactly n octets in all;
+            // `read_to_end` retries interrupted reads and needs no
+            // zero-filled buffer.
+            let want = (n - self.buf.len()) as u64;
+            let got = (&mut *self.inner).take(want).read_to_end(self.buf)?;
+            if (got as u64) < want {
+                return Ok(false);
             }
         }
         Ok(true)
@@ -638,6 +631,81 @@ mod tests {
         assert!(matches!(frames.next_frame(), Err(FrameError::Io(_))));
         let again = frames.next_frame();
         assert!(matches!(&again, Err(FrameError::Io(e)) if e.to_string() == "disk on fire"));
+    }
+
+    /// A stream longer than 4 GiB, generated on the fly (never on disk):
+    /// 4400 pairs of a 1 MiB OCTET STRING record and a 3-octet INTEGER
+    /// record, then a truncated record. The same stream as the C++
+    /// `test_ber_frames_large` and the Java `BerFramesTest`.
+    struct Generated {
+        pos: u64,
+    }
+
+    const BIG_HEADER: [u8; 5] = [0x04, 0x83, 0x10, 0x00, 0x00];
+    const SMALL: [u8; 3] = [0x02, 0x01, 0x05];
+    const TAIL: [u8; 3] = [0x04, 0x05, 0x00];
+    const BIG: u64 = 5 + (1 << 20);
+    const PAIR: u64 = BIG + 3;
+    const PAIRS: u64 = 4400;
+    const TOTAL: u64 = PAIRS * PAIR + 3;
+
+    impl Read for Generated {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let mut n = 0;
+            while n < buf.len() && self.pos < TOTAL {
+                let q = self.pos % PAIR;
+                if self.pos >= PAIRS * PAIR {
+                    buf[n] = TAIL[(self.pos - PAIRS * PAIR) as usize];
+                } else if q < 5 {
+                    buf[n] = BIG_HEADER[q as usize];
+                } else if q < BIG {
+                    let run = ((BIG - q) as usize).min(buf.len() - n);
+                    buf[n..n + run].fill(0);
+                    n += run;
+                    self.pos += run as u64;
+                    continue;
+                } else {
+                    buf[n] = SMALL[(q - BIG) as usize];
+                }
+                n += 1;
+                self.pos += 1;
+            }
+            Ok(n)
+        }
+    }
+
+    /// Peak resident memory of this process in MiB (Linux `VmHWM`).
+    fn peak_mib() -> Option<u64> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+        line.split_whitespace().nth(1)?.parse::<u64>().ok().map(|kb| kb / 1024)
+    }
+
+    #[test]
+    fn stream_longer_than_four_gib() {
+        let mut frames = ReadFrames::new(Generated { pos: 0 });
+        let mut count: u64 = 0;
+        let err = loop {
+            match frames.next_frame() {
+                Ok(Some(f)) => {
+                    let want = (count / 2) * PAIR + if count % 2 == 1 { BIG } else { 0 };
+                    let len = if count % 2 == 1 { 3 } else { BIG as usize };
+                    assert_eq!((f.offset, f.bytes.len()), (want, len), "frame {count}");
+                    count += 1;
+                }
+                Ok(None) => panic!("stream ended without the truncated tail"),
+                Err(FrameError::Decode(e)) => break e,
+                Err(FrameError::Io(e)) => panic!("{e}"),
+            }
+        };
+        assert_eq!(count, 2 * PAIRS);
+        assert!(err.message.starts_with("truncated:"), "{err}");
+        assert_eq!(err.pos as u64, TOTAL);
+        if let Some(mib) = peak_mib() {
+            // Other tests run in this process too; the framer itself holds
+            // one record (1 MiB).
+            assert!(mib < 512, "peak memory {mib} MiB");
+        }
     }
 
     /// `Ints ::= SEQUENCE OF INTEGER`, the shape RustBackend emits for a

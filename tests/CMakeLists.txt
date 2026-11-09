@@ -43,6 +43,9 @@ add_test(NAME ber_cursor COMMAND test_ber_cursor)
 add_executable(test_ber_frames ber/test_ber_frames.cpp)
 target_link_libraries(test_ber_frames PRIVATE asn1cpp_runtime)
 add_test(NAME ber_frames COMMAND test_ber_frames ${CMAKE_CURRENT_SOURCE_DIR}/framing)
+add_executable(test_ber_frames_large ber/test_ber_frames_large.cpp)
+target_link_libraries(test_ber_frames_large PRIVATE asn1cpp_runtime)
+add_test(NAME ber_frames_large COMMAND test_ber_frames_large)
 
 # ---- Asn1Optional<T> layout tests ------------------------------------------
 add_executable(test_asn1_optional ber/test_asn1_optional.cpp)
