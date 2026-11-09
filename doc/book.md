@@ -3173,7 +3173,8 @@ cmake --build build
 ctest --test-dir build/tests --output-on-failure
 ```
 
-The `smoke_matrix` test takes ~2 minutes. It is disabled by default
+The `smoke_matrix` test runs its 68 combinations in parallel, one per CPU (about 1.5
+minutes on 8 cores). It is disabled by default
 (`-DWITH_SMOKE_MATRIX=OFF`) so routine development cycles stay fast. CI enables it
 on every run, pull requests included.
 
