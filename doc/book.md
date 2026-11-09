@@ -1524,6 +1524,21 @@ try (InputStream in = new BufferedInputStream(Files.newInputStream(path))) {
 at the start of the next one. Its result is the record's octets, or `null`
 at the end of the stream.
 
+**Large files.** The framers only read forward and never seek, so the
+32-bit `long` of `fseek`/`ftell` (on Windows, for example) does not limit
+them. Frame offsets are 64-bit in every runtime (`BerFrame::offset`
+`std::uint64_t`, `Frame::offset` `u64`, `Frame.offset()` `long`).
+
+**Known limitations on 32-bit targets** (not supported, will not change):
+
+- The error offset is pointer-sized: the C++ `asn1::DecodeError::offset` is
+  a `std::size_t` and the Rust `DecodeError::pos` a `usize`. On a 32-bit
+  target, the offset of an error past 4 GiB wraps. Frame offsets stay
+  correct. Java is not affected.
+- On 32-bit Linux, `fopen` and `std::ifstream` open a file over 2 GiB only
+  when the program is built with `-D_FILE_OFFSET_BITS=64`; otherwise the
+  open fails with `EOVERFLOW`. That flag belongs to the program's own build.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for
