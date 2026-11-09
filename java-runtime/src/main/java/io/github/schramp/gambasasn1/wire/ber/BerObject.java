@@ -120,7 +120,7 @@ public final class BerObject {
             if (!o.richErrors()) {
                 throw e;
             }
-            throw e.within(typeName(m)).showing(r.source().octetsAt(e.position(), DecodeException.CONTEXT_OCTETS));
+            throw e.within(typeName(m)).showing(r.source().octetsAt((int) e.position(), DecodeException.CONTEXT_OCTETS));
         }
     }
 

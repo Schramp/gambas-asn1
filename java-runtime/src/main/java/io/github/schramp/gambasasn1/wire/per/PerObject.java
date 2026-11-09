@@ -152,7 +152,7 @@ public final class PerObject {
             if (!r.options().richErrors()) {
                 throw e;
             }
-            int at = Math.min(e.position(), data.length);
+            int at = (int) Math.min(e.position(), data.length);
             throw e.within(typeName(m)).showing(java.util.Arrays.copyOfRange(data, at,
                     Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
         }
