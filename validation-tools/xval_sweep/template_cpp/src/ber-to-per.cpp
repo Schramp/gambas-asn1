@@ -5,12 +5,15 @@
 // per-record boundary marker), so each output record is framed as a
 // 4-byte big-endian byte count followed by that many PER bytes — the
 // same framing per-to-ber (this directory) expects on its own input.
+// The BER input is read one record at a time through asn1::BerFrameReader.
 //
 // Usage: ber-to-per --type TYPE [FILE]
 //   --type TYPE     type name (required; --type list to show available)
 //   FILE            input file (default: stdin)
 
 #include "type_registry.hpp"
+
+#include <asn1cpp/codec/BerFrames.hpp>
 
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <cstdint>
@@ -19,10 +22,6 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
-
-static std::vector<uint8_t> slurp(std::istream& in) {
-    return {std::istreambuf_iterator<char>(in), {}};
-}
 
 static void write_u32be(std::ostream& out, uint32_t v) {
     char buf[4] = {char((v >> 24) & 0xFF), char((v >> 16) & 0xFF),
@@ -60,20 +59,25 @@ int main(int argc, char** argv) {
         fin.open(input_file, std::ios::binary);
         if (!fin) { std::cerr << "Cannot open: " << input_file << "\n"; return 1; }
     }
-    auto data = slurp(input_file.empty() ? std::cin : static_cast<std::istream&>(fin));
+    asn1::IstreamInput in{input_file.empty() ? std::cin : static_cast<std::istream&>(fin)};
+    asn1::BerFrameReader frames{in};
 
     int n = 0, errors = 0;
-    std::size_t offset = 0;
 
-    while (offset < data.size()) {
+    for (;;) {
+        auto frame = frames.next();
+        if (!frame) {
+            std::cerr << "BER framing failed record #" << n
+                      << " at offset " << frame.error().offset
+                      << ": " << frame.error().message << "\n";
+            ++errors;
+            break;
+        }
+        if (!*frame) break;
+        const std::uint64_t offset = (**frame).offset;
         auto obj = entry->make();
         asn1::Asn1Object* p = obj.get();
-
-        asn1::BerReader r{std::span<const uint8_t>(data.data() + offset,
-                                                    data.size() - offset)};
-        asn1::BerDecodeStream ds{r};
-        auto ok = asn1::BerCodec::instance().decode(ds, *entry->def, p);
-
+        auto ok = asn1::decode_frame(**frame, *entry->def, p);
         if (!ok) {
             std::cerr << "BER decode failed record #" << n
                       << " at offset " << offset
@@ -82,19 +86,12 @@ int main(int argc, char** argv) {
             break;
         }
 
-        std::size_t consumed = r.pos();
-        if (consumed == 0) {
-            std::cerr << "Zero bytes consumed at offset " << offset << "\n";
-            break;
-        }
-        offset += consumed;
-
         std::vector<uint8_t> per_buf;
         asn1::PerEncodeStream ps{per_buf};
         asn1::IEncodeStream& es = ps;
         asn1::PerCodec::instance().encode(es, *entry->def, p);
         if (ps.encode_failed()) {
-            std::cerr << "PER encode failed record #" << n << " at offset " << (offset - consumed) << "\n";
+            std::cerr << "PER encode failed record #" << n << " at offset " << offset << "\n";
             ++errors;
             continue;
         }

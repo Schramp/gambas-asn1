@@ -9,18 +9,11 @@
 // generated .rs source; see xval_sweep.py's own build_rust doc).
 //
 // Usage: ber-to-per --type __PDU_TYPE__ [FILE]
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
+
+use asn1cpp_wire::ber::frames::{decode_frame_into, Frame, ReadFrames};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
-
-fn slurp(mut r: impl Read) -> Vec<u8> {
-    let mut buf = Vec::new();
-    if let Err(e) = r.read_to_end(&mut buf) {
-        eprintln!("read failed: {e}");
-        std::process::exit(1);
-    }
-    buf
-}
 
 fn list_types() {
     for t in TYPES {
@@ -28,17 +21,16 @@ fn list_types() {
     }
 }
 
-// BER's TLV framing is self-delimiting (X.690 §8.1): decoding one record
-// from a shared reader leaves it positioned at the next record.
-// The outer Err is a decode failure (no resync possible); the inner one an
-// encode failure of a record that decoded fine, which the caller skips.
-fn encode_one(type_name: &str, data: &[u8]) -> Result<(Result<Vec<u8>, asn1cpp_wire::EncodeError>, usize), asn1cpp_wire::DecodeError> {
-    let mut r = asn1cpp_wire::Reader::new(data);
+// The input is read one record at a time through ReadFrames (X.690 §8.1:
+// BER's TLV framing is self-delimiting). The outer Err is a decode failure
+// of one record; the inner one an encode failure of a record that decoded
+// fine, which the caller skips.
+fn encode_one(type_name: &str, frame: &Frame<'_>) -> Result<Result<Vec<u8>, asn1cpp_wire::EncodeError>, asn1cpp_wire::DecodeError> {
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            asn1cpp_wire::ber::object::decode_pdu_into(&mut v, &mut r)?;
-            Ok((asn1cpp_wire::per::object::encode_pdu(&v), r.pos()))
+            decode_frame_into(&mut v, frame)?;
+            Ok(asn1cpp_wire::per::object::encode_pdu(&v))
         }
         _ => unreachable!("checked by caller"),
     }
@@ -73,37 +65,41 @@ fn main() {
         std::process::exit(1);
     }
 
-    let data = match &input_file {
-        Some(path) => slurp(std::fs::File::open(path).unwrap_or_else(|e| {
+    let input: Box<dyn Read> = match &input_file {
+        Some(path) => Box::new(std::fs::File::open(path).unwrap_or_else(|e| {
             eprintln!("Cannot open: {path}: {e}");
             std::process::exit(1);
         })),
-        None => slurp(std::io::stdin()),
+        None => Box::new(std::io::stdin()),
     };
+    let mut frames = ReadFrames::new(BufReader::new(input));
 
     let mut n = 0;
     let mut errors = 0;
-    let mut offset = 0usize;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    while offset < data.len() {
-        match encode_one(&type_name, &data[offset..]) {
-            Ok((encoded, consumed)) => {
-                if consumed == 0 {
-                    eprintln!("Zero bytes consumed at offset {offset}");
-                    break;
-                }
+    loop {
+        let frame = match frames.next_frame() {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                eprintln!("BER framing failed record #{n}: {e}");
+                errors += 1;
+                break;
+            }
+        };
+        let offset = frame.offset;
+        match encode_one(&type_name, &frame) {
+            Ok(encoded) => {
                 let per_bytes = match encoded {
                     Ok(b) => b,
                     Err(e) => {
                         eprintln!("PER encode failed record #{n} at offset {offset}: {}", e.message);
-                        offset += consumed;
                         errors += 1;
                         continue;
                     }
                 };
-                offset += consumed;
                 out.write_all(&(per_bytes.len() as u32).to_be_bytes()).unwrap();
                 out.write_all(&per_bytes).unwrap();
                 n += 1;
