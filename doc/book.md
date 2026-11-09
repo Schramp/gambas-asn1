@@ -1481,6 +1481,35 @@ through the `memmap2` crate) without copying. It is an iterator of
 `Result<Frame, DecodeError>` that ends after the first error; `with_base`
 sets the slice's offset in a larger input.
 
+**Java** (`io.github.schramp.gambasasn1.wire.ber.BerFrames`). `new
+BerFrames(InputStream)` frames a stream; `next()` returns a
+`Frame(long offset, byte[] bytes)`, or `null` at the end of the input. It
+throws `DecodeException` for a malformed record and `IOException` when
+reading fails. `BerFrames.decode` and `BerFrames.decodeWithPositions`
+decode a frame: the offset of a decode error, and the positions, count from
+the start of the input. `DecodeException.position()` is a `long`, since a
+stream can be longer than 2 GiB:
+
+```java
+try (InputStream in = new BufferedInputStream(Files.newInputStream(path))) {
+    BerFrames frames = new BerFrames(in);          // or new BerFrames(in, new FrameLimits(256 << 20))
+    for (Frame f; (f = frames.next()) != null; ) {
+        PS_PDU pdu = new PS_PDU();
+        try {
+            BerFrames.decode(pdu, f, opts);
+        } catch (DecodeException e) {
+            System.err.println("record at byte " + f.offset() + ": " + e.getMessage());
+            continue;                              // the next record is read as usual
+        }
+        handle(pdu);
+    }
+}
+```
+
+`BerFrames.readOne(InputStream)` reads a single record and leaves the stream
+at the start of the next one. Its result is the record's octets, or `null`
+at the end of the stream.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for

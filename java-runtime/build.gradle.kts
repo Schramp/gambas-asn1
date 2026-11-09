@@ -46,6 +46,8 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    // The BER framing vectors shared with the C++ and Rust runtimes.
+    systemProperty("framing.vectors", file("../tests/framing").absolutePath)
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
