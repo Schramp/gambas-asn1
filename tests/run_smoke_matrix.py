@@ -9,14 +9,19 @@ Usage:
     python3 run_smoke_matrix.py --compiler <path/to/asn1cpp> \\
                                 --runtime-inc <path/to/runtime/include>
 
+The combinations run in parallel, one per CPU; the report keeps the
+matrix order.
+
 Exit 0 if all combinations pass, 1 otherwise.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # 17 types mirroring the asn1c smoke test suite.
@@ -51,7 +56,7 @@ FLAG_SETS = [
 
 def run_cmd(args, **kwargs):
     return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          timeout=30, **kwargs)
+                          timeout=120, **kwargs)
 
 
 def type_label(t):
@@ -117,12 +122,15 @@ def main():
 
     tmpbase = Path(tempfile.mkdtemp(prefix="asn1cpp_smoke_"))
     try:
+        jobs = []
         for asn_type in TYPES:
             for flags, flag_label in FLAG_SETS:
-                label = f"{type_label(asn_type)} [{flag_label}]"
                 workdir = tmpbase / f"{type_label(asn_type)}_{flag_label}"
                 workdir.mkdir()
-                ok, msg = smoke_one(compiler, runtime_inc, asn_type, flags, workdir)
+                jobs.append((f"{type_label(asn_type)} [{flag_label}]", asn_type, flags, workdir))
+        with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
+            results = pool.map(lambda j: smoke_one(compiler, runtime_inc, j[1], j[2], j[3]), jobs)
+            for (label, _, _, _), (ok, msg) in zip(jobs, results):
                 if ok:
                     passes += 1
                     print(f"  PASS  {label}")
