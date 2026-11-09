@@ -1419,6 +1419,42 @@ A failure to read the input itself is not a frame error: C++ reports
 `read error: <reason>`, Rust returns the `std::io::Error`, Java throws the
 `IOException`.
 
+**C++** (`<asn1cpp/codec/BerFrames.hpp>`). `BerFrameReader` reads from an
+`IByteInput`: `IstreamInput` wraps a `std::istream` opened in binary mode,
+`FileInput` a `FILE*`. Implement `IByteInput` yourself for any other source.
+`next()` returns the frame, `std::nullopt` at the end of the input, or the
+error. The frame's bytes live in a buffer the reader reuses, so they are
+valid until the next call. `decode_frame` decodes one frame and makes the
+offset of a decode error absolute:
+
+```cpp
+#include <asn1cpp/codec/BerFrames.hpp>
+#include <fstream>
+
+std::ifstream f("capture.etsi", std::ios::binary);
+asn1::IstreamInput in{f};
+asn1::BerFrameReader frames{in};          // or BerFrameReader{in, {.max_frame = 256 << 20}}
+for (;;) {
+    auto frame = frames.next();
+    if (!frame) {                          // framing or read error: no next record
+        std::cerr << frame.error().message << " at byte " << frame.error().offset << "\n";
+        break;
+    }
+    if (!*frame) break;                    // end of input
+    PS_PDU pdu{};
+    if (auto ok = asn1::decode_frame(**frame, PS_PDU::asn_DEF, &pdu); !ok) {
+        std::cerr << "record at byte " << (*frame)->offset << ": " << ok.error().message << "\n";
+        continue;                          // the next record is read as usual
+    }
+    handle(pdu);
+}
+```
+
+For input already in memory, or a memory-mapped file, `BerSpanFrames` takes
+a `std::span<const uint8_t>` and returns views into it, without copying.
+Its optional third argument is the span's offset in a larger input; it is
+added to every offset it reports.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for

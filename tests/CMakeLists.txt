@@ -39,6 +39,11 @@ add_executable(test_ber_cursor ber/test_ber_cursor.cpp)
 target_link_libraries(test_ber_cursor PRIVATE asn1cpp_runtime)
 add_test(NAME ber_cursor COMMAND test_ber_cursor)
 
+# ---- BER record framing: shared vectors (tests/framing), book.md contract --
+add_executable(test_ber_frames ber/test_ber_frames.cpp)
+target_link_libraries(test_ber_frames PRIVATE asn1cpp_runtime)
+add_test(NAME ber_frames COMMAND test_ber_frames ${CMAKE_CURRENT_SOURCE_DIR}/framing)
+
 # ---- Asn1Optional<T> layout tests ------------------------------------------
 add_executable(test_asn1_optional ber/test_asn1_optional.cpp)
 target_link_libraries(test_asn1_optional PRIVATE asn1cpp_runtime)
