@@ -1094,6 +1094,11 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     target_link_libraries(test_validate PRIVATE asn1cpp_runtime)
     add_dependencies(test_validate gen_validate_test)
     add_test(NAME validate_hooks COMMAND test_validate)
+    # Generated constraint tables must be constant-initialized: no initializer
+    # may copy fields out of another descriptor (static initialization order).
+    add_test(NAME codegen_static_init
+        COMMAND ${CMAKE_COMMAND} -DGEN_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_static_init.cmake)
 
     add_executable(test_jer_validate
         jer/test_jer_validate.cpp
