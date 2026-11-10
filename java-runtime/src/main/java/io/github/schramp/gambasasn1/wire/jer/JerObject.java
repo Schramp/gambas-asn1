@@ -147,7 +147,7 @@ public final class JerObject {
             if (!o.richErrors() || !e.path().isEmpty()) {
                 throw e;
             }
-            int at = Math.min(Math.max(e.position(), 0), data.length);
+            int at = (int) Math.min(Math.max(e.position(), 0), data.length);
             throw e.within(v.ownElementXerName()).showing(java.util.Arrays.copyOfRange(data, at,
                     Math.min(data.length, at + DecodeException.CONTEXT_OCTETS)));
         }

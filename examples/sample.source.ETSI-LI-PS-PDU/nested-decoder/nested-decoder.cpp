@@ -4,7 +4,9 @@
  * C++ port of etsi-li-ps-pdu-nested.c using asn1cpp-generated types.
  *
  * Reads a stream of BER-encoded PS-PDU records from a file and prints each
- * as XER. The library is generated with container_fields.json, so the outer
+ * as XER. The file is read one record at a time (asn1::BerFrameReader), so
+ * memory holds one record, whatever the file size; a record that does not
+ * decode is reported and skipped. The library is generated with container_fields.json, so the outer
  * decode already decodes EncryptionContainer.encryptedPayload (encryptionType
  * `none`) as an EncryptedPayload with the zero_padding decoder.
  *
@@ -21,19 +23,16 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <vector>
-#include <span>
 
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/BerFrames.hpp>
 #include <asn1cpp/codec/ContainedDecoders.hpp>
 #include <asn1cpp/codec/XerCodec.hpp>
 
 #include "PS_PDU.hpp"
 #include "EncryptedPayload.hpp"
 
-using asn1::BerReader;
-using asn1::BerCodec;
-using asn1::BerDecodeStream;
+using asn1::BerFrameReader;
 using asn1::ContainedOptions;
 using asn1::ContainedStatus;
 using asn1::ContainedText;
@@ -103,34 +102,28 @@ int main(int argc, char* argv[])
 
     std::FILE* f = std::fopen(path, "rb");
     if (!f) { std::perror(path); return 1; }
+    asn1::FileInput in{f};
+    BerFrameReader frames{in};
 
-    std::fseek(f, 0, SEEK_END);
-    long fsize = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-
-    std::vector<uint8_t> buf(static_cast<std::size_t>(fsize));
-    if (static_cast<long>(std::fread(buf.data(), 1, buf.size(), f)) != fsize) {
-        std::perror("fread"); std::fclose(f); return 1;
-    }
-    std::fclose(f);
-
-    std::size_t offset = 0;
     int pdu_num = 0;
     int inner_decoded = 0;
+    int failed = 0;
 
-    while (offset < buf.size()) {
-        BerReader reader{std::span<const uint8_t>{buf.data() + offset, buf.size() - offset}};
-        PS_PDU pdu{};
-        {
-            BerDecodeStream s{reader};
-            auto ok = BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
-            if (!ok) {
-                std::fprintf(stderr, "Outer BER decode failed at offset %zu (PDU #%d): %s\n",
-                             offset, pdu_num + 1, ok.error().message.c_str());
-                break;
-            }
+    for (;;) {
+        auto frame = frames.next();
+        if (!frame) {
+            std::fprintf(stderr, "Cannot read record #%d at offset %zu: %s\n",
+                         pdu_num + failed + 1, frame.error().offset, frame.error().message.c_str());
+            break;
         }
-        offset += reader.pos();
+        if (!*frame) break;
+        PS_PDU pdu{};
+        if (auto ok = asn1::decode_frame(**frame, PS_PDU::asn_DEF, &pdu, &opts); !ok) {
+            std::fprintf(stderr, "Outer BER decode failed at offset %zu (record #%d): %s\n",
+                         ok.error().offset, pdu_num + failed + 1, ok.error().message.c_str());
+            ++failed;
+            continue;
+        }
         ++pdu_num;
         std::printf("=== PS-PDU #%d ===\n", pdu_num);
         xer_print(PS_PDU::asn_DEF, &pdu, opts);
@@ -154,6 +147,7 @@ int main(int argc, char* argv[])
             xer_print(EncryptedPayload::asn_DEF, ep.value(), opts);
     }
 
+    std::fclose(f);
     std::fprintf(stderr, "Decoded %d outer PS-PDUs, %d with inner EncryptedPayload\n",
                  pdu_num, inner_decoded);
     return 0;

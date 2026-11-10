@@ -604,7 +604,21 @@ encryption container's raw bytes, which IntegrityCheck hashes are computed over,
 decoded `EncryptedPayload`. The two TS 33.128 fields that carry a contents constraint
 (`threeGPP33128DefinedCC`/`IRI`) need no entry.
 
-The example's `nested-decoder` prints each PS-PDU as XER from that one decode.
+The example's `nested-decoder` prints each PS-PDU as XER from that one decode. It reads
+the file one record at a time through `asn1::BerFrameReader` (see "Reading Records from
+Files and Streams"), so a file of any size takes the memory of one record. A record that
+does not decode is reported on stderr and skipped, for example:
+
+```
+Outer BER decode failed at offset 0 (record #1): wrong tag for PS-PDU.pSHeader
+```
+
+A framing error ends the run, with the reason and the absolute offset:
+
+```
+Cannot read record #2 at offset 7: truncated: input ends inside a record
+```
+
 `--xer-form hex|inline|inline_raw` sets `ContainedOptions::xer` for the output:
 
 | `--xer-form` | Output |
@@ -1352,6 +1366,178 @@ tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed
 record #N ...`) and exit 1; a panic, abort or signal is always a bug.
+
+### Reading Records from Files and Streams
+
+A BER file is often many records back to back with nothing between them,
+like an ETSI LI file of PS-PDUs. Such files can be far larger than memory.
+Every runtime has a *framer* for them: it reads one record at a time from a
+file, a stream or a buffer, so memory holds one record, never the whole file.
+The C++, Rust and Java framers follow one contract, and all three are
+tested against the same vectors (`tests/framing/`).
+
+Only BER and DER can be split this way: a BER record states its own length.
+PER, XER and JER records carry no length of their own, so a file of them
+needs a convention of its own (a length prefix, one JSON value per line)
+that is up to the application.
+
+**A frame** is one complete top-level TLV: its tag, length and contents, and
+for an indefinite-length record also the closing end-of-contents octets.
+The framer returns it as raw bytes, together with its offset in the input
+as a 64-bit number, ready to decode. The framer does not decode the record
+or interpret its tag: a record of the wrong type, or with broken contents,
+is still one frame, and its decode fails on its own. The next frame is then
+read as usual.
+
+- **Tag:** a tag number of at most 5 octets that fits in 31 bits (X.690 §8.1.2).
+- **Length:** the short form, or the long form with 1 to 8 length octets
+  (X.690 §8.1.3.4, §8.1.3.5; a non-minimal long form is accepted, as BER
+  allows). The indefinite form (`0x80`, X.690 §8.1.3.6) is accepted on a
+  constructed encoding. The framer finds its end by walking the nested
+  headers down to the matching end-of-contents octets. It copies definite
+  contents inside it without looking at them. At most 256 indefinite-length
+  levels are nested, the record itself included, the same limit the decoders
+  have.
+- **Size limit:** a record longer than the limit is refused before anything
+  is allocated, since a corrupt length field can claim gigabytes. The limit
+  is 64 MiB unless the caller sets another (`max_frame`). It counts the
+  whole frame, header included. An indefinite-length record is refused as
+  soon as the octets read so far exceed the limit. Java cannot go above
+  2 GiB (the size of an array).
+- **End of input:** at the start of a record, the end of the input is the
+  normal end, and the framer reports that there is no next frame. Inside a
+  record it is an error (`truncated`).
+- **Exact reads:** the framer never reads past the end of the record it
+  returns. The input is left exactly at the next record, so a caller can mix
+  the framer with reads of its own. The framer does no buffering of its own.
+  Wrap a file in a buffered stream: C++ `std::istream` and `FILE*` buffer
+  already; in Rust use `std::io::BufReader`, in Java `BufferedInputStream`.
+
+**Errors.** A malformed header stops the framer: there is no next frame
+after one, since the framer cannot know where the next record starts. It
+does not guess. A frame error is the runtime's ordinary decode error
+(C++ `DecodeError`, Rust `DecodeError`, Java `DecodeException`). Its message
+starts with one of these reason keys, and its offset is absolute in the
+input:
+
+| Message | Offset |
+|---|---|
+| `truncated: input ends inside a record` | the end of the input |
+| `tag-too-long: tag number longer than 5 octets or above 2^31-1` | the first tag octet |
+| `length-field-too-long: length field of N octets (at most 8)` | the first length octet |
+| `indefinite-primitive: indefinite length on a primitive encoding` | the length octet `0x80` |
+| `frame-too-large: record longer than M octets` | the first octet of the record |
+| `too-deep: more than 256 nested indefinite-length levels` | the tag of the level that is one too deep |
+
+A failure to read the input itself is not a frame error: C++ reports
+`read error: <reason>`, Rust returns the `std::io::Error`, Java throws the
+`IOException`.
+
+**C++** (`<asn1cpp/codec/BerFrames.hpp>`). `BerFrameReader` reads from an
+`IByteInput`: `IstreamInput` wraps a `std::istream` opened in binary mode,
+`FileInput` a `FILE*`. Implement `IByteInput` yourself for any other source.
+`next()` returns the frame, `std::nullopt` at the end of the input, or the
+error. The frame's bytes live in a buffer the reader reuses, so they are
+valid until the next call. `decode_frame` decodes one frame and makes the
+offset of a decode error absolute:
+
+```cpp
+#include <asn1cpp/codec/BerFrames.hpp>
+#include <fstream>
+
+std::ifstream f("capture.etsi", std::ios::binary);
+asn1::IstreamInput in{f};
+asn1::BerFrameReader frames{in};          // or BerFrameReader{in, {.max_frame = 256 << 20}}
+for (;;) {
+    auto frame = frames.next();
+    if (!frame) {                          // framing or read error: no next record
+        std::cerr << frame.error().message << " at byte " << frame.error().offset << "\n";
+        break;
+    }
+    if (!*frame) break;                    // end of input
+    PS_PDU pdu{};
+    if (auto ok = asn1::decode_frame(**frame, PS_PDU::asn_DEF, &pdu); !ok) {
+        std::cerr << "record at byte " << (*frame)->offset << ": " << ok.error().message << "\n";
+        continue;                          // the next record is read as usual
+    }
+    handle(pdu);
+}
+```
+
+For input already in memory, or a memory-mapped file, `BerSpanFrames` takes
+a `std::span<const uint8_t>` and returns views into it, without copying.
+Its optional third argument is the span's offset in a larger input; it is
+added to every offset it reports.
+
+**Rust** (`asn1cpp_wire::ber::frames`). `ReadFrames` reads from any
+`std::io::Read`. `next_frame()` returns `Ok(Some(frame))`, `Ok(None)` at the
+end of the input, or a `FrameError`: `Io(std::io::Error)` when reading
+failed, `Decode(DecodeError)` for a malformed record. The frame borrows the
+reader's buffer until the next call; `into_owned()` turns the reader into an
+iterator of `OwnedFrame`s, at one allocation per record. `decode_frame`
+decodes a frame and makes the offset of a decode error absolute:
+
+```rust
+use asn1cpp_wire::ber::frames::{decode_frame, ReadFrames};
+
+let file = std::io::BufReader::new(std::fs::File::open("capture.etsi")?);
+let mut frames = ReadFrames::new(file);   // or ReadFrames::with_limits(file, FrameLimits { max_frame: 256 << 20 })
+while let Some(frame) = frames.next_frame()? {
+    match decode_frame::<PS_PDU>(&frame) {
+        Ok(pdu) => handle(pdu),
+        Err(e) => eprintln!("record at byte {}: {e}", frame.offset),   // the next record is read as usual
+    }
+}
+```
+
+`SliceFrames::new(&data)` frames a slice (or a memory-mapped file, e.g.
+through the `memmap2` crate) without copying. It is an iterator of
+`Result<Frame, DecodeError>` that ends after the first error; `with_base`
+sets the slice's offset in a larger input.
+
+**Java** (`io.github.schramp.gambasasn1.wire.ber.BerFrames`). `new
+BerFrames(InputStream)` frames a stream; `next()` returns a
+`Frame(long offset, byte[] bytes)`, or `null` at the end of the input. It
+throws `DecodeException` for a malformed record and `IOException` when
+reading fails. `BerFrames.decode` and `BerFrames.decodeWithPositions`
+decode a frame: the offset of a decode error, and the positions, count from
+the start of the input. `DecodeException.position()` is a `long`, since a
+stream can be longer than 2 GiB:
+
+```java
+try (InputStream in = new BufferedInputStream(Files.newInputStream(path))) {
+    BerFrames frames = new BerFrames(in);          // or new BerFrames(in, new FrameLimits(256 << 20))
+    for (Frame f; (f = frames.next()) != null; ) {
+        PS_PDU pdu = new PS_PDU();
+        try {
+            BerFrames.decode(pdu, f, opts);
+        } catch (DecodeException e) {
+            System.err.println("record at byte " + f.offset() + ": " + e.getMessage());
+            continue;                              // the next record is read as usual
+        }
+        handle(pdu);
+    }
+}
+```
+
+`BerFrames.readOne(InputStream)` reads a single record and leaves the stream
+at the start of the next one. Its result is the record's octets, or `null`
+at the end of the stream.
+
+**Large files.** The framers only read forward and never seek, so the
+32-bit `long` of `fseek`/`ftell` (on Windows, for example) does not limit
+them. Frame offsets are 64-bit in every runtime (`BerFrame::offset`
+`std::uint64_t`, `Frame::offset` `u64`, `Frame.offset()` `long`).
+
+**Known limitations on 32-bit targets** (not supported, will not change):
+
+- The error offset is pointer-sized: the C++ `asn1::DecodeError::offset` is
+  a `std::size_t` and the Rust `DecodeError::pos` a `usize`. On a 32-bit
+  target, the offset of an error past 4 GiB wraps. Frame offsets stay
+  correct. Java is not affected.
+- On 32-bit Linux, `fopen` and `std::ifstream` open a file over 2 GiB only
+  when the program is built with `-D_FILE_OFFSET_BITS=64`; otherwise the
+  open fails with `EOVERFLOW`. That flag belongs to the program's own build.
 
 ### Traversing a Decoded Object by Type
 
@@ -2434,8 +2620,10 @@ the `java-runtime` sources and the compiler in the tree:
   `Main.java` builds a `Contact`, BER-encodes it, decodes it back and prints
   it as XER, the same steps and output as `examples/contact-book/main.cpp`.
 - `examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/`: the ETSI LI
-  nested PS-PDU decoder. It generates the PS-PDU modules with
-  `container_fields.json`, so one `BerObject.decode` of a `PS_PDU` also
+  nested PS-PDU decoder. It reads the file one record at a time through
+  `BerFrames` and skips a record that does not decode, as the C++
+  `nested-decoder` does. It generates the PS-PDU modules with
+  `container_fields.json`, so one `BerFrames.decode` of a `PS_PDU` also
   decodes `EncryptionContainer.encryptedPayload` as an `EncryptedPayload`
   (`Containing<EncryptedPayload>`: `status()`, `error()`, `value()`,
   `bytes()`). `--xer-form hex|inline|inline_raw` sets the XER form of the
@@ -2516,9 +2704,12 @@ records nothing and costs one null check per node.
 
 Two worked examples. `CcOffsets.java` in
 `examples/sample.source.ETSI-LI-PS-PDU/java-nested-decoder/` (`make offsets
-IN=<file.etsi>`) prints the file byte range of every CC IP packet
+IN=<file.etsi>`) reads the file one record at a time (`BerFrames`) and
+prints the file byte range of every CC IP packet
 (`IPCCContents.iPPackets`, ETSI TS 102 232-3), also inside an
-`EncryptedPayload`, and checks the file bytes there are the decoded packet.
+`EncryptedPayload`, from `BerFrames.decodeWithPositions`, whose positions
+are already file offsets. It checks the record's bytes there are the
+decoded packet.
 The committed sample's field values are random, so its one packet prints as
 `not IPv4`; `CcOffsetsTest` checks ranges of real IPv4 packets.
 Under unaligned PER the offsets are exact bits: in an RRC

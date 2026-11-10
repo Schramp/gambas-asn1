@@ -20,15 +20,20 @@ public final class DecodeException extends Exception {
     public static final int CONTEXT_OCTETS = 8;
 
     private final String reason;
-    private final int position;
+    private final long position;
     private final String path;
     private final String context;
 
-    public DecodeException(String message, int position) {
+    /**
+     * @param message  what went wrong
+     * @param position byte offset in the input; a {@code long}, since a
+     *                 stream of records can be longer than 2 GiB
+     */
+    public DecodeException(String message, long position) {
         this(message, position, "", "");
     }
 
-    private DecodeException(String reason, int position, String path, String context) {
+    private DecodeException(String reason, long position, String path, String context) {
         super(reason + (path.isEmpty() ? "" : " in " + path) + " at byte " + position
                 + (context.isEmpty() ? "" : " (" + context + ")"));
         this.reason = reason;
@@ -41,7 +46,7 @@ public final class DecodeException extends Exception {
     }
 
     /** Byte offset in the input where decoding stopped. */
-    public int position() {
+    public long position() {
         return position;
     }
 
@@ -63,6 +68,21 @@ public final class DecodeException extends Exception {
     public DecodeException within(String segment) {
         DecodeException e = new DecodeException(reason, position, segment + path, context);
         e.initCause(getCause() != null ? getCause() : this);
+        return e;
+    }
+
+    /**
+     * This error with {@code base} added to its offset: for an input that
+     * starts {@code base} octets into a larger one, such as a record read
+     * from a stream ({@link io.github.schramp.gambasasn1.wire.ber.BerFrames}).
+     */
+    public DecodeException withBase(long base) {
+        if (base == 0) {
+            return this;
+        }
+        DecodeException e = new DecodeException(reason, position + base, path, context);
+        e.initCause(getCause() != null ? getCause() : this);
+        e.setStackTrace(getStackTrace());
         return e;
     }
 

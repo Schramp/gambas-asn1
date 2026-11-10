@@ -3,7 +3,9 @@
  * types (--target=java).
  *
  * Reads a stream of BER-encoded PS-PDU records from a file and prints each
- * as XER. The types are generated with container_fields.json, so the outer
+ * as XER. The file is read one record at a time (BerFrames), so memory holds
+ * one record, whatever the file size; a record that does not decode is
+ * reported and skipped. The types are generated with container_fields.json, so the outer
  * decode already decodes EncryptionContainer.encryptedPayload (encryptionType
  * `none`) as an EncryptedPayload with the zero_padding decoder.
  *
@@ -19,8 +21,9 @@
 import etsi.LI_PS_PDU.EncryptedPayload;
 import etsi.LI_PS_PDU.EncryptionContainer;
 import etsi.LI_PS_PDU.PS_PDU;
-import io.github.schramp.gambasasn1.wire.ber.BerObject;
-import io.github.schramp.gambasasn1.wire.ber.BerReader;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
+import io.github.schramp.gambasasn1.wire.ber.BerFrames;
+import io.github.schramp.gambasasn1.wire.ber.Frame;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
@@ -28,10 +31,12 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedStatus;
 import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.Containing;
 import io.github.schramp.gambasasn1.wire.xer.XerObject;
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -95,21 +100,33 @@ public final class NestedDecoder {
         }
 
         ContainedOptions opts = new ContainedOptions(null, false, form, null);
-        byte[] buf = Files.readAllBytes(Path.of(path));
+        DecodeOptions decodeOpts = DecodeOptions.DEFAULT.withContained(opts);
         PrintStream out = new PrintStream(new BufferedOutputStream(new FileOutputStream(FileDescriptor.out)), false);
-        BerReader reader = new BerReader(buf).withContained(opts);
+        InputStream in = new BufferedInputStream(Files.newInputStream(Path.of(path)));
+        BerFrames frames = new BerFrames(in);
 
         int pduNum = 0;
         int innerDecoded = 0;
-        while (!reader.atEnd()) {
-            int offset = reader.source().position();
+        int failed = 0;
+        for (;;) {
+            Frame frame;
+            try {
+                frame = frames.next();
+            } catch (DecodeException e) {
+                System.err.printf("Cannot read record #%d: %s%n", pduNum + failed + 1, e.getMessage());
+                break;
+            }
+            if (frame == null) {
+                break;
+            }
             PS_PDU pdu = new PS_PDU();
             try {
-                BerObject.decode(pdu, reader);
+                BerFrames.decode(pdu, frame, decodeOpts);
             } catch (DecodeException e) {
-                System.err.printf("Outer BER decode failed at offset %d (PDU #%d): %s%n",
-                        offset, pduNum + 1, e.getMessage());
-                break;
+                System.err.printf("Outer BER decode failed at offset %d (record #%d): %s%n",
+                        frame.offset(), pduNum + failed + 1, e.getMessage());
+                ++failed;
+                continue;
             }
             ++pduNum;
             out.printf("=== PS-PDU #%d ===%n", pduNum);

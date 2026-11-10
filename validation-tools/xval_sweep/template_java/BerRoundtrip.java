@@ -1,14 +1,18 @@
 package xvalharness;
 
+import io.github.schramp.gambasasn1.wire.ber.BerFrames;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
+import io.github.schramp.gambasasn1.wire.ber.Frame;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.jer.JerObject;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.xer.XerObject;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,20 +96,25 @@ public final class BerRoundtrip {
             System.exit(2);
         }
         Class<? extends Asn1Pdu> type = pduClass(args[0]);
-        BerReader r = new BerReader(Files.readAllBytes(Path.of(args[1])));
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int n = 0;
-        while (!r.atEnd()) {
-            Asn1Pdu v = type.getDeclaredConstructor().newInstance();
-            try {
-                BerObject.decode(v, r);
-            } catch (DecodeException | RuntimeException e) {
-                System.err.println("record " + n + " at offset " + r.position() + ": " + e);
-                Files.write(Path.of(args[2]), out.toByteArray());
-                System.exit(1);
+        try (InputStream in = new BufferedInputStream(Files.newInputStream(Path.of(args[1])))) {
+            BerFrames frames = new BerFrames(in);
+            for (int n = 0;; n++) {
+                Asn1Pdu v = type.getDeclaredConstructor().newInstance();
+                long offset = frames.offset();
+                try {
+                    Frame f = frames.next();
+                    if (f == null) {
+                        break;
+                    }
+                    BerFrames.decode(v, f, null);
+                } catch (DecodeException | RuntimeException e) {
+                    System.err.println("record " + n + " at offset " + offset + ": " + e);
+                    Files.write(Path.of(args[2]), out.toByteArray());
+                    System.exit(1);
+                }
+                out.writeBytes(BerObject.encode(v));
             }
-            out.writeBytes(BerObject.encode(v));
-            n++;
         }
         Files.write(Path.of(args[2]), out.toByteArray());
     }
@@ -151,30 +160,34 @@ public final class BerRoundtrip {
 
     private static int berToText(String codec, Function<Asn1Pdu, byte[]> encode, Class<? extends Asn1Pdu> type,
             Path in, Path out, boolean newline) throws Exception {
-        BerReader r = new BerReader(Files.readAllBytes(in));
         ByteArrayOutputStream text = new ByteArrayOutputStream();
-        int n = 0;
         int errors = 0;
-        while (!r.atEnd()) {
-            Asn1Pdu v = type.getDeclaredConstructor().newInstance();
-            int offset = r.position();
-            try {
-                BerObject.decode(v, r);
-            } catch (DecodeException | RuntimeException e) {
-                System.err.println("BER decode failed record #" + n + " at offset " + offset + ": " + e);
-                errors++;
-                break;
-            }
-            try {
-                text.writeBytes(encode.apply(v));
-                if (newline) {
-                    text.write('\n');
+        try (InputStream is = new BufferedInputStream(Files.newInputStream(in))) {
+            BerFrames frames = new BerFrames(is);
+            for (int n = 0;; n++) {
+                Asn1Pdu v = type.getDeclaredConstructor().newInstance();
+                long offset = frames.offset();
+                try {
+                    Frame f = frames.next();
+                    if (f == null) {
+                        break;
+                    }
+                    BerFrames.decode(v, f, null);
+                } catch (DecodeException | RuntimeException e) {
+                    System.err.println("BER decode failed record #" + n + " at offset " + offset + ": " + e);
+                    errors++;
+                    break;
                 }
-            } catch (RuntimeException e) {
-                System.err.println(codec + " encode failed record #" + n + " at offset " + offset + ": " + e);
-                errors++;
+                try {
+                    text.writeBytes(encode.apply(v));
+                    if (newline) {
+                        text.write('\n');
+                    }
+                } catch (RuntimeException e) {
+                    System.err.println(codec + " encode failed record #" + n + " at offset " + offset + ": " + e);
+                    errors++;
+                }
             }
-            n++;
         }
         Files.write(out, text.toByteArray());
         return errors > 0 ? 1 : 0;
