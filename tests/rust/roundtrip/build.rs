@@ -83,6 +83,10 @@ fn main() {
     let code_dst = PathBuf::from(&out_dir).join("code_generated.rs");
     copy_neutralizing_inner_doc_comment(&code_src, &code_dst);
 
+    let natural_src = PathBuf::from(&alphabet_gen_dir).join("Natural.rs");
+    let natural_dst = PathBuf::from(&out_dir).join("natural_generated.rs");
+    copy_neutralizing_inner_doc_comment(&natural_src, &natural_dst);
+
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_WIDE_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_CHOICE_GEN_DIR");
@@ -95,4 +99,5 @@ fn main() {
     println!("cargo:rerun-if-changed={}", gauge_src.display());
     println!("cargo:rerun-if-changed={}", blob_src.display());
     println!("cargo:rerun-if-changed={}", code_src.display());
+    println!("cargo:rerun-if-changed={}", natural_src.display());
 }

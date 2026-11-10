@@ -17,6 +17,12 @@ public final class Asn1VisibleString extends Asn1CharString {
         set(value);
     }
 
+    /** VisibleString (X.680 §41.4): the printing characters of ISO 646 IRV and space, 0x20..0x7E. */
+    @Override
+    public boolean inOwnAlphabet(int cp) {
+        return cp >= 0x20 && cp <= 0x7E;
+    }
+
     @Override
     public int universalTagNumber() {
         return UniversalTag.VISIBLE_STRING;

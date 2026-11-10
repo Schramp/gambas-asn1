@@ -2386,7 +2386,7 @@ add_custom_command(
 # reason as RUST_WIDE_TYPES_GEN_DIR above.
 set(RUST_ALPHABET_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_alphabet)
 add_custom_command(
-    OUTPUT  ${RUST_ALPHABET_GEN_DIR}/Code.rs
+    OUTPUT  ${RUST_ALPHABET_GEN_DIR}/Code.rs ${RUST_ALPHABET_GEN_DIR}/Natural.rs
     COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_ALPHABET_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> --target=rust
                                    ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_alphabet_test.asn1
@@ -2401,7 +2401,8 @@ add_custom_target(gen_rust_simple_seq ALL DEPENDS
     ${RUST_CHOICE_GEN_DIR}/Selector.rs
     ${RUST_RANGE_GEN_DIR}/Gauge.rs
     ${RUST_SIZE_GEN_DIR}/Blob.rs
-    ${RUST_ALPHABET_GEN_DIR}/Code.rs)
+    ${RUST_ALPHABET_GEN_DIR}/Code.rs
+    ${RUST_ALPHABET_GEN_DIR}/Natural.rs)
 
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_roundtrip_test

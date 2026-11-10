@@ -24,11 +24,14 @@ public final class ConstraintCheck {
      * Why {@code m}'s value breaks {@code c}, or null when it satisfies it.
      * A SEQUENCE OF is checked for its SIZE and each element against
      * {@code c.element()}; a SEQUENCE or CHOICE checks nothing here, its
-     * members being checked against their own rows.
+     * members being checked against their own rows. A character string is
+     * checked against its kind's own character set even without a
+     * constraint (X.680 §41).
      */
     public static String violation(MemberRef m, Constraints c) {
         if (c == null || c == Constraints.UNCONSTRAINED) {
-            return null;
+            return m instanceof MemberRef.Primitive(Asn1CharString s, var owner)
+                    ? chars(s, Constraints.UNCONSTRAINED) : null;
         }
         return switch (m) {
             case MemberRef.Primitive(var p, var owner) -> switch (p) {
@@ -184,18 +187,21 @@ public final class ConstraintCheck {
 
     /**
      * SIZE and FROM count characters (X.680 §51.5, §51.7), not contents
-     * octets. The alphabet table covers code points 0..255; a character
-     * above that is never in it.
+     * octets. The alphabet is the FROM table when there is one, otherwise
+     * the kind's own character set ({@link Asn1CharString#inOwnAlphabet}).
+     * The FROM table covers code points 0..255; a character above that is
+     * never in it. Mirrors the C++ {@code AsnString<N>::validate}.
      */
     private static String chars(Asn1CharString s, Constraints c) {
         int[] cps = s.codePoints();
         String v = size(s.xerElementName(), cps.length, c, false);
-        if (v != null || c.encodeTable() == null) {
+        if (v != null) {
             return v;
         }
         char[] table = c.encodeTable();
         for (int cp : cps) {
-            if (cp > 0xFF || table[cp] == 0xFFFF) {
+            boolean in = table != null ? cp <= 0xFF && table[cp] != 0xFFFF : s.inOwnAlphabet(cp);
+            if (!in) {
                 return s.xerElementName() + " character U+" + String.format("%04X", cp) + " outside its permitted alphabet";
             }
         }

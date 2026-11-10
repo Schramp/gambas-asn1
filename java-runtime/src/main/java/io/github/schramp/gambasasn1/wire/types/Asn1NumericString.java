@@ -17,6 +17,12 @@ public final class Asn1NumericString extends Asn1CharString {
         set(value);
     }
 
+    /** NumericString (X.680 §41.2): digits and space. */
+    @Override
+    public boolean inOwnAlphabet(int cp) {
+        return cp == ' ' || (cp >= '0' && cp <= '9');
+    }
+
     @Override
     public int universalTagNumber() {
         return UniversalTag.NUMERIC_STRING;

@@ -17,6 +17,12 @@ public final class Asn1Ia5String extends Asn1CharString {
         set(value);
     }
 
+    /** IA5String (X.680 §41.4): the 128 characters of ISO 646 IRV, 0x00..0x7F. */
+    @Override
+    public boolean inOwnAlphabet(int cp) {
+        return cp >= 0 && cp <= 0x7F;
+    }
+
     @Override
     public int universalTagNumber() {
         return UniversalTag.IA5_STRING;
