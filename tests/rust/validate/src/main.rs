@@ -4,7 +4,8 @@
 // SEQUENCE walker checks each member against them on encode and decode.
 // ENUMERATED values outside the root cannot be built in Rust (a generated
 // enum only has the declared variants), so the C++ out-of-map cases have no
-// counterpart here.
+// counterpart here. Elements of a SEQUENCE OF are checked against the
+// element type's constraints, as C++ checks them.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -220,6 +221,21 @@ fn main() {
     expect_delta("size 8 (boundary) → pass", midl(8), 0);
     expect_delta("size 9 (over)     → fail", midl(9), 1);
 
+    println!("SEQUENCE OF elements against the element type's constraints");
+    expect_delta("ShortList {10,200}: 200 outside 0..100 → fail", short(&[10, 200]), 1);
+    expect_delta("ShortList {200,300}: two elements      → 2 fails", short(&[200, 300]), 2);
+    expect_delta("ShortList {0,100}: boundaries          → pass", short(&[0, 100]), 0);
+    let midv = |v: &[i64]| HasMidList::HasMidList { v: MidList::MidList(v.iter().map(|&x| SignedSmall::SignedSmall(int(x))).collect()) };
+    expect_delta("MidList {1,99}: 99 outside -50..50     → fail", midv(&[1, 99]), 1);
+    expect_delta("MidList {-51,1,5}: size ok, -51 out    → fail", midv(&[-51, 1, 5]), 1);
+    expect_delta("MidList {99}: size and element         → 2 fails", midv(&[99]), 2);
+    let numlist = |v: &[&str]| HasNumList::HasNumList { v: asn1cpp_wire::ber::sequence::SeqOf(v.iter().map(|x| NumericString(x.to_string())).collect()) };
+    expect_delta("inline NumericString list, 'X'         → fail", numlist(&["12", "1X"]), 1);
+    expect_delta("inline NumericString list valid        → pass", numlist(&["12", " 3"]), 0);
+    let root = |v: &[i64]| ShortList::ShortList(v.iter().map(|&x| PercentInt::PercentInt(int(x))).collect());
+    expect_delta("root ShortList {10,200}                → fail", root(&[10, 200]), 1);
+    expect_delta("root ShortList {10,20}                 → pass", root(&[10, 20]), 0);
+
     println!("ByteCount (0..MAX)");
     let bc = |v| HasByteCount::HasByteCount { v: ByteCount::ByteCount(UInteger(v)) };
     expect_delta("exactly 0    → pass", bc(0), 0);
@@ -234,6 +250,11 @@ fn main() {
     expect_roundtrip("TinyBlob valid (size 3)   → 0", tiny(3), 0);
     expect_roundtrip("TinyBlob invalid (size 1) → 2", tiny(1), 2);
     expect_roundtrip("Code invalid ('X')        → 2", code("12X"), 2);
+    expect_roundtrip("ShortList {10,200}        → 2", short(&[10, 200]), 2);
+    expect_roundtrip("MidList {1,99}            → 2", midv(&[1, 99]), 2);
+    expect_roundtrip("root ShortList {10,200}   → 2", root(&[10, 200]), 2);
+    expect_roundtrip("ShortList {10,20} valid   → 0", short(&[10, 20]), 0);
+    expect_roundtrip("inline list 'X'           → 2", numlist(&["12", "1X"]), 2);
 
     let failures = unsafe { FAILURES };
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "OK" }, if failures == 1 { "" } else { "s" });

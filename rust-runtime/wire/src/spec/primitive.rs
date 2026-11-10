@@ -175,6 +175,42 @@ fn natural_tag_of(p: PrimitiveRef) -> Tag {
     }
 }
 
+/// Constraint check of one builtin leaf value against `c` (X.680 §51):
+/// the value range of an INTEGER or REAL, the SIZE of an OCTET STRING or
+/// BIT STRING, and the SIZE and permitted alphabet of a character string.
+/// The same checks a generated member validate row makes, reached through
+/// the value's kind instead; used for the elements of a SEQUENCE OF/SET OF
+/// (`validate::check_seq_of_elements`), which have no row of their own.
+/// Other kinds, and the time types, have nothing to check here.
+/// @param p  The value.
+/// @param c  The element's constraints.
+/// @return `0` when valid, else the delta of the failing check (see
+///         `constraints::validate_s64`, `validate_size`, `validate_char_string`).
+pub fn validate_primitive(p: PrimitiveRef, c: &crate::constraints::Constraints) -> i64 {
+    use crate::constraints as k;
+    let chars = |b: &[u8]| k::validate_char_string(natural_tag_of(p).number, b, c);
+    match p {
+        PrimitiveRef::Integer(x) => k::validate_s64(x.0, c),
+        PrimitiveRef::UInteger(x) => k::validate_u64(x.0, c),
+        PrimitiveRef::Real(x) => k::validate_real(x.value(), c),
+        PrimitiveRef::OctetString(x) => k::validate_size(x.0.len(), c),
+        PrimitiveRef::BitString(x) => k::validate_bit_string(x, c),
+        PrimitiveRef::Utf8String(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::NumericString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::PrintableString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::T61String(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::Ia5String(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::VisibleString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::GeneralString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::GraphicString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::VideotexString(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::ObjectDescriptor(x) => chars(x.0.as_bytes()),
+        PrimitiveRef::UniversalString(x) => chars(&x.0),
+        PrimitiveRef::BmpString(x) => chars(&x.0),
+        _ => 0,
+    }
+}
+
 /// `&PrimitiveRefMut` analogue of [`natural_tag_of`] — borrows rather
 /// than consumes, so a caller can look up the tag and still move the
 /// original `PrimitiveRefMut` into the decode call that needs it.

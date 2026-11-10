@@ -83,6 +83,34 @@ fn report(delta: i64, name: &str, phase: &str) {
     }
 }
 
+/// Checks each element of a SEQUENCE OF/SET OF against the element's
+/// constraints `c.element` (X.680 §51), counting each failing element once
+/// through [`check_delta`]; without an element table, the element kind's
+/// own rules still apply (a NumericString element is checked against its
+/// character set). A list element is checked for its own SIZE and then
+/// for its elements. A SEQUENCE, SET or CHOICE element checks its members
+/// itself when the walker encodes or decodes it, so a list of those is
+/// left after its first element. Called by the BER walker after a member
+/// or a root SEQUENCE OF is encoded or decoded, beside the list's own
+/// SIZE check. Mirrors the element loop of `SeqOfSpec::validate` (C++).
+/// @param s      The list.
+/// @param c      The list's constraints; `c.element` is the element's.
+/// @param phase  `"encode"` or `"decode"`, for the trace line.
+pub fn check_seq_of_elements(s: &dyn crate::spec::object::Asn1SeqOf, c: &crate::constraints::Constraints, phase: &str) {
+    use crate::spec::object::MemberRef;
+    let ec = c.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
+    for i in 0..s.len() {
+        match s.get(i) {
+            MemberRef::Primitive(p) => check_delta(crate::spec::primitive::validate_primitive(p, ec), s.own_xer_name(), phase),
+            MemberRef::SeqOf(inner) => {
+                check_delta(crate::constraints::validate_size(inner.len(), ec), inner.own_xer_name(), phase);
+                check_seq_of_elements(inner, ec, phase);
+            }
+            _ => return,
+        }
+    }
+}
+
 // X.680 §51 SIZE constraint checking lives in `constraints::validate_size`
 // — a static Constraints table per member, not a generated per-member
 // function (see `constraints`'s own module doc for why).

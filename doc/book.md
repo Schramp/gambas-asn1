@@ -1250,7 +1250,9 @@ checked against its type's own character set (X.680 §41), with or without other
 constraints: a NumericString "12X" or a PrintableString "a@" is a violation, as is an
 IA5String with a character above 0x7F. The C++, Rust and Java runtimes check the same sets.
 A member typed by a named type (`v Code` with `Code ::= NumericString (SIZE(3..6))`) is
-checked against that type's constraints, as an inline constraint would be. ENUMERATED
+checked against that type's constraints, as an inline constraint would be, and each element
+of a SEQUENCE OF/SET OF against its element type's constraints (`SEQUENCE (SIZE(1..3)) OF
+PercentInt` with an element 200 is one violation, besides any SIZE violation). ENUMERATED
 needs no check in Rust: a generated Rust enum only holds its declared values.
 Violations increment a counter and (optionally) record a path:
 
