@@ -69,8 +69,12 @@ struct IBerTypeHandler {
     ///        consumed (an IMPLICIT tag, X.690 §8.14.3). Default: re-tags
     ///        the contents and calls \c decode(). Override for zero-alloc
     ///        fast paths.
+    /// @param codec    The codec that dispatched here, for nested members.
     /// @param content  Reader over exactly the value's contents, opened with
     ///                 \c BerReader::sub so it carries the decode nesting depth.
+    /// @param def      Descriptor of the value's type.
+    /// @param dest     Pre-allocated, default-constructed target object.
+    /// @return \c DecodeResult — check with \c .has_value().
     virtual DecodeResult decode_value(const BerCodec& codec,
                                       BerReader& content,
                                       const TypeDescriptor& def,
@@ -141,6 +145,9 @@ public:
     ///        \c decode() does.
     /// @param content  Typically \c r.sub(tlv.value) after reading the
     ///                 member's IMPLICIT tag from \c r.
+    /// @param def      Descriptor of the value's type.
+    /// @param dest     Pre-allocated, default-constructed target object.
+    /// @return \c DecodeResult — check with \c .has_value().
     DecodeResult decode_value(BerReader& content,
                               const TypeDescriptor& def,
                               Asn1Object* dest) const;

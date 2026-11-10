@@ -166,6 +166,7 @@ public:
     }
     /// @brief Runtime access for codecs: raw bytes from the wire, before any
     ///        inner decode.
+    /// @param b    The OCTET STRING / BIT STRING contents as received.
     /// @param enc  Encoding rules of the decode the bytes came from.
     void set_raw_from_wire(std::span<const uint8_t> b, ContainedEncoding enc) {
         OctetString::set(b);
@@ -179,6 +180,7 @@ public:
     /// @brief Runtime access for codecs: raw bytes derived for an inner value
     ///        that was just decoded from its inline XER/JER form; keeps the
     ///        value and marks it Decoded.
+    /// @param b    The inner value's encoding.
     /// @param enc  Encoding rules the bytes were derived with.
     void set_raw_for_value(std::span<const uint8_t> b, ContainedEncoding enc) {
         OctetString::set(b);

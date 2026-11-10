@@ -2421,6 +2421,15 @@ Contributions are welcome. The project follows these conventions:
 - No generated codec logic. Tables only in generated files.
 - No comments that say what the code does. Comments explain *why* when the reason
   is non-obvious.
+- Doxygen blocks in `compiler/` and `runtime/` are checked: the `doxygen` target
+  (`cmake -DBUILD_DOCS=ON`, built by CI) fails on any warning, such as a
+  documented function with an undocumented parameter, an `@param` naming a
+  parameter that does not exist, or a `#include` / `A::b` in the text that
+  doxygen takes for a link (write `` `#include` `` or `\#include`).
+- CI and release jobs run on a named image (`ubuntu-24.04`), not
+  `ubuntu-latest`: the dynamically linked release compiler needs the glibc of
+  the image it was built on (README, "Using a release"), so a new image is a
+  deliberate change.
 
 ### Adding a Target Language
 

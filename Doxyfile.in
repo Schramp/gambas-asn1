@@ -30,8 +30,11 @@ DOT_PATH               = "@DOXYGEN_DOT_PATH@"
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO
 
-# Warnings — fail-fast on undocumented public symbols
+# Warnings
 WARN_IF_UNDOCUMENTED   = NO
 WARN_NO_PARAMDOC       = NO
 QUIET                  = YES
 WARNINGS               = YES
+# Any warning (an undocumented parameter of a documented function, a stale
+# @param, an unresolvable link) fails the doxygen target, so CI catches it.
+WARN_AS_ERROR          = FAIL_ON_WARNINGS

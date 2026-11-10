@@ -840,7 +840,7 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). Built
 ///        whole by Generator::emit_choice_definition's single canonical-
 ///        order pass (canonical_choice_members()) — emit_choice_declaration
-///        only emits #includes, consuming no part of this spec.
+///        only emits \#include lines, consuming no part of this spec.
 /// @note `tag_index_table`/`ber_tags` are raw resolved data (same
 ///       convention as every other spec) — Generator's existing
 ///       density-heuristic / tag-flattening decision logic (X.691 §22.6)
@@ -1065,7 +1065,7 @@ public:
     ///        `"&asn1::asn_DEF_Integer"` / `"&Foo::asn_DEF"` / `"&asn_DEF_Bar"`
     ///        in C++.
     /// @note Called unconditionally for every SEQUENCE/CHOICE member
-    ///       (populates SequenceMemberSpec::tdref/ChoiceAlternativeSpec::tdref),
+    ///       (populates `SequenceMemberSpec::tdref`/`ChoiceAlternativeSpec::tdref`),
     ///       even on backends that don't read that field yet (see
     ///       Backend::needs_seqof_wrapper_reference's note) — so, unlike most
     ///       format_*/emit_* defaults, this must return valid (possibly
@@ -1259,6 +1259,7 @@ public:
 
     /// @brief Emit the opening of a namespace/module wrapper (X: `-fprefix`)
     ///        into both the declaration and definition buffers.
+    /// @param name    Namespace/module name to open.
     /// @param session Per-type output session — writes into
     ///                `session.buffer(declaration_extension())` and, when
     ///                `definition_extension()` names a distinct buffer, into
@@ -1277,6 +1278,7 @@ public:
     }
 
     /// @brief Emit the closing of a namespace/module wrapper, mirroring emit_namespace_open.
+    /// @param name    Namespace/module name to close (the one opened).
     /// @param session Per-type output session — see emit_namespace_open's note.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
@@ -1334,7 +1336,7 @@ public:
     ///       referencing the same type) is harmless either way; deduping
     ///       them is a strict improvement (fewer, cleaner lines, same
     ///       semantics). RustBackend needs this unconditionally:
-    ///       `use crate::X::X;` has no #include-guard equivalent — a
+    ///       `use crate::X::X;` has no `#include`-guard equivalent — a
     ///       duplicate is a hard compile error (E0252).
     virtual bool dedupe_type_references() const { return true; }
 
@@ -1420,7 +1422,7 @@ public:
 
     /// @brief Emit a forward declaration for a type this file only needs as
     ///        an incomplete type (e.g. an optional member stored behind a
-    ///        pointer, to break a circular #include). Backends with no
+    ///        pointer, to break a circular \#include). Backends with no
     ///        forward-declaration concept — a type is visible regardless of
     ///        declaration order once imported — write nothing. Always the
     ///        declaration side (a forward declaration only ever appears in
@@ -1550,6 +1552,7 @@ protected:
     ///        which otherwise duplicate this exact dedup-when-merged logic.
     ///        Defined out-of-line below, after TypeOutputSession's full
     ///        definition (only forward-declared at this point in the file).
+    /// @param session Per-type output session holding both buffers.
     /// @param text Already-formatted output for this backend's syntax
     ///             (e.g. `"namespace X {\n\n"` for C++, `"pub mod X {\n\n"`
     ///             for Rust) — same string goes to both buffers.

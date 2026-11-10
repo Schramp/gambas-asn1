@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     outputs:
@@ -89,7 +89,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.reflex
-          key: reflex-6.1.0-ubuntu-latest
+          key: reflex-6.1.0-ubuntu-24.04
 
       - name: Build RE/flex
         if: steps.cache-reflex.outputs.cache-hit != 'true'
@@ -215,7 +215,7 @@ jobs:
   next-version:
     needs: prepare
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:

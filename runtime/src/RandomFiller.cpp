@@ -69,7 +69,10 @@ static std::pair<int,int> size_range(const Constraints& c,
 ///        side to miss.
 /// @param c    The type's Constraints.
 /// @param cap  Largest length to draw.
-/// @return The range, or false when the type has no SIZE to widen.
+/// @param lo   Receives the smallest length to draw.
+/// @param hi   Receives the largest length to draw.
+/// @return true with the range in \p lo / \p hi, or false when the type has
+///         no SIZE to widen.
 static bool loose_size_range(const Constraints& c, int64_t cap, int64_t& lo, int64_t& hi) {
     if (c.flags & Constraints::SIZE_CONSTRAINED) {
         int64_t span = c.size_upper - c.size_lower;

@@ -546,7 +546,7 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///           ENUMERATED — same precondition as CppBackend's equivalent).
 /// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
 /// @note Every restricted-character-string kind maps to its own
-///       `rust-runtime/wire::strings` newtype (`Ia5String`,
+///       newtype in the `strings` module of `rust-runtime/wire` (`Ia5String`,
 ///       `NumericString`, ...) — a plain `String` could carry only one
 ///       `TypeTag`/`AsMemberRef` impl, so string kinds can't share it
 ///       without fighting over which tag to check/write (see `strings.rs`'s
@@ -729,10 +729,10 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
 /// @param type_name   Storage type computed by Generator::native_member_type_for().
 /// @param parent_name Enclosing SEQUENCE/SET type identifier.
 /// @param member_name Member identifier (already backend-dispatched — snake_case).
-/// @param os          Output stream to write to.
+/// @param session     Per-type output session; writes into its definition buffer.
 /// @note `type_name` is only genuinely backend-dispatched for Kind::Int
 ///       (via native_int_type) and Kind::EnumRef (via type_name()) — both
-///       reused here directly. For Kind::Bool/Kind::String,
+///       reused here directly. For `Kind::Bool`/`Kind::String`,
 ///       Generator::native_member_type_for() hardcodes a C++ runtime wrapper type
 ///       ("asn1::Boolean"/"asn1::Ia5String" etc.), so those two cases ignore
 ///       it and use "bool"/"String" instead.
@@ -812,7 +812,7 @@ static std::string contained_spec_ident(const std::string& base) {
 ///        SEQUENCE/CHOICE member — INTEGER value range or SIZE-able-
 ///        primitive SIZE constraint.
 /// @param spec Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
-/// @param os   Output stream to write to.
+/// @param session  Per-type output session; writes into its definition buffer.
 /// @note FROM-alphabet-only members and members whose only constraint is a
 ///       non-default XER encoding produce no Rust output — same "no runtime
 ///       wiring yet" scope as emit_builtin_alias_definition. Builds its own
@@ -2352,7 +2352,7 @@ void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
 /// @brief Emit the file-level doc comment for a generated module's
 ///        declaration output.
 /// @param module_comment Pre-formatted "Module: X { oid }" text.
-/// @param os Output stream to write to.
+/// @param session Per-type output session; writes into its declaration buffer.
 /// @note Rust has no include-guard/`#include` concept to replicate here —
 ///       unlike CppBackend's emit_declaration_preamble, this is a doc comment and
 ///       nothing else. The two-call (hpp preamble / cpp preamble) split this
