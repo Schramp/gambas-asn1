@@ -72,8 +72,18 @@ repository, `~/.m2`): [**INSTALL.md**](INSTALL.md).
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.schramp.gambasasn1/gambasasn1-wire)](https://central.sonatype.com/artifact/io.github.schramp.gambasasn1/gambasasn1-wire)
 
 Each [release](https://github.com/Schramp/gambas-asn1/releases) has the
-compiler with the C++ and Rust runtimes for linux-x86_64 as a tarball. The
-Java runtime is on Maven Central as
+compiler with the C++ and Rust runtimes for linux-x86_64 as a tarball, twice:
+
+| Tarball | Compiler | Runs on |
+|---|---|---|
+| `asn1cpp-V-linux-x86_64.tar.gz` | dynamically linked | glibc ≥ 2.38 and libstdc++ of GCC ≥ 13: Ubuntu 24.04, Debian 13, Fedora 39, RHEL 10 and later |
+| `asn1cpp-V-linux-x86_64-static.tar.gz` | fully static | any x86_64 Linux (kernel ≥ 3.2), Alpine and older distros such as Ubuntu 22.04, Debian 12, RHEL 9 included, and WSL |
+
+The dynamic compiler stops on an older system with
+`` version `GLIBC_2.38' not found ``; take the static tarball there. Both
+generate the same files. The C++ runtime archive in both is built with GCC 13:
+on a system with an older compiler, build the C++ runtime from the source
+tarball (INSTALL.md). The Java runtime is on Maven Central as
 `io.github.schramp.gambasasn1:gambasasn1-wire`. The compiler and the runtime
 must be the same version; generated code does not compile against a runtime
 of another version.

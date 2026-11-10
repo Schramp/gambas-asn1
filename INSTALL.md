@@ -46,6 +46,12 @@ cmake --build build --parallel $(nproc)
 You can also run the compiler straight from the build tree
 (`build/compiler/asn1cpp`), without installing.
 
+`-DASN1CPP_STATIC_COMPILER=ON` links the compiler fully static (Linux only;
+macOS has no static libc), so it runs on systems with an older glibc than the
+build machine's. The release's `-static` tarball is built that way. The
+compiler always links RE/flex's `libreflex.a` when it is installed, never
+`libreflex.so`.
+
 ## 2. Install the compiler, the C++ runtime and the Rust runtime
 
 ```bash
