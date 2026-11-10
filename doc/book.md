@@ -1249,6 +1249,9 @@ Without a `FROM`, a NumericString, PrintableString, IA5String or VisibleString v
 checked against its type's own character set (X.680 §41), with or without other
 constraints: a NumericString "12X" or a PrintableString "a@" is a violation, as is an
 IA5String with a character above 0x7F. The C++, Rust and Java runtimes check the same sets.
+A member typed by a named type (`v Code` with `Code ::= NumericString (SIZE(3..6))`) is
+checked against that type's constraints, as an inline constraint would be. ENUMERATED
+needs no check in Rust: a generated Rust enum only holds its declared values.
 Violations increment a counter and (optionally) record a path:
 
 ```cpp

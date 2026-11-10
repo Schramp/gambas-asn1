@@ -197,3 +197,7 @@ tests/asn1/jer_escape_test.asn1   JeWide
 # type assignments of the same schema.
 tests/asn1/promoted_name_clash_test.asn1   Rec
 tests/asn1/promoted_name_clash_test.asn1   Pick
+# Members typed by named FROM-constrained string types (X.691 §30.5.4): the
+# named type's own alphabet sets the PER character width and index.
+tests/asn1/strings_test.asn1   HasHexStr
+tests/asn1/strings_test.asn1   HasOutOfOrder

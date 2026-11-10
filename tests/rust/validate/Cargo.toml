@@ -1,0 +1,14 @@
+[package]
+name = "validate-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the constraint validation test (validate_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_validate), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "validate"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -2678,6 +2678,29 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_CONSTRAINT_GEN_DIR}")
 endif()
 
+# Rust leg of the constraint validation test — see tests/rust/validate/src/main.rs
+# (C++ leg: test_validate).
+set(RUST_VALIDATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_validate)
+add_custom_command(
+    OUTPUT  ${RUST_VALIDATE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_VALIDATE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
+            -o ${RUST_VALIDATE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
+    COMMENT "Generating Rust from validate_test.asn1"
+)
+add_custom_target(gen_rust_validate ALL DEPENDS ${RUST_VALIDATE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_validate
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/validate/Cargo.toml)
+    set_tests_properties(rust_validate PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_VALIDATE_GEN_DIR}")
+endif()
+
 # Rust leg of the PER SIZE-violation test — see tests/rust/per_size_violation/src/main.rs
 # (C++ leg: test_per_size_violation).
 set(RUST_PER_SIZE_VIOL_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_size_violation)
