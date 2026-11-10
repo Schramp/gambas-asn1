@@ -52,6 +52,7 @@
 #include "HasPair.hpp"
 #include "HasCaps.hpp"
 #include "HasQuad.hpp"
+#include "HasNumList.hpp"
 
 using namespace asn1;
 static int failures = 0;
@@ -261,6 +262,14 @@ int main() {
     { HasMidList h{}; h.v = {1,2};               expect_delta("size 2 (boundary) → pass", h, HasMidList::asn_DEF, 0); }
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8};   expect_delta("size 8 (boundary) → pass", h, HasMidList::asn_DEF, 0); }
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8,9}; expect_delta("size 9 (over)     → fail", h, HasMidList::asn_DEF, 1); }
+
+    // Elements of a SEQUENCE OF against the element type's constraints
+    std::printf("SEQUENCE OF elements\n");
+    { HasShortList h{}; h.v = {10,200};  expect_delta("ShortList {10,200}  → fail", h, HasShortList::asn_DEF, 1); }
+    { HasShortList h{}; h.v = {200,300}; expect_delta("ShortList {200,300} → 2 fails", h, HasShortList::asn_DEF, 2); }
+    { HasMidList h{}; h.v = {99};        expect_delta("MidList {99}: size and element → 2 fails", h, HasMidList::asn_DEF, 2); }
+    { HasNumList h{}; h.v = {NumericString{"12"}, NumericString{"1X"}}; expect_delta("inline NumericString list, 'X' → fail", h, HasNumList::asn_DEF, 1); }
+    { HasNumList h{}; h.v = {NumericString{"12"}, NumericString{" 3"}}; expect_delta("inline NumericString list valid → pass", h, HasNumList::asn_DEF, 0); }
 
     // ByteCount (0..MAX) — uint64_t (UInteger), semi-constrained, lower=0
     std::printf("ByteCount (0..MAX) — uint64_t\n");

@@ -1064,6 +1064,7 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
         HasHex HasMid HasMidList HasName HasNeg
         HasPct HasPos HasShortList HasSigned HasTariff
         HasTiny HasToken HasVisi HasVowels HasWide HasYesNo
+        HasNumList HasNumListV
     )
     set(_validate_outputs)
     foreach(t IN LISTS VALIDATE_TYPES)

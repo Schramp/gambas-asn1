@@ -74,4 +74,7 @@ ValidateTest DEFINITIONS ::= BEGIN
   HasMidList   ::= SEQUENCE { v MidList      }
   HasByteCount ::= SEQUENCE { v ByteCount    }
 
+  -- Inline SEQUENCE OF: elements checked against the element type
+  HasNumList   ::= SEQUENCE { v SEQUENCE (SIZE(1..3)) OF NumericString }
+
 END

@@ -226,6 +226,9 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>, opts: Option<&Co
             if delta != 0 {
                 crate::validate::check_delta(delta, m.name, "encode");
             }
+            if let MemberRef::SeqOf(s) = obj.get_member(i) {
+                crate::validate::check_seq_of_elements(s, m.constraints, "encode");
+            }
         }
     }
     Ok(())
@@ -332,6 +335,9 @@ fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Decod
             let delta = obj.validate(i);
             if delta != 0 {
                 crate::validate::check_delta(delta, name, "decode");
+            }
+            if let MemberRef::SeqOf(s) = obj.get_member(i) {
+                crate::validate::check_seq_of_elements(s, obj.spec().members[i].constraints, "decode");
             }
         }
     }
@@ -512,15 +518,17 @@ pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, mut content: Reader) -> Res
 // Top-level (document root) entry points
 // ---------------------------------------------------------------------
 
-/// Top-level SIZE check on a named SEQUENCE OF/SET OF (X.680 §51.5);
-/// a SEQUENCE/SET/CHOICE root validates its own members inside the
-/// member loop instead.
+/// Top-level check of a named SEQUENCE OF/SET OF root: its SIZE (X.680
+/// §51.5) and its elements against the element's constraints; a
+/// SEQUENCE/SET/CHOICE root validates its own members inside the member
+/// loop instead.
 fn check_pdu_size<T: Asn1Pdu + ?Sized>(v: &T, phase: &str) {
     if let MemberRef::SeqOf(s) = v.as_member_ref() {
         let delta = crate::constraints::validate_size(s.len(), T::PDU_CONSTRAINTS);
         if delta != 0 {
             crate::validate::check_delta(delta, s.own_xer_name(), phase);
         }
+        crate::validate::check_seq_of_elements(s, T::PDU_CONSTRAINTS, phase);
     }
 }
 
