@@ -27,7 +27,7 @@ namespace asn1 { struct ContainedOptions; }
 namespace asn1 {
 
 // ---------------------------------------------------------------------------
-// Bit-level stream wrappers for PER (UPER / APER)
+// Bit-level stream wrappers for PER (UPER)
 
 /// @brief \c IEncodeStream adapter for PER — writes bit-by-bit into a \c std::vector<uint8_t>.
 ///
@@ -382,7 +382,8 @@ struct IPerTypeHandler {
 // ---------------------------------------------------------------------------
 // PerCodec — generic PER encode/decode driven by TypeDescriptor tables
 
-/// @brief PER codec singleton (UPER / APER — aligned flag in the descriptor).
+/// @brief PER codec singleton: the UNALIGNED variant (UPER, X.691 §10–§30).
+///        The ALIGNED variant (APER) is not implemented.
 ///
 /// The interface mirrors \c BerCodec and \c XerCodec; all encode/decode logic is
 /// table-driven.  The singleton is stateless and thread-safe.
