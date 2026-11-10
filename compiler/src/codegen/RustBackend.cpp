@@ -238,6 +238,51 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     }
 }
 
+/// @brief The Rust expressions a `Constraints` table uses for its
+///        PermittedAlphabet fields, after the statics they point at.
+struct AlphabetTables {
+    std::string encode_table = "None";  ///< `encode_table:` value.
+    std::string alphabet = "None";      ///< `alphabet:` value.
+    int bits = 0;                       ///< `alphabet_bits:` value.
+};
+
+/// @brief Emit the two lookup tables of a FROM (PermittedAlphabet)
+///        constraint as module statics: `{base}_ENC`, character to index
+///        in the alphabet or 0xFFFF when not permitted (encode, and the
+///        validate check of `constraints::validate_char_string`), and
+///        `{base}_ALPHA`, index to character (PER decode). Used for both a
+///        member's own table and a named type's `{Type}_CONSTRAINTS`.
+/// @param os        Output stream for the statics.
+/// @param base      SCREAMING_SNAKE_CASE prefix of the statics.
+/// @param alphabet  Sorted, deduplicated permitted characters
+///                  (`Generator::extract_from_alphabet`); empty = no FROM.
+/// @return The table expressions; all "None"/0 when `alphabet` is empty.
+/// @see X.680 §51.7 (PermittedAlphabet), X.691 §30.5.4 (PER character index).
+static AlphabetTables emit_alphabet_tables(std::ostream& os, const std::string& base,
+                                           const std::vector<uint8_t>& alphabet) {
+    AlphabetTables t;
+    if (alphabet.empty()) return t;
+    t.bits = Backend::alphabet_bits_for(static_cast<int>(alphabet.size()));
+    std::array<uint16_t, 256> table;
+    table.fill(0xFFFFu);
+    for (size_t i = 0; i < alphabet.size(); ++i) table[alphabet[i]] = static_cast<uint16_t>(i);
+    os << std::format("static {}_ENC: [u16; 256] = [\n", base);
+    for (int i = 0; i < 256; ++i) {
+        if (i % 16 == 0) os << "    ";
+        os << table[i];
+        os << (i < 255 ? "," : "");
+        os << (i % 16 == 15 ? "\n" : " ");
+    }
+    os << "];\n\n";
+    os << std::format("static {}_ALPHA: [u8; {}] = [", base, alphabet.size());
+    for (size_t i = 0; i < alphabet.size(); ++i)
+        os << std::format("{}{}", alphabet[i], i + 1 < alphabet.size() ? ", " : "");
+    os << "];\n\n";
+    t.encode_table = std::format("Some(&{}_ENC)", base);
+    t.alphabet = std::format("Some(&{}_ALPHA)", base);
+    return t;
+}
+
 /// @brief Whether a restricted character string kind has a fixed character
 ///        set of its own that bounds every value, with or without a FROM
 ///        constraint: NumericString, PrintableString, IA5String,
@@ -660,7 +705,7 @@ std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
 
 /// @brief Emit the definition half of a builtin-alias newtype (see
 ///        `emit_builtin_alias_declaration` for why it's a newtype): its
-///        SIZE `Constraints` table when sizeable, `TypeTag`, and the
+///        SIZE and FROM `Constraints` table when sizeable, `TypeTag`, and the
 ///        `AsMemberRef` impl that unwraps it to the wrapped primitive's
 ///        `PrimitiveRef` for every codec walker.
 /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
@@ -694,13 +739,18 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
             | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
                ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+        // The type's own FROM (X.680 §51.7), the same tables a member's
+        // inline FROM gets: a member typed by this type is checked and
+        // PER-encoded against them.
+        const AlphabetTables alpha = emit_alphabet_tables(os, to_screaming_snake_case(tname), spec.alphabet);
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
+            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: {}, alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None, real_lower: 0.0, real_upper: 0.0,\n"
             "}};\n\n",
-            cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
+            cname, flags, spec.size_range_bits, spec.size_lower, size_upper, alpha.encode_table, alpha.bits,
+            alpha.alphabet, spec.alphabet.size());
     } else if (spec.builtin_type == BT::Real) {
         // Always emitted so a member of this alias can reference it.
         emit_real_constraints(os, cname, spec.real_range);
@@ -958,35 +1008,8 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // `byte` isn't permitted. `constraints::validate_char_string`
     // (rust-runtime/wire/src/constraints.rs) is the only code, identical
     // for every alphabet-constrained member.
-    std::string encode_table_expr = "None";
-    std::string alphabet_expr = "None";
-    int alphabet_bits = 0;
-    if (!spec.alphabet.empty()) {
-        alphabet_bits = Backend::alphabet_bits_for(static_cast<int>(spec.alphabet.size()));
-        std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
-        std::array<uint16_t, 256> table;
-        table.fill(0xFFFFu);
-        for (size_t i = 0; i < spec.alphabet.size(); ++i) table[spec.alphabet[i]] = static_cast<uint16_t>(i);
-        os << std::format("static {}: [u16; 256] = [\n", enc_ident);
-        for (int i = 0; i < 256; ++i) {
-            if (i % 16 == 0) os << "    ";
-            os << table[i];
-            os << (i < 255 ? "," : "");
-            os << (i % 16 == 15 ? "\n" : " ");
-        }
-        os << "];\n\n";
-        encode_table_expr = std::format("Some(&{})", enc_ident);
-        // Decode-direction counterpart (X.691 §26.5.4/§26.5.7 decode:
-        // ordinal -> character) — `per::strings::decode_string`'s own
-        // table, `spec.alphabet` already sorted ascending by
-        // `extract_from_alphabet` (its own doc).
-        std::string alpha_ident = std::format("{}_ALPHA", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
-        os << std::format("static {}: [u8; {}] = [", alpha_ident, spec.alphabet.size());
-        for (size_t i = 0; i < spec.alphabet.size(); ++i)
-            os << std::format("{}{}", spec.alphabet[i], i + 1 < spec.alphabet.size() ? ", " : "");
-        os << "];\n\n";
-        alphabet_expr = std::format("Some(&{})", alpha_ident);
-    }
+    const AlphabetTables alpha = emit_alphabet_tables(
+        os, to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)), spec.alphabet);
     // One combined table serves both legs: BER's `constraints::
     // validate_size`/`validate_char_string` (rust-runtime/wire) read
     // flags/size_lower/size_upper/encode_table; PER's `strings::
@@ -1000,8 +1023,8 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: {}, "
         "alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None, real_lower: 0.0, real_upper: 0.0,\n"
         "}};\n\n",
-        cname, flags, spec.size_range_bits, spec.size_lower, size_upper, encode_table_expr,
-        alphabet_bits, alphabet_expr, spec.alphabet.size());
+        cname, flags, spec.size_range_bits, spec.size_lower, size_upper, alpha.encode_table,
+        alpha.bits, alpha.alphabet, spec.alphabet.size());
 }
 
 /// @brief Emit the definition half of a named SEQUENCE OF/SET OF type: its
@@ -1374,7 +1397,11 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
 /// @param os   Output stream to write to.
 /// @note Tables only — every codec reaches the type through its own
 ///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
-/// @see X.680 §25 (SEQUENCE), §27 (SET).
+///       A member's validate row checks its value against its own
+///       constraint table, or, for a member typed by a named INTEGER,
+///       string, OCTET STRING, BIT STRING, REAL or SEQUENCE OF type, that
+///       type's `{Type}_CONSTRAINTS`.
+/// @see X.680 §25 (SEQUENCE), §27 (SET), §51 (subtype constraints).
 void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
     os << std::format("impl {} {{\n", spec.type_name);
     os << "    pub fn new() -> Self {\n";
@@ -1639,6 +1666,32 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     validate_expr = std::format(
                         "Some(|v| asn1cpp_wire::constraints::validate_char_string({}.number, {}.as_ref(), {}))",
                         builtin_ber_tag(*m.mbuiltin, m.mtype), field_place(), constraints_ref);
+                } else if (!m.mbuiltin && m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias &&
+                           (m.ref_storage_kind == IntStorageKind::S64 || m.ref_storage_kind == IntStorageKind::U64)) {
+                    // A member typed by a named INTEGER type is checked
+                    // against that type's own range (X.680 §51.2), as C++
+                    // checks it through the referenced TypeDescriptor. The
+                    // named type is a newtype over Integer/UInteger.
+                    const char* fn = m.ref_storage_kind == IntStorageKind::S64 ? "validate_s64" : "validate_u64";
+                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::{}({}.0.0, {}))", fn, field_place(), constraints_ref);
+                } else if (!m.mbuiltin && m.ref_builtin_alias) {
+                    // Same for a named OCTET STRING/BIT STRING/REAL/character
+                    // string type, a newtype over the builtin (SIZE X.680
+                    // §51.5, PermittedAlphabet §51.7, REAL range §51.2).
+                    const auto bt = *m.ref_builtin_alias;
+                    if (bt == ast::BuiltinType::OctetString)
+                        validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.0.len(), {}))", field_place(), constraints_ref);
+                    else if (bt == ast::BuiltinType::BitString)
+                        validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_bit_string(&{}.0, {}))", field_place(), constraints_ref);
+                    else if (bt == ast::BuiltinType::Real)
+                        validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_real({}.0.value(), {}))", field_place(), constraints_ref);
+                    else if (is_sizeable_string_kind(bt))
+                        validate_expr = std::format(
+                            "Some(|v| asn1cpp_wire::constraints::validate_char_string({}.number, {}.0.as_ref(), {}))",
+                            builtin_ber_tag(bt, ""), field_place(), constraints_ref);
+                } else if (!m.mbuiltin && m.ref_is_seq_of) {
+                    // A named SEQUENCE OF/SET OF type: its SIZE (X.680 §51.5).
+                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.0.len(), {}))", field_place(), constraints_ref);
                 }
 
                 std::string set_default_expr = "None";
