@@ -1231,6 +1231,8 @@ public:
     ///        through `type_name()`) of ASN.1 module `module_name`, for a
     ///        backend that gives each module its own namespace; this name
     ///        is then used for the type throughout code generation.
+    /// @param module_name ASN.1 module the type is defined in.
+    /// @param type_name   The type's generated name, from `type_name()`.
     /// @return Empty when the backend puts every type of a run in one
     ///         namespace; Generator then prefixes the module's name only
     ///         to a type name that occurs in more than one module.
@@ -1242,6 +1244,8 @@ public:
 
     /// @brief Where a type's output files go below the output directory,
     ///        without extension, given its generated name.
+    /// @param type_name The type's generated name.
+    /// @return The path relative to the output directory, without extension.
     /// @note Default: the name itself, directly in the output directory.
     virtual std::string output_stem(const std::string& type_name) const {
         return type_name;

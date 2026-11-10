@@ -88,6 +88,8 @@ static std::string default_stdlib_dir() {
     return ASN1CPP_STDLIB_DIR;
 }
 
+/// @brief Print the full `--help` text (every option, with defaults) to stdout.
+/// @param prog The program name to show in the usage line (`argv[0]`).
 static void print_help(const char* prog) {
     std::cout <<
         "Usage: " << prog << " [options] file.asn1 [file2.asn1 ...]\n"
@@ -158,6 +160,8 @@ static void print_help(const char* prog) {
         "                              Default: " << default_stdlib_dir() << "\n";
 }
 
+/// @brief Print the short usage line to stderr, for a bad command line.
+/// @param prog The program name to show (`argv[0]`).
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
@@ -201,6 +205,13 @@ static void imply_extensibility(asn1::ast::TypeDef& t) {
     }
 }
 
+/// @brief Compiler driver: parse the options, read the ASN.1 modules (and the
+///        predefined-classes module), resolve them, and run the selected
+///        backend (`--target`) into the output directory.
+/// @param argc Argument count.
+/// @param argv Options and input files (see print_help()).
+/// @return 0 on success; non-zero for a bad command line, parse or semantic
+///         errors, or failed output.
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     std::string ns_prefix;

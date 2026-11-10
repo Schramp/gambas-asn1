@@ -14,6 +14,8 @@ namespace asn1::codegen {
 // Asn1Boolean in the same package cannot shadow it.
 /// @brief The simple name of a class given by its generated name, which
 ///        is fully qualified when types go in per-module packages (JLS §6.7).
+/// @param name A generated class name, simple or fully qualified.
+/// @return The part after the last `.`, or \p name when it has none.
 static std::string simple_name(const std::string& name) {
     auto dot = name.rfind('.');
     return dot == std::string::npos ? name : name.substr(dot + 1);
@@ -210,6 +212,7 @@ static std::string java_member_xer_instruction(const TaggedMemberSpec& m) {
 /// @brief The `toString()` override of a generated value class: the
 ///        runtime's `ValuePrinter` text, so a test failure shows the value
 ///        (display only, never parsed back).
+/// @return The method's Java source, indented for a class body.
 static std::string java_to_string_method() {
     return std::format("\n    @java.lang.Override\n"
                        "    public java.lang.String toString() {{\n"
@@ -1049,6 +1052,7 @@ void JavaBackend::emit_declaration_preamble(const std::string& module_comment, c
 /// @brief The package of an ASN.1 module's types: `package_` plus the
 ///        module name, transliterated like a type name and never recased.
 /// @param module_name The module's name (X.680 §12.5).
+/// @return The fully qualified package name.
 std::string JavaBackend::module_package(const std::string& module_name) const {
     std::string seg = java_escape(to_cpp_name(module_name));
     return package_.empty() ? seg : package_ + "." + seg;
@@ -1072,6 +1076,7 @@ std::string JavaBackend::module_scoped_type_name(const std::string& module_name,
 ///        directory (the directory of `package_`): one directory per
 ///        further package part, then the class's simple name (JLS §7.2).
 /// @param type_name The class's generated name.
+/// @return The path relative to the output directory, without `.java`.
 std::string JavaBackend::output_stem(const std::string& type_name) const {
     if (!by_module_) return type_name;
     std::string rel = type_name;
