@@ -4,15 +4,6 @@
 
 namespace asn1::codegen {
 
-/// @brief Returns the name of the global `asn_DEF_*` descriptor for a
-///        restricted built-in string type, or nullptr for types without a
-///        fixed alphabet (UTF8String, etc.). Pure text lookup — shared
-///        between CppBackend::make_string_constraints_init's helpers and
-///        Generator.cpp's emit_member_type_descriptor. Defined in
-///        CppBackend.cpp.
-/// @see X.680 §41 — restricted character string types and their canonical alphabets.
-const char* builtin_def_name(ast::BuiltinType bt);
-
 /// @brief Emit static FROM-alphabet lookup tables (decode + encode arrays)
 ///        into a generated `.cpp` file. Pure C++ text formatting — shared
 ///        between CppBackend::emit_builtin_alias_definition and Generator.cpp's

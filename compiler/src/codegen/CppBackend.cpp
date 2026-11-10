@@ -75,41 +75,46 @@ std::string xer_encoding_literal(ast::XerEncoding enc) {
     }
 }
 
-/// @brief Returns the name of the global `asn_DEF_*` descriptor for a
-///        restricted built-in string type, or nullptr for types without a
-///        fixed alphabet (UTF8String, etc.).
+/// @brief Name stem of the runtime's built-in alphabet tables for a
+///        restricted string type (`asn1::k_<stem>_alpha` / `k_<stem>_enc`
+///        in `<asn1cpp/codec/Alphabets.hpp>`), or nullptr for types without
+///        a fixed alphabet.
 /// @param bt  Built-in type tag.
-/// @return Pointer to a string literal such as `"asn_DEF_NumericString"`, or nullptr.
-/// @see X.680 §41 — restricted character string types and their canonical alphabets.
-const char* builtin_def_name(ast::BuiltinType bt) {
+/// @return `"numeric"`, `"printable"`, `"ia5"`, `"visible"`, or nullptr.
+/// @see X.680 §41 — restricted character string types and their alphabets.
+static const char* builtin_alphabet_stem(ast::BuiltinType bt) {
     using BT = ast::BuiltinType;
     switch (bt) {
-    case BT::NumericString:   return "asn_DEF_NumericString";
-    case BT::PrintableString: return "asn_DEF_PrintableString";
-    case BT::Ia5String:       return "asn_DEF_Ia5String";
-    case BT::VisibleString:   return "asn_DEF_VisibleString";
+    case BT::NumericString:   return "numeric";
+    case BT::PrintableString: return "printable";
+    case BT::Ia5String:       return "ia5";
+    case BT::VisibleString:   return "visible";
     default:                  return nullptr;
     }
 }
 
-/// @brief Generate the three alphabet constraint fields that reference a built-in descriptor.
+/// @brief Generate the alphabet constraint fields of a restricted string
+///        subtype without a FROM: the built-in type's own tables.
 ///
-/// Produces a comma-prefixed fragment suitable for insertion into a Constraints initializer:
-/// `.alphabet_bits`, `.alphabet`/`.alphabet_size` (decode table), and `.encode_table`.
-/// Returns an empty string for types without a fixed alphabet (UTF8String, etc.).
+/// Points straight at the runtime's `inline constexpr` tables rather than
+/// copying the fields of the built-in `asn_DEF_*`: an `extern const`
+/// object's members are no constant expression, so a copy would make the
+/// generated descriptor dynamically initialized, in an order across
+/// translation units that C++ leaves unspecified. `alphabet_bits` stays 0,
+/// as in the built-in descriptors: PER encodes these types with the
+/// type's own character width, not the table index.
 ///
-/// @param bt  Built-in type whose global `asn_DEF_*` descriptor carries the alphabet tables.
-/// @return Constraint fragment, e.g. `", .alphabet_bits=…, .alphabet=…, …"`, or `""`.
-/// @see X.691 §26.5 — known-multiplier character string PER canonical index.
+/// @param bt  Built-in type whose alphabet the subtype keeps.
+/// @return Constraint fragment, e.g. `", .alphabet=asn1::k_numeric_alpha, …"`, or `""`.
+/// @see X.680 §41; X.691 §30.5.
 static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
-    const char* def_name = builtin_def_name(bt);
-    if (!def_name) return "";
+    const char* stem = builtin_alphabet_stem(bt);
+    if (!stem) return "";
     return std::format(
-        ", .alphabet_bits=asn1::{0}.constraints.alphabet_bits"
-        ", .alphabet=asn1::{0}.constraints.alphabet"
-        ", .alphabet_size=asn1::{0}.constraints.alphabet_size"
-        ", .encode_table=asn1::{0}.constraints.encode_table",
-        def_name);
+        ", .alphabet=asn1::k_{0}_alpha"
+        ", .alphabet_size=sizeof(asn1::k_{0}_alpha)"
+        ", .encode_table=asn1::k_{0}_enc",
+        stem);
 }
 
 /// @brief Emit static FROM-alphabet lookup tables (decode + encode arrays)
@@ -150,8 +155,7 @@ void emit_from_alphabet_arrays(std::ostream& os, const std::string& prefix,
 /// @param alphabet      Sorted FROM-alphabet character values; empty = no FROM constraint.
 /// @param alpha_prefix  Name prefix of the static arrays emitted by emit_from_alphabet_arrays;
 ///                      empty when alphabet is empty.
-/// @param builtin_bt    Base string type whose global `asn_DEF_*` descriptor carries the
-///                      alphabet tables; used to inherit alphabet_bits/alphabet/encode_table
+/// @param builtin_bt    Base string type whose built-in alphabet tables the subtype keeps
 ///                      when there is a SIZE constraint but no FROM constraint. nullopt = skip.
 /// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
 /// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
@@ -164,8 +168,8 @@ std::string make_string_constraints_init(
     int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
     int alpha_bits  = alphabet.empty() ? 0
         : Backend::alphabet_bits_for(static_cast<int>(alphabet.size()));
-    // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
-    // to avoid emitting the designator twice (which is a C++ error even when values match).
+    // When builtin_bt is set, alphabet_bits keeps its default 0, as in the built-in
+    // descriptor (see builtin_alphabet_refs).
     std::string s;
     if (builtin_bt) {
         s = std::format(
@@ -184,7 +188,7 @@ std::string make_string_constraints_init(
             ", .alphabet={0}_alpha, .alphabet_size={1}u, .encode_table={0}_enc",
             alpha_prefix, alphabet.size());
     } else if (builtin_bt) {
-        // No FROM constraint but restricted type: inherit all alphabet fields from global descriptor.
+        // No FROM constraint but restricted type: the built-in type's own tables.
         s += builtin_alphabet_refs(*builtin_bt);
     }
     s += " }";
@@ -736,7 +740,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
         bool use_default = !spec.has_size_constraint && spec.alphabet.empty() && !spec.named_bits
-                          && (!bbt || !builtin_def_name(*bbt));
+                          && (!bbt || !builtin_alphabet_stem(*bbt));
         pc = use_default
             ? "{}"
             : make_string_constraints_init(all_flags, spec.size_range_bits, spec.size_lower,

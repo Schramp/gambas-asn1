@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Generate static built-in alphabet tables for BuiltinTypes.cpp.
+Generate the built-in alphabet tables of runtime/include/asn1cpp/codec/Alphabets.hpp.
 
 Each restricted ASN.1 string type needs two tables:
   k_<type>_alpha[N]   — decode: alpha[idx] → char value (sorted)
   k_<type>_enc[256]   — encode: enc[char] → idx | 0xFFFF
 
-Run this script when the alphabet definitions change, then paste the output
-into the table section of BuiltinTypes.cpp (between the TABLE-BEGIN / TABLE-END
-markers).
+They are inline constexpr, so a descriptor that points at them (the builtin
+asn_DEF_* in BuiltinTypes.cpp and every generated subtype) is constant-
+initialized. Run this script when the alphabet definitions change, then paste
+the output into Alphabets.hpp between the TABLE-BEGIN / TABLE-END markers.
 
 Usage: python3 gen_builtin_tables.py
 """
@@ -16,11 +17,11 @@ Usage: python3 gen_builtin_tables.py
 import textwrap
 
 TYPES = {
-    "num": {
+    "numeric": {
         "comment": "NumericString (X.680 §41.2): space + '0'..'9' — 11 chars, sorted ASCII.",
         "chars": list(" 0123456789"),
     },
-    "prt": {
+    "printable": {
         "comment": "PrintableString (X.680 Table 8): 74 chars, sorted ASCII.",
         "chars": list(" '()+,-./"
                       "0123456789"
@@ -32,7 +33,7 @@ TYPES = {
         "comment": "IA5String (X.680 §41.4): 0x00..0x7F — 128 chars, sorted ASCII.",
         "chars": [chr(c) for c in range(0x00, 0x80)],
     },
-    "vis": {
+    "visible": {
         "comment": "VisibleString (X.680 §41.6): printable ASCII 0x20..0x7E — 95 chars, sorted ASCII.",
         "chars": [chr(c) for c in range(0x20, 0x7F)],
     },
@@ -42,7 +43,7 @@ def fmt_alpha(name, comment, chars):
     vals = ", ".join(str(ord(c)) for c in sorted(chars))
     n = len(chars)
     lines = [f"// {comment}"]
-    lines.append(f"static const uint8_t k_{name}_alpha[{n}] = {{")
+    lines.append(f"inline constexpr uint8_t k_{name}_alpha[{n}] = {{")
     # wrap at ~100 chars
     lines.append("    " + vals)
     lines.append("};")
@@ -56,7 +57,7 @@ def fmt_enc(name, chars):
     for v in enc:
         vals.append("0xFFFFu" if v == 0xFFFF else str(v))
     # format as 16-per-line block
-    lines = [f"static const uint16_t k_{name}_enc[256] = {{"]
+    lines = [f"inline constexpr uint16_t k_{name}_enc[256] = {{"]
     for row in range(0, 256, 16):
         chunk = ", ".join(vals[row:row+16])
         lines.append(f"    {chunk},")
