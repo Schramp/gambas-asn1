@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.reflex
-          key: reflex-6.1.0-ubuntu-24.04
+          key: reflex-6.1.0-ubuntu-latest
 
       - name: Build RE/flex
         if: steps.cache-reflex.outputs.cache-hit != 'true'
@@ -131,7 +131,7 @@ jobs:
   # rebuild happens only when that branch moves. Every xval shard below
   # restores it for the sweep's asn1c leg.
   asn1c:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     outputs:
@@ -147,7 +147,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.asn1c
-          key: asn1c-${{ steps.rev.outputs.sha }}-ubuntu-24.04
+          key: asn1c-${{ steps.rev.outputs.sha }}-ubuntu-latest
 
       - name: Check out asn1c
         if: steps.cache-asn1c.outputs.cache-hit != 'true'
@@ -183,7 +183,7 @@ jobs:
   # informational Erlang/OTP asn1 leg.
   xval:
     needs: [build-and-test, asn1c]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -233,7 +233,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/.asn1c
-          key: asn1c-${{ needs.asn1c.outputs.sha }}-ubuntu-24.04
+          key: asn1c-${{ needs.asn1c.outputs.sha }}-ubuntu-latest
           fail-on-cache-miss: true
 
       - name: Cross-validate C++ vs Rust vs Java vs asn1c (xval_sweep shard ${{ matrix.shard }}/4)

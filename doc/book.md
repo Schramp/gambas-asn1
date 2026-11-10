@@ -2426,10 +2426,6 @@ Contributions are welcome. The project follows these conventions:
   documented function with an undocumented parameter, an `@param` naming a
   parameter that does not exist, or a `#include` / `A::b` in the text that
   doxygen takes for a link (write `` `#include` `` or `\#include`).
-- CI and release jobs run on a named image (`ubuntu-24.04`), not
-  `ubuntu-latest`: the dynamically linked release compiler needs the glibc of
-  the image it was built on (README, "Using a release"), so a new image is a
-  deliberate change.
 
 ### Adding a Target Language
 
