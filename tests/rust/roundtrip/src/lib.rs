@@ -39,8 +39,12 @@
 //! `code_generated.rs` (gambas-asn1#466) is `Code` from
 //! `tests/asn1/rust_alphabet_test.asn1` — a NumericString member with both
 //! an inline FROM (PermittedAlphabet) and SIZE constraint, exercising
-//! `constraints::validate_string`'s combined check (SIZE first, then
+//! `constraints::validate_char_string`'s combined check (SIZE first, then
 //! alphabet) through a real generated `encode_table`.
+//!
+//! `natural_generated.rs` is `Natural` from the same schema: members of
+//! NumericString/PrintableString/IA5String/VisibleString without a FROM,
+//! checked against their kind's own character set (X.680 §41).
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
@@ -48,10 +52,11 @@ include!(concat!(env!("OUT_DIR"), "/selector_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/gauge_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/blob_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/code_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/natural_generated.rs"));
 
 #[cfg(test)]
 mod tests {
-    use super::{Blob, Code, Gauge};
+    use super::{Blob, Code, Gauge, Natural};
     use super::Point;
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
@@ -478,6 +483,67 @@ mod tests {
         let c = Code { digits: asn1cpp_wire::strings::NumericString(String::new()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
         let _ = asn1cpp_wire::ber::object::encode_pdu(&c);
         assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
+    }
+
+    // Members without FROM are checked against their kind's own character
+    // set (X.680 §41), as the builtin types are in C++.
+
+    fn natural() -> Natural {
+        use asn1cpp_wire::strings::{Ia5String, NumericString, PrintableString, Utf8String, VisibleString};
+        Natural {
+            num: NumericString("0123 456789".to_string()),
+            print: PrintableString("Az09 '?".to_string()),
+            ia5: Some(Ia5String("\x00~\x7f".to_string())),
+            vis: VisibleString(" ~".to_string()),
+            utf8: Utf8String("\u{20ac}".to_string()),
+        }
+    }
+
+    /// Validate-counter delta of a BER encode of `n`, and of the decode of
+    /// those octets; the BER encoder writes the octets either way.
+    fn natural_encode_decode_failures(n: &Natural) -> (u64, u64) {
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let ber = asn1cpp_wire::ber::object::encode_pdu(n).unwrap();
+        let enc = asn1cpp_wire::validate::validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        assert_eq!(&asn1cpp_wire::ber::object::decode_pdu::<Natural>(&ber).unwrap(), n);
+        (enc, asn1cpp_wire::validate::validate_fail_count())
+    }
+
+    #[test]
+    fn natural_alphabet_values_inside_the_set_are_valid() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        assert_eq!(natural_encode_decode_failures(&natural()), (0, 0));
+    }
+
+    #[test]
+    fn natural_alphabet_character_outside_the_set_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        let cases: [(&str, fn(&mut Natural)); 7] = [
+            ("NumericString 'X'", |n| n.num.0 = "12X".to_string()),
+            ("NumericString '#'", |n| n.num.0 = "1#3".to_string()),
+            ("PrintableString '#'", |n| n.print.0 = "a#".to_string()),
+            ("PrintableString '@'", |n| n.print.0 = "a@".to_string()),
+            ("IA5String U+00E9", |n| n.ia5.as_mut().unwrap().0 = "\u{e9}".to_string()),
+            ("VisibleString 0x01", |n| n.vis.0 = "a\x01".to_string()),
+            ("VisibleString DEL", |n| n.vis.0 = "\x7f".to_string()),
+        ];
+        for (label, set) in cases {
+            let mut n = natural();
+            set(&mut n);
+            assert_eq!(natural_encode_decode_failures(&n), (1, 1), "{label}");
+        }
+    }
+
+    #[test]
+    fn natural_alphabet_size_is_checked_before_the_alphabet() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        let mut n = natural();
+        n.print.0 = "#########".to_string();
+        assert_eq!(natural_encode_decode_failures(&n), (1, 1));
+        n.ia5 = None;
+        n.print.0 = "ok".to_string();
+        assert_eq!(natural_encode_decode_failures(&n), (0, 0));
     }
 }
 

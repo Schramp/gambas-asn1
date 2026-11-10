@@ -17,6 +17,13 @@ public final class Asn1PrintableString extends Asn1CharString {
         set(value);
     }
 
+    /** PrintableString (X.680 §41.4, Table 8): letters, digits, space and {@code '()+,-./:=?}. */
+    @Override
+    public boolean inOwnAlphabet(int cp) {
+        return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= '0' && cp <= '9')
+                || " '()+,-./:=?".indexOf(cp) >= 0;
+    }
+
     @Override
     public int universalTagNumber() {
         return UniversalTag.PRINTABLE_STRING;

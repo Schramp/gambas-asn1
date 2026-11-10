@@ -1245,6 +1245,10 @@ rejects a 3-octet value). On a character string, `SIZE` and `FROM` count charact
 of UTF-8), `BMPString (SIZE(1..2))` accepts "AB" (4 bytes), and `BMPString (FROM("A".."Z"))`
 checks each 2-byte character. A `FROM` alphabet covers code points 0..255 only (see
 Known Limitations). The C++, Rust and Java runtimes and both PER size modes count the same way.
+Without a `FROM`, a NumericString, PrintableString, IA5String or VisibleString value is
+checked against its type's own character set (X.680 §41), with or without other
+constraints: a NumericString "12X" or a PrintableString "a@" is a violation, as is an
+IA5String with a character above 0x7F. The C++, Rust and Java runtimes check the same sets.
 Violations increment a counter and (optionally) record a path:
 
 ```cpp
@@ -2306,7 +2310,8 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 - Size constraints (OCTET STRING, BIT STRING, SEQUENCE OF, all string types; strings
   count characters, not bytes)
 - FROM alphabet constraints (IA5String, PrintableString, VisibleString,
-  NumericString, and custom alphabets)
+  NumericString, and custom alphabets); without a FROM, those four kinds are
+  checked against their own character set
 - Path tracking (`ValidationReport`) for locating violations in nested structures
 
 ---
@@ -2755,7 +2760,8 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   type's constraints is a `DecodeException` ("constraint violated: INTEGER
   300 outside 0..255"). The constraints checked are INTEGER and REAL value
   ranges, SIZE of strings, BIT STRINGs and SEQUENCE OFs, and a string's
-  permitted alphabet. The rules are the C++ runtime's `validate()`: a
+  permitted alphabet (without a `FROM`, the kind's own character set for
+  NumericString, PrintableString, IA5String and VisibleString). The rules are the C++ runtime's `validate()`: a
   constraint with an extension marker admits every value, and a string's SIZE
   and permitted alphabet count characters, not contents octets (a 4-character
   `UTF8String` "ÄÖÜß" fits `SIZE(1..4)`; see Constraint Validation). With checks off, the default, a decode takes

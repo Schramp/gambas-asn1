@@ -238,6 +238,20 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     }
 }
 
+/// @brief Whether a restricted character string kind has a fixed character
+///        set of its own that bounds every value, with or without a FROM
+///        constraint: NumericString, PrintableString, IA5String,
+///        VisibleString. The runtime's `validate_char_string` checks these
+///        against that set, so a member of such a kind gets a validate row
+///        even when it carries no constraint.
+/// @param bt  The member's builtin kind.
+/// @return true for the four kinds above.
+/// @see X.680 §41.2, §41.4 (Table 8).
+static bool has_natural_alphabet(ast::BuiltinType bt) {
+    using BT = ast::BuiltinType;
+    return bt == BT::NumericString || bt == BT::PrintableString || bt == BT::Ia5String || bt == BT::VisibleString;
+}
+
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -941,9 +955,9 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // (`Generator::extract_from_alphabet`); emitted as a plain 256-entry
     // lookup table (data, not code, same as the Constraints table above),
     // `encode_table[byte] = index in alphabet` or `0xFFFF` if
-    // `byte` isn't permitted. `constraints::validate_alphabet`/
-    // `validate_string` (rust-runtime/wire/src/constraints.rs) are the only
-    // code, identical for every alphabet-constrained member.
+    // `byte` isn't permitted. `constraints::validate_char_string`
+    // (rust-runtime/wire/src/constraints.rs) is the only code, identical
+    // for every alphabet-constrained member.
     std::string encode_table_expr = "None";
     std::string alphabet_expr = "None";
     int alphabet_bits = 0;
@@ -974,7 +988,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         alphabet_expr = std::format("Some(&{})", alpha_ident);
     }
     // One combined table serves both legs: BER's `constraints::
-    // validate_size`/`validate_alphabet` (rust-runtime/wire) read
+    // validate_size`/`validate_char_string` (rust-runtime/wire) read
     // flags/size_lower/size_upper/encode_table; PER's `strings::
     // encode_string`/`decode_string` (rust-runtime/wire/src/per)
     // additionally read size_range_bits and, for a FROM-constrained
@@ -1616,21 +1630,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.len(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::BitString) {
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_bit_string(&{}, {}))", field_place(), constraints_ref);
-                } else if (m.mbuiltin && own_table && is_sizeable_string_kind(*m.mbuiltin)) {
-                    // SIZE and FROM count characters (X.680 §51.5, §51.7); these kinds
-                    // store some characters in more than one byte.
-                    const char* multibyte_tag =
-                        *m.mbuiltin == ast::BuiltinType::BmpString       ? "BMP_STRING" :
-                        *m.mbuiltin == ast::BuiltinType::UniversalString ? "UNIVERSAL_STRING" :
-                        *m.mbuiltin == ast::BuiltinType::Utf8String      ? "UTF8_STRING" : nullptr;
-                    if (multibyte_tag) {
-                        validate_expr = std::format(
-                            "Some(|v| asn1cpp_wire::constraints::validate_multibyte_string(asn1cpp_wire::ber::tag::universal::{}, {}.as_ref(), {}))",
-                            multibyte_tag, field_place(), constraints_ref);
-                    } else {
-                        std::string str_ref = m.optional ? field_place() : std::format("&v.{}", m.mname);
-                        validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_string({}, {}))", str_ref, constraints_ref);
-                    }
+                } else if (m.mbuiltin && is_sizeable_string_kind(*m.mbuiltin) &&
+                           (own_table || has_natural_alphabet(*m.mbuiltin))) {
+                    // SIZE and the permitted alphabet count characters
+                    // (X.680 §51.5, §51.7); a kind with a fixed character
+                    // set is checked against it even without a constraint
+                    // of its own (validate_char_string).
+                    validate_expr = std::format(
+                        "Some(|v| asn1cpp_wire::constraints::validate_char_string({}.number, {}.as_ref(), {}))",
+                        builtin_ber_tag(*m.mbuiltin, m.mtype), field_place(), constraints_ref);
                 }
 
                 std::string set_default_expr = "None";

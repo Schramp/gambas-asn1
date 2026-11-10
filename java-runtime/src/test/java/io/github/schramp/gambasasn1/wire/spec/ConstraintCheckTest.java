@@ -6,14 +6,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.schramp.gambasasn1.wire.types.Asn1BmpString;
 import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
+import io.github.schramp.gambasasn1.wire.types.Asn1GraphicString;
+import io.github.schramp.gambasasn1.wire.types.Asn1Ia5String;
+import io.github.schramp.gambasasn1.wire.types.Asn1NumericString;
+import io.github.schramp.gambasasn1.wire.types.Asn1PrintableString;
 import io.github.schramp.gambasasn1.wire.types.Asn1UniversalString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Utf8String;
+import io.github.schramp.gambasasn1.wire.types.Asn1VisibleString;
 import org.junit.jupiter.api.Test;
 
 /**
  * SIZE and FROM on character strings count characters, not contents octets
  * (X.680 §51.5, §51.7), for the kinds stored in more than one octet per
- * character: UTF8String, BMPString, UniversalString (X.690 §8.23).
+ * character: UTF8String, BMPString, UniversalString (X.690 §8.23). Without
+ * a FROM, a kind with a fixed character set is checked against it (X.680
+ * §41), with or without other constraints.
  */
 class ConstraintCheckTest {
     private static Constraints sized(long lo, long hi) {
@@ -50,6 +57,25 @@ class ConstraintCheckTest {
     void universalSizeCountsCharacters() {
         assertNull(check(new Asn1UniversalString("AB"), sized(1, 2)));
         assertNotNull(check(new Asn1UniversalString("ABC"), sized(1, 2)));
+    }
+
+    @Test
+    void withoutFromTheKindsOwnCharacterSetApplies() {
+        for (Constraints c : new Constraints[] {null, Constraints.UNCONSTRAINED, sized(1, 20)}) {
+            assertNull(check(new Asn1NumericString("0123 456789"), c));
+            assertNotNull(check(new Asn1NumericString("12X"), c));
+            assertNotNull(check(new Asn1NumericString("1#3"), c));
+            assertNull(check(new Asn1PrintableString("Az09 '()+,-./:=?"), c));
+            assertNotNull(check(new Asn1PrintableString("a#"), c));
+            assertNotNull(check(new Asn1PrintableString("a@"), c));
+            assertNull(check(new Asn1Ia5String("\u0000a~\u007F"), c));
+            assertNotNull(check(new Asn1Ia5String("\u00E9"), c));
+            assertNull(check(new Asn1VisibleString(" ~"), c));
+            assertNotNull(check(new Asn1VisibleString("a\u0001"), c));
+            assertNotNull(check(new Asn1VisibleString("\u007F"), c));
+            assertNull(check(new Asn1Utf8String("\u20AC"), c));
+            assertNull(check(new Asn1GraphicString("\u0001\u00FF"), c));
+        }
     }
 
     @Test

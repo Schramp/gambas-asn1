@@ -250,47 +250,6 @@ pub fn validate_bit_string(v: &crate::bit_string::BitString, c: &Constraints) ->
     if sig > c.size_upper { c.size_upper - sig } else { 0 }
 }
 
-/// X.680 §51.4 PermittedAlphabet check. Mirrors the
-/// alphabet half of `AsnString<N>::validate`
-/// (`runtime/include/asn1cpp/types/Strings.hpp`) exactly: `0` when every
-/// byte of `s` is in the permitted alphabet (or `c.encode_table` is
-/// `None` — no FROM constraint at all); `1` — a sentinel, not a delta,
-/// same as `validate_enum`'s own "no nearest-bound metric" case — the
-/// moment any byte isn't. `EXTENSIBLE` is deliberately not consulted
-/// here: X.680 §51.8.3 extensibility on a SIZE or value-range constraint
-/// means "a future edition may widen the bound," but `FROM` has its own,
-/// separate extension marker (`ast::FromConstraint::inner::extensible`,
-/// `Generator::build_member_type_descriptor_spec`) that this crate
-/// doesn't enforce differently yet — same scope the alphabet arrays
-/// themselves don't distinguish (`Generator` builds one merged
-/// permitted-character set either way).
-pub fn validate_alphabet(s: &str, c: &Constraints) -> i64 {
-    if let Some(table) = c.encode_table {
-        for b in s.bytes() {
-            if table[b as usize] == 0xFFFF {
-                return 1;
-            }
-        }
-    }
-    0
-}
-
-/// Combined SIZE + FROM-alphabet check for a character-string member —
-/// the single `MemberDescriptor::validate` slot a member can only wire to
-/// one function, mirroring `AsnString<N>::validate`'s own combined body
-/// exactly (SIZE checked first; only reached at all if SIZE passed or
-/// wasn't constrained). OCTET STRING/BIT STRING never have alphabets
-/// (X.680 §51.4 only applies to character string types), so those keep
-/// calling `validate_size` directly — this wrapper is only for the 12
-/// character-string builtins.
-pub fn validate_string(s: &str, c: &Constraints) -> i64 {
-    let delta = validate_size(s.len(), c);
-    if delta != 0 {
-        return delta;
-    }
-    validate_alphabet(s, c)
-}
-
 /// Calls `f` with each character's code point of a stored string value, in
 /// order. Stored bytes are the type's own encoding: UTF-8 for UTF8String,
 /// UCS-2 big-endian for BMPString, UCS-4 big-endian for UniversalString,
@@ -335,24 +294,56 @@ pub fn string_char_count(tag_num: u32, bytes: &[u8]) -> usize {
     n
 }
 
-/// Combined SIZE + FROM check (X.680 §51.5, §51.7) of a character string
-/// whose storage is more than one byte per character for some characters
-/// (UTF8String, BMPString, UniversalString): both count code points, not
-/// bytes. The alphabet table covers code points 0..255; a character above
-/// that is never in it. Mirrors `AsnString<N>::validate`.
-pub fn validate_multibyte_string(tag_num: u32, bytes: &[u8], c: &Constraints) -> i64 {
+/// The type's own character set of a restricted character string kind with
+/// a fixed alphabet, the set a value of the type without a FROM constraint
+/// is drawn from: NumericString (X.680 §41.2), PrintableString (§41.4,
+/// Table 8), IA5String (§41.4, International Reference Version) and
+/// VisibleString (§41.4, the printing ASCII characters and space). Every
+/// other kind admits every code point here. Same sets as the builtin tables
+/// in `runtime/include/asn1cpp/codec/Alphabets.hpp`.
+pub fn in_natural_alphabet(tag_num: u32, cp: u32) -> bool {
+    use crate::ber::tag::universal::{IA5_STRING, NUMERIC_STRING, PRINTABLE_STRING, VISIBLE_STRING};
+    match tag_num {
+        NUMERIC_STRING => cp == 0x20 || (0x30..=0x39).contains(&cp),
+        PRINTABLE_STRING => {
+            cp == 0x20
+                || (0x27..=0x29).contains(&cp)
+                || (0x2B..=0x3A).contains(&cp)
+                || cp == 0x3D
+                || cp == 0x3F
+                || (0x41..=0x5A).contains(&cp)
+                || (0x61..=0x7A).contains(&cp)
+        }
+        IA5_STRING => cp <= 0x7F,
+        VISIBLE_STRING => (0x20..=0x7E).contains(&cp),
+        _ => true,
+    }
+}
+
+/// Constraint check of a character string value: SIZE first, then the
+/// permitted alphabet, both counting characters, not storage octets (X.680
+/// §51.5, §51.7). The alphabet is the FROM constraint's table when the
+/// type has one, otherwise the kind's own character set
+/// ([`in_natural_alphabet`]); a FROM table covers code points 0..255, and
+/// a character above that is never in it. Called from the generated
+/// per-member validate row of every character string member.
+/// Mirrors `AsnString<N>::validate` (`runtime/include/asn1cpp/types/Strings.hpp`).
+/// @param tag_num  universal tag number of the string kind (X.680 §8, Table 1).
+/// @param bytes    the stored value, in the kind's own form (see [`for_each_code_point`]).
+/// @param c        the member's constraints.
+/// @return `0` when valid; the SIZE delta (positive too short, negative too
+///         long); `1`, a sentinel, when a character is outside the alphabet.
+pub fn validate_char_string(tag_num: u32, bytes: &[u8], c: &Constraints) -> i64 {
     let delta = validate_size(string_char_count(tag_num, bytes), c);
     if delta != 0 {
         return delta;
     }
-    if let Some(table) = c.encode_table {
-        let mut bad = false;
-        for_each_code_point(tag_num, bytes, |cp| bad |= cp > 0xFF || table[cp as usize] == 0xFFFF);
-        if bad {
-            return 1;
-        }
+    let mut bad = false;
+    match c.encode_table {
+        Some(table) => for_each_code_point(tag_num, bytes, |cp| bad |= cp > 0xFF || table[cp as usize] == 0xFFFF),
+        None => for_each_code_point(tag_num, bytes, |cp| bad |= !in_natural_alphabet(tag_num, cp)),
     }
-    0
+    if bad { 1 } else { 0 }
 }
 
 #[cfg(test)]
@@ -467,6 +458,8 @@ mod tests {
         t
     }
 
+    use crate::ber::tag::universal::{GRAPHIC_STRING, IA5_STRING, NUMERIC_STRING, PRINTABLE_STRING, UTF8_STRING, VISIBLE_STRING};
+
     fn ca(table: &'static [u16; 256]) -> Constraints {
         Constraints { encode_table: Some(table), ..Default::default() }
     }
@@ -475,11 +468,11 @@ mod tests {
     fn multibyte_size_counts_characters() {
         use crate::ber::tag::universal::{BMP_STRING, UNIVERSAL_STRING, UTF8_STRING};
         let sized = |lo, hi| Constraints { flags: SIZE_CONSTRAINED, size_lower: lo, size_upper: hi, ..Default::default() };
-        assert_eq!(validate_multibyte_string(UTF8_STRING, "ÄÖÜß".as_bytes(), &sized(1, 4)), 0);
-        assert_eq!(validate_multibyte_string(UTF8_STRING, "€€€€€".as_bytes(), &sized(1, 4)), -1);
-        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0B", &sized(1, 2)), 0);
-        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0B\0C", &sized(1, 2)), -1);
-        assert_eq!(validate_multibyte_string(UNIVERSAL_STRING, b"\0\0\0A\0\0\0B", &sized(1, 2)), 0);
+        assert_eq!(validate_char_string(UTF8_STRING, "ÄÖÜß".as_bytes(), &sized(1, 4)), 0);
+        assert_eq!(validate_char_string(UTF8_STRING, "€€€€€".as_bytes(), &sized(1, 4)), -1);
+        assert_eq!(validate_char_string(BMP_STRING, b"\0A\0B", &sized(1, 2)), 0);
+        assert_eq!(validate_char_string(BMP_STRING, b"\0A\0B\0C", &sized(1, 2)), -1);
+        assert_eq!(validate_char_string(UNIVERSAL_STRING, b"\0\0\0A\0\0\0B", &sized(1, 2)), 0);
     }
 
     #[test]
@@ -495,9 +488,9 @@ mod tests {
             t
         };
         let c = ca(&TABLE);
-        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0A\0Z", &c), 0);
-        assert_eq!(validate_multibyte_string(BMP_STRING, b"\0a", &c), 1);
-        assert_eq!(validate_multibyte_string(BMP_STRING, b"\x01A", &c), 1);
+        assert_eq!(validate_char_string(BMP_STRING, b"\0A\0Z", &c), 0);
+        assert_eq!(validate_char_string(BMP_STRING, b"\0a", &c), 1);
+        assert_eq!(validate_char_string(BMP_STRING, b"\x01A", &c), 1);
     }
 
     #[test]
@@ -513,18 +506,34 @@ mod tests {
             }
             t
         };
-        assert_eq!(validate_alphabet("12345", &ca(&TABLE)), 0);
+        assert_eq!(validate_char_string(IA5_STRING, b"12345", &ca(&TABLE)), 0);
     }
 
     #[test]
     fn alphabet_disallowed_char_is_one() {
         let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
-        assert_eq!(validate_alphabet("12a45", &ca(table)), 1);
+        assert_eq!(validate_char_string(IA5_STRING, b"12a45", &ca(table)), 1);
     }
 
+    /// Without a FROM table the kind's own character set applies: the same
+    /// cases as the builtin-alphabet rows of `tests/seq/test_validate.cpp`.
     #[test]
-    fn alphabet_no_encode_table_is_always_zero() {
-        assert_eq!(validate_alphabet("anything at all!", &Constraints::default()), 0);
+    fn alphabet_without_from_is_the_kinds_own_set() {
+        let u = &UNCONSTRAINED;
+        assert_eq!(validate_char_string(NUMERIC_STRING, b"0123 456789", u), 0);
+        assert_eq!(validate_char_string(NUMERIC_STRING, b"12X", u), 1);
+        assert_eq!(validate_char_string(NUMERIC_STRING, b"1#3", u), 1);
+        assert_eq!(validate_char_string(PRINTABLE_STRING, b"Az09 '()+,-./:=?", u), 0);
+        for bad in [&b"a#"[..], b"a@", b"a*", b"a_", b"\xC3\xA9"] {
+            assert_eq!(validate_char_string(PRINTABLE_STRING, bad, u), 1, "{bad:?}");
+        }
+        assert_eq!(validate_char_string(IA5_STRING, b"\x00a~\x7F", u), 0);
+        assert_eq!(validate_char_string(IA5_STRING, b"\x80", u), 1);
+        assert_eq!(validate_char_string(VISIBLE_STRING, b" ~", u), 0);
+        assert_eq!(validate_char_string(VISIBLE_STRING, b"a\x01", u), 1);
+        assert_eq!(validate_char_string(VISIBLE_STRING, b"\x7F", u), 1);
+        assert_eq!(validate_char_string(UTF8_STRING, "\u{e9}\u{20ac}".as_bytes(), u), 0);
+        assert_eq!(validate_char_string(GRAPHIC_STRING, b"\x01\xFF", u), 0);
     }
 
     /// X.680 §22.7: a NamedBitList value fits SIZE(8) whenever its
@@ -570,19 +579,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_string_checks_size_before_alphabet() {
+    fn validate_char_string_checks_size_before_alphabet() {
         let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
         // Too short (SIZE(2..5)) AND contains a disallowed char — SIZE
         // wins, matching AsnString<N>::validate's own check order.
         let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_lower: 2, size_upper: 5, encode_table: Some(table), ..Default::default() };
-        assert_eq!(validate_string("a", &c), 1); // size_lower(2) - len(1) = 1
+        assert_eq!(validate_char_string(IA5_STRING, b"a", &c), 1); // size_lower(2) - len(1) = 1
     }
 
     #[test]
-    fn validate_string_checks_alphabet_when_size_passes() {
+    fn validate_char_string_checks_alphabet_when_size_passes() {
         let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
         let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_lower: 2, size_upper: 5, encode_table: Some(table), ..Default::default() };
-        assert_eq!(validate_string("1a3", &c), 1);
-        assert_eq!(validate_string("123", &c), 0);
+        assert_eq!(validate_char_string(IA5_STRING, b"1a3", &c), 1);
+        assert_eq!(validate_char_string(IA5_STRING, b"123", &c), 0);
     }
 }

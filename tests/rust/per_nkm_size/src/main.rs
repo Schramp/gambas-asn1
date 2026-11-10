@@ -7,7 +7,8 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_wire::constraints::validate_string;
+use asn1cpp_wire::ber::tag::universal::UTF8_STRING;
+use asn1cpp_wire::constraints::validate_char_string;
 use asn1cpp_wire::per::object::{decode_pdu, encode_pdu};
 use asn1cpp_wire::strings::{GeneralString, Ia5String, Utf8String};
 
@@ -67,9 +68,9 @@ fn main() {
         &mut failures,
     );
     check(
-        "validate_string still applies SIZE(0..32)",
-        validate_string(&big.s.0, &Rec::REC_S_CONSTRAINTS) != 0
-            && validate_string("ab", &Rec::REC_S_CONSTRAINTS) == 0,
+        "validate_char_string still applies SIZE(0..32)",
+        validate_char_string(UTF8_STRING, big.s.0.as_bytes(), &Rec::REC_S_CONSTRAINTS) != 0
+            && validate_char_string(UTF8_STRING, b"ab", &Rec::REC_S_CONSTRAINTS) == 0,
         &mut failures,
     );
 

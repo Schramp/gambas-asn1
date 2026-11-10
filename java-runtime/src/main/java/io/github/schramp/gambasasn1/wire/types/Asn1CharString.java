@@ -23,6 +23,16 @@ public abstract sealed class Asn1CharString implements Asn1Primitive
     /** The kind's universal tag number (X.680 §8, Table 1). */
     public abstract int universalTagNumber();
 
+    /**
+     * Whether code point {@code cp} is in the kind's own character set, the
+     * set its values are drawn from without a FROM constraint (X.680 §41).
+     * True for every code point unless the kind has a fixed set
+     * (NumericString, PrintableString, IA5String, VisibleString).
+     */
+    public boolean inOwnAlphabet(int cp) {
+        return true;
+    }
+
     /** How characters map to contents octets for this kind. */
     protected abstract Charset charset();
 
