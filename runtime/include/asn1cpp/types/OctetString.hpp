@@ -80,6 +80,8 @@ struct BerTraits<OctetString> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::OctetString, false); }
 
     /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param w  Writer the TLV is appended to.
+    /// @param v  Value to encode.
     /// @param t  Tag to write: the universal tag by default, or the tag of a
     ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
     /// @see X.690 §8.7.

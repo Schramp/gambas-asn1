@@ -167,6 +167,8 @@ struct BerTraits<Real> {
     ///        CER/DER form (detail::encode_real_exact), \c Double as the
     ///        base-2 binary form with an odd mantissa.
     /// @see X.690 §8.5, §11.3.
+    /// @param w  Writer the TLV is appended to.
+    /// @param v  Value to encode.
     /// @param t  Tag to write: the universal tag by default, or the tag of a
     ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
     static void encode(BerWriter& w, const Real& v, Tag t = tag()) {

@@ -105,6 +105,8 @@ public:
 
     /// @brief Decode \p bytes with the args' encoding into \c args.inner,
     ///        for use by decoders after they transformed the raw bytes.
+    /// @param args      The field's decode arguments: encoding, inner object, depth.
+    /// @param bytes     The transformed value octets.
     /// @param consumed  Receives the number of octets the value used; when
     ///                  null, the value must use all of \p bytes.
     static ContainedResult decode_value(const ContainedDecodeArgs& args,
@@ -139,7 +141,13 @@ struct ContainedOptions {
 
 /// @brief Decode the contained members of a decoded SEQUENCE/SET value
 ///        (all members are present, so `when` siblings can be read).
+/// @param def             Descriptor of the SEQUENCE/SET type.
+/// @param value           The decoded value whose contained fields are decoded.
 /// @param outer_encoding  Encoding rules of the outer decode (Ber or PerUnaligned).
+/// @param depth           Nesting depth of the outer decode, carried into the
+///                        contained decode.
+/// @param opts            Contained-value settings; null for the defaults.
+/// @param error           Receives the message of a failing field.
 /// @return false with \p error set only for a field with `on_error: fail`.
 /// @see X.682 §11.4
 bool decode_contained_members(const TypeDescriptor& def, Asn1Object* value,
