@@ -2942,8 +2942,12 @@ suffix included, stops it). It:
    `X.Y.Z` already), it first commits the change as `release: X.Y.Z`;
 3. creates the GitHub Release `vX.Y.Z` with
    `asn1cpp-X.Y.Z-linux-x86_64.tar.gz` (the `cmake --install` tree: compiler,
-   C++ runtime, Rust runtime crate) and the source tarball
-   `gambas-asn1-X.Y.Z.tar.gz`;
+   C++ runtime, Rust runtime crate), `asn1cpp-X.Y.Z-linux-x86_64-static.tar.gz`
+   (the same tree with a fully static compiler, `-DASN1CPP_STATIC_COMPILER=ON`)
+   and the source tarball `gambas-asn1-X.Y.Z.tar.gz`. Before that it checks
+   that the static compiler needs no shared library, and runs it on Ubuntu
+   20.04, Debian 11, Rocky Linux 8 and Alpine 3.20 (containers), where it must
+   generate the same files as the dynamic one;
 4. publishes the Java runtime through the `java-release` workflow: the
    runtime tests, a signed bundle, uploaded to the Central Portal as a
    user-managed deployment, which you publish from the Portal's Deployments

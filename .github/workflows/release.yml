@@ -7,7 +7,8 @@ name: release
 #      holds X.Y.Z already: step 5 of the previous release set it), tag
 #      vX.Y.Z, push both to main;
 #   3. create the GitHub Release vX.Y.Z with the installed compiler and
-#      runtimes for linux-x86_64 and the source tarball;
+#      runtimes for linux-x86_64 (twice: dynamic compiler, and a fully
+#      static one for older glibc and musl) and the source tarball;
 #   4. publish the Java runtime to Maven Central (java-release.yml);
 #   5. set X.Y.(Z+1), commit "version: X.Y.(Z+1) development", push to main.
 # A failed step 4 can be repeated by running java-release by hand.
@@ -157,8 +158,35 @@ jobs:
           cmake --build build-release --parallel $(nproc)
           cmake --install build-release --prefix "dist/asn1cpp-$VERSION"
           tar -C dist -czf "asn1cpp-$VERSION-linux-x86_64.tar.gz" "asn1cpp-$VERSION"
+          # The same tree with a fully static compiler, for systems with an
+          # older glibc than the runner's (or musl): only bin/asn1cpp differs.
+          cmake -B build-static -DCMAKE_BUILD_TYPE=Release -DASN1CPP_STATIC_COMPILER=ON
+          cmake --build build-static --target asn1cpp --parallel $(nproc)
+          mkdir -p dist-static
+          cp -a "dist/asn1cpp-$VERSION" "dist-static/asn1cpp-$VERSION"
+          install -m 755 build-static/compiler/asn1cpp "dist-static/asn1cpp-$VERSION/bin/asn1cpp"
+          if readelf -d "dist-static/asn1cpp-$VERSION/bin/asn1cpp" | grep NEEDED; then
+            echo "the static compiler needs the shared libraries above"; exit 1
+          fi
+          tar -C dist-static -czf "asn1cpp-$VERSION-linux-x86_64-static.tar.gz" "asn1cpp-$VERSION"
           git archive --prefix="gambas-asn1-$VERSION/" -o "gambas-asn1-$VERSION.tar.gz" "v$VERSION"
           ls -l ./*.tar.gz
+
+      # The static compiler must start, and generate the same files as the
+      # dynamic one, on systems whose glibc is older than 2.38 and on musl.
+      - name: Static compiler on older systems
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          schema=tests/asn1/xer_layout_test.asn1
+          "dist/asn1cpp-$VERSION/bin/asn1cpp" --target=cpp "$schema" -o portability/reference
+          for image in ubuntu:20.04 debian:11 rockylinux:8 alpine:3.20; do
+            out="portability/${image//[:.]/-}"
+            docker run --rm -v "$PWD:/w" -w /w "$image" \
+                "dist-static/asn1cpp-$VERSION/bin/asn1cpp" --target=cpp "$schema" -o "$out"
+            diff -r portability/reference "$out"
+            echo "$image: same output"
+          done
 
       - name: Push
         if: ${{ !inputs.dry_run }}
@@ -173,7 +201,8 @@ jobs:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           gh release create "v$VERSION" --verify-tag --title "gambas-asn1 $VERSION" --generate-notes \
-              "asn1cpp-$VERSION-linux-x86_64.tar.gz" "gambas-asn1-$VERSION.tar.gz"
+              "asn1cpp-$VERSION-linux-x86_64.tar.gz" "asn1cpp-$VERSION-linux-x86_64-static.tar.gz" \
+              "gambas-asn1-$VERSION.tar.gz"
 
   publish-java:
     needs: prepare

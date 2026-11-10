@@ -52,11 +52,24 @@ target_include_directories(asn1cpp PRIVATE
 target_include_directories(asn1cpp PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/include)  # Tag.hpp, TypeDescriptor.hpp, Constraints.hpp
 
-# RE/flex runtime library (installed under /usr/local)
-find_library(REFLEX_LIB reflex
-    HINTS /usr/local/lib /home/ruud/RE-flex/lib
+# RE/flex runtime library (installed under /usr/local). The static archive
+# comes first, so the compiler never depends on a libreflex.so at run time.
+find_library(REFLEX_LIB NAMES libreflex.a reflex
+    HINTS /usr/local/lib
     REQUIRED)
 target_link_libraries(asn1cpp PRIVATE ${REFLEX_LIB})
+
+# A fully static compiler (libc and libstdc++ included) runs on any x86_64
+# Linux, whatever its glibc: the release ships one. The compiler only reads
+# and writes files, so it uses none of the glibc parts that need shared
+# libraries at run time (NSS, dlopen, iconv, locales).
+option(ASN1CPP_STATIC_COMPILER "Link the asn1cpp compiler fully static (Linux)" OFF)
+if(ASN1CPP_STATIC_COMPILER)
+    if(APPLE)
+        message(FATAL_ERROR "ASN1CPP_STATIC_COMPILER: macOS has no static libc")
+    endif()
+    target_link_options(asn1cpp PRIVATE -static)
+endif()
 if(fmt_FOUND)
     target_link_libraries(asn1cpp PRIVATE fmt::fmt)
 endif()
