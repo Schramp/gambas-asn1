@@ -368,11 +368,14 @@ pub fn decode_seq_tagged_into(obj: &mut dyn Asn1Seq, r: &mut Reader, tag: Tag, e
 // ---------------------------------------------------------------------
 
 /// The alternative-dispatch encoding (X.680 §28 — no outer wrapper of its
-/// own), before any `own_tag` wrap.
+/// own), before any `own_tag` wrap. The active alternative is then checked
+/// against its row's constraints (X.680 §51).
 fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     if let Some(i) = obj.active_index() {
-        let ber = obj.spec().alternatives[i].ber;
-        return encode_member_ref(obj.get_active(), ber, out, opts);
+        let alt = &obj.spec().alternatives[i];
+        encode_member_ref(obj.get_active(), alt.ber, out, opts)?;
+        crate::validate::check_value(obj.get_active(), alt.constraints, alt.name, "encode");
+        return Ok(());
     }
     if let Some((tag, bytes)) = obj.extract_unknown_extension() {
         write_primitive(out, tag, bytes);
@@ -425,8 +428,9 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     }
 }
 
-/// Peeks the wire tag, selects the alternative through `ber_tags` and
-/// decodes its payload in place. Falls back to the unknown-extension
+/// Peeks the wire tag, selects the alternative through `ber_tags`,
+/// decodes its payload in place and checks it against its row's
+/// constraints (X.680 §51). Falls back to the unknown-extension
 /// capture (if present) by capturing the whole TLV instead of erroring.
 fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
@@ -437,8 +441,9 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
         .ok()
         .map(|i| obj.spec().ber_tags[i].alt);
     if let Some(alt_idx) = found {
-        let ber = obj.spec().alternatives[alt_idx].ber;
-        decode_member_ref(obj.select_mut(alt_idx), ber, r)?;
+        let alt = &obj.spec().alternatives[alt_idx];
+        decode_member_ref(obj.select_mut(alt_idx), alt.ber, r)?;
+        crate::validate::check_value(obj.get_active(), alt.constraints, alt.name, "decode");
         if !obj.spec().has_contained {
             return Ok(());
         }

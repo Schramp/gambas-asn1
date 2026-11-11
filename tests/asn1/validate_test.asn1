@@ -77,4 +77,15 @@ ValidateTest DEFINITIONS ::= BEGIN
   -- Inline SEQUENCE OF: elements checked against the element type
   HasNumList   ::= SEQUENCE { v SEQUENCE (SIZE(1..3)) OF NumericString }
 
+  -- CHOICE: the active alternative checked against its own constraints,
+  -- as a root, as a SEQUENCE member and as a SEQUENCE OF element
+  PickAlt      ::= CHOICE {
+    inl   [0] INTEGER (0..9),
+    named [1] PercentInt,
+    code  [2] NumericString (SIZE(2..3)),
+    list  [3] SEQUENCE (SIZE(1..2)) OF PercentInt
+  }
+  HasPick      ::= SEQUENCE { v PickAlt }
+  Picks        ::= SEQUENCE (SIZE(1..4)) OF PickAlt
+
 END

@@ -1252,7 +1252,8 @@ IA5String with a character above 0x7F. The C++, Rust and Java runtimes check the
 A member typed by a named type (`v Code` with `Code ::= NumericString (SIZE(3..6))`) is
 checked against that type's constraints, as an inline constraint would be, and each element
 of a SEQUENCE OF/SET OF against its element type's constraints (`SEQUENCE (SIZE(1..3)) OF
-PercentInt` with an element 200 is one violation, besides any SIZE violation). ENUMERATED
+PercentInt` with an element 200 is one violation, besides any SIZE violation), and the
+active alternative of a CHOICE against that alternative's constraints. ENUMERATED
 needs no check in Rust: a generated Rust enum only holds its declared values.
 Violations increment a counter and (optionally) record a path:
 

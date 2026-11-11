@@ -4,8 +4,8 @@
 // SEQUENCE walker checks each member against them on encode and decode.
 // ENUMERATED values outside the root cannot be built in Rust (a generated
 // enum only has the declared variants), so the C++ out-of-map cases have no
-// counterpart here. Elements of a SEQUENCE OF are checked against the
-// element type's constraints, as C++ checks them.
+// counterpart here. Elements of a SEQUENCE OF and the active alternative
+// of a CHOICE are checked against their own constraints, as C++ checks them.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -236,6 +236,21 @@ fn main() {
     expect_delta("root ShortList {10,200}                → fail", root(&[10, 200]), 1);
     expect_delta("root ShortList {10,20}                 → pass", root(&[10, 20]), 0);
 
+    println!("CHOICE alternatives");
+    use PickAlt::PickAlt as P;
+    let pi = |x| PercentInt::PercentInt(int(x));
+    let plist = |v: &[i64]| P::list(PickAltList::PickAltList(v.iter().map(|&x| pi(x)).collect()));
+    expect_delta("inl 5 (0..9)              → pass", P::inl(int(5)), 0);
+    expect_delta("inl 10 (0..9)             → fail", P::inl(int(10)), 1);
+    expect_delta("named PercentInt 101      → fail", P::named(pi(101)), 1);
+    expect_delta("code \"1\" (SIZE 2..3)     → fail", P::code(NumericString("1".into())), 1);
+    expect_delta("code \"1X\" (alphabet)     → fail", P::code(NumericString("1X".into())), 1);
+    expect_delta("list of 3 (SIZE 1..2)     → fail", plist(&[1, 2, 3]), 1);
+    expect_delta("list {1,200} (element)    → fail", plist(&[1, 200]), 1);
+    expect_delta("HasPick.v inl 10          → fail", HasPick::HasPick { v: P::inl(int(10)) }, 1);
+    let picks = Picks::Picks(vec![P::inl(int(1)), P::inl(int(10)), P::named(pi(101))]);
+    expect_delta("Picks {1, 10, 101}        → 2 fails", picks.clone(), 2);
+
     println!("ByteCount (0..MAX)");
     let bc = |v| HasByteCount::HasByteCount { v: ByteCount::ByteCount(UInteger(v)) };
     expect_delta("exactly 0    → pass", bc(0), 0);
@@ -255,6 +270,11 @@ fn main() {
     expect_roundtrip("root ShortList {10,200}   → 2", root(&[10, 200]), 2);
     expect_roundtrip("ShortList {10,20} valid   → 0", short(&[10, 20]), 0);
     expect_roundtrip("inline list 'X'           → 2", numlist(&["12", "1X"]), 2);
+    expect_roundtrip("CHOICE inl 10             → 2", P::inl(int(10)), 2);
+    expect_roundtrip("CHOICE list {1,200}       → 2", plist(&[1, 200]), 2);
+    expect_roundtrip("HasPick.v code \"1X\"      → 2", HasPick::HasPick { v: P::code(NumericString("1X".into())) }, 2);
+    expect_roundtrip("Picks {1, 10, 101}        → 4", picks, 4);
+    expect_roundtrip("CHOICE inl 5 valid        → 0", P::inl(int(5)), 0);
 
     let failures = unsafe { FAILURES };
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "OK" }, if failures == 1 { "" } else { "s" });
