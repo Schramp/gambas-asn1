@@ -43,6 +43,18 @@ fn main() {
         let back = asn1cpp_wire::per::object::decode_pdu::<RecT>(bytes);
         check(&format!("decode: {label}"), back.as_ref().is_ok_and(|b| b == value), &mut failures);
     }
+    // "after only" with 2 more octets in its open type (length 3: 40 ff ff),
+    // and "group {g1, g2} only" with 1 more (length 2: bc ff); asn1c rejects
+    // both (X.691 §11.2).
+    let trailing: [(&str, Vec<u8>); 2] = [
+        ("an addition's", vec![0x93, 0x82, 0x20, 0x68, 0x1f, 0xff, 0xe0]),
+        ("a group's", vec![0x93, 0x82, 0x40, 0x57, 0x9f, 0xe0]),
+    ];
+    for (what, bytes) in &trailing {
+        let r = asn1cpp_wire::per::object::decode_pdu::<RecT>(bytes);
+        check(&format!("decode rejects trailing octets in {what} open type"),
+              r.is_err_and(|e| e.to_string().contains("PER: trailing data in an open type")), &mut failures);
+    }
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "PASSED" }, if failures == 1 { "" } else { "s" });
     std::process::exit(if failures > 0 { 1 } else { 0 });
 }

@@ -3,6 +3,8 @@
 //   - A MsgV2 extension alternative decodes as MsgV1: the open type is
 //     skipped (counted in skipped_extensions()), no alternative selected.
 //   - A root alternative encodes identically in both versions and decodes.
+//   - A known extension alternative whose open type holds octets after its
+//     value is a decode error (X.691 §11.2), as in asn1c.
 #include <cstdio>
 #include <span>
 #include <vector>
@@ -60,6 +62,17 @@ int main() {
         bool ok = PerCodec::instance().decode(ds, MsgV1::asn_DEF, &v1).has_value();
         check("MsgV2 root alternative decodes as MsgV1",
               ok && v1.present() == MsgV1::PR::a && v1.a().value() == 5);
+    }
+
+    {
+        // b TRUE (asn1c UPER 80 01 80), its open type 2 octets longer.
+        const std::vector<uint8_t> trailing = {0x80, 0x03, 0x80, 0xff, 0xff};
+        MsgV2 v2;
+        PerDecodeStream s{std::span<const uint8_t>{trailing}};
+        IDecodeStream& ds = s;
+        auto r = PerCodec::instance().decode(ds, MsgV2::asn_DEF, &v2);
+        check("trailing octets in a known alternative's open type are an error",
+              !r && r.error().message == "PER: trailing data in an open type");
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");

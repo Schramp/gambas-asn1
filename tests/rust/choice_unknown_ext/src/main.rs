@@ -47,6 +47,12 @@ fn main() {
           matches!(asn1cpp_wire::per::object::decode_pdu::<V1>(&root2), Ok(V1::a(asn1cpp_wire::integer::Integer(5)))),
           &mut failures);
 
+    // b TRUE (asn1c UPER 80 01 80), its open type 2 octets longer (X.691 §11.2).
+    check("trailing octets in a known alternative's open type are an error",
+          asn1cpp_wire::per::object::decode_pdu::<V2>(&[0x80, 0x03, 0x80, 0xff, 0xff])
+              .is_err_and(|e| e.to_string().contains("PER: trailing data in an open type")),
+          &mut failures);
+
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "PASSED" }, if failures == 1 { "" } else { "s" });
     std::process::exit(if failures > 0 { 1 } else { 0 });
 }

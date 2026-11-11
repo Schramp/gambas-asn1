@@ -3,6 +3,8 @@
 // as a sequence of its components (own bitmap for g2, the only component
 // declared OPTIONAL inside it) in one open type; "before" and "after" are
 // plain additions. Expected bytes are asn1c's UPER output for each value.
+// An open type holding octets after its value is a decode error
+// (X.691 §11.2), as asn1c's uper_open_type_get rejects it.
 #include <cstdio>
 #include <memory>
 #include <span>
@@ -72,6 +74,21 @@ int main() {
         Rec back{};
         std::snprintf(label, sizeof label, "decode: %s", c.label);
         check(label, per_dec(c.bytes, back) && matches(back, c));
+    }
+    // "after only" with 2 more octets in its open type (length 3: 40 ff ff),
+    // and "group {g1, g2} only" with 1 more (length 2: bc ff).
+    const std::vector<uint8_t> trailing[] = {
+        {0x93, 0x82, 0x20, 0x68, 0x1f, 0xff, 0xe0},
+        {0x93, 0x82, 0x40, 0x57, 0x9f, 0xe0},
+    };
+    for (const auto& bytes : trailing) {
+        Rec back{};
+        PerDecodeStream s{std::span<const uint8_t>{bytes}};
+        IDecodeStream& ds = s;
+        auto r = PerCodec::instance().decode(ds, Rec::asn_DEF, &back);
+        check(&bytes == &trailing[0] ? "decode rejects trailing octets in an addition's open type"
+                                     : "decode rejects trailing octets in a group's open type",
+              !r && r.error().message == "PER: trailing data in an open type");
     }
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
