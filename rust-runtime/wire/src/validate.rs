@@ -83,30 +83,50 @@ fn report(delta: i64, name: &str, phase: &str) {
     }
 }
 
+/// Checks one value that has no generated validate row of its own, a CHOICE
+/// alternative or a SEQUENCE OF/SET OF element, against its row's
+/// constraints `c` (X.680 §51), through the value's kind: a builtin leaf
+/// with `spec::primitive::validate_primitive`, a list for its SIZE and
+/// then each element ([`check_seq_of_elements`]). Each failing check
+/// counts once through [`check_delta`]. A SEQUENCE, SET or CHOICE value
+/// checks its own members when the walker encodes or decodes it.
+/// Mirrors the C++ `validate()` reached through the value's
+/// TypeDescriptor.
+/// @param m      The value.
+/// @param c      Its constraints row.
+/// @param name   Name for the trace line.
+/// @param phase  `"encode"` or `"decode"`, for the trace line.
+/// @return `false` when `m` is a SEQUENCE, SET, CHOICE or other value
+///         this check does not look into, `true` otherwise.
+pub fn check_value(m: crate::spec::object::MemberRef, c: &crate::constraints::Constraints, name: &str, phase: &str) -> bool {
+    use crate::spec::object::MemberRef;
+    match m {
+        MemberRef::Primitive(p) => check_delta(crate::spec::primitive::validate_primitive(p, c), name, phase),
+        MemberRef::SeqOf(s) => {
+            check_delta(crate::constraints::validate_size(s.len(), c), s.own_xer_name(), phase);
+            check_seq_of_elements(s, c, phase);
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Checks each element of a SEQUENCE OF/SET OF against the element's
-/// constraints `c.element` (X.680 §51), counting each failing element once
-/// through [`check_delta`]; without an element table, the element kind's
-/// own rules still apply (a NumericString element is checked against its
-/// character set). A list element is checked for its own SIZE and then
-/// for its elements. A SEQUENCE, SET or CHOICE element checks its members
-/// itself when the walker encodes or decodes it, so a list of those is
-/// left after its first element. Called by the BER walker after a member
-/// or a root SEQUENCE OF is encoded or decoded, beside the list's own
-/// SIZE check. Mirrors the element loop of `SeqOfSpec::validate` (C++).
+/// constraints `c.element` (X.680 §51) with [`check_value`]; without an
+/// element table, the element kind's own rules still apply (a
+/// NumericString element is checked against its character set). A list of
+/// SEQUENCE/SET/CHOICE elements is left after its first element: those
+/// check their own members. Called by the BER walker after a member or a
+/// root SEQUENCE OF is encoded or decoded, beside the list's own SIZE
+/// check. Mirrors the element loop of `SeqOfSpec::validate` (C++).
 /// @param s      The list.
 /// @param c      The list's constraints; `c.element` is the element's.
 /// @param phase  `"encode"` or `"decode"`, for the trace line.
 pub fn check_seq_of_elements(s: &dyn crate::spec::object::Asn1SeqOf, c: &crate::constraints::Constraints, phase: &str) {
-    use crate::spec::object::MemberRef;
     let ec = c.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for i in 0..s.len() {
-        match s.get(i) {
-            MemberRef::Primitive(p) => check_delta(crate::spec::primitive::validate_primitive(p, ec), s.own_xer_name(), phase),
-            MemberRef::SeqOf(inner) => {
-                check_delta(crate::constraints::validate_size(inner.len(), ec), inner.own_xer_name(), phase);
-                check_seq_of_elements(inner, ec, phase);
-            }
-            _ => return,
+        if !check_value(s.get(i), ec, s.own_xer_name(), phase) {
+            return;
         }
     }
 }

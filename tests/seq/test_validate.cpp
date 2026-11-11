@@ -53,6 +53,8 @@
 #include "HasCaps.hpp"
 #include "HasQuad.hpp"
 #include "HasNumList.hpp"
+#include "HasPick.hpp"
+#include "Picks.hpp"
 
 using namespace asn1;
 static int failures = 0;
@@ -270,6 +272,25 @@ int main() {
     { HasMidList h{}; h.v = {99};        expect_delta("MidList {99}: size and element → 2 fails", h, HasMidList::asn_DEF, 2); }
     { HasNumList h{}; h.v = {NumericString{"12"}, NumericString{"1X"}}; expect_delta("inline NumericString list, 'X' → fail", h, HasNumList::asn_DEF, 1); }
     { HasNumList h{}; h.v = {NumericString{"12"}, NumericString{" 3"}}; expect_delta("inline NumericString list valid → pass", h, HasNumList::asn_DEF, 0); }
+
+    // CHOICE: the active alternative against its own constraints
+    std::printf("CHOICE alternatives\n");
+    auto pick = [](auto set) { PickAlt p; set(p); return p; };
+    auto inl   = [&](int64_t v) { return pick([&](PickAlt& p) { p.set_present(PickAlt::PR::inl); p.inl() = v; }); };
+    auto named = [&](int64_t v) { return pick([&](PickAlt& p) { p.set_present(PickAlt::PR::named); p.named() = v; }); };
+    auto code  = [&](const char* v) { return pick([&](PickAlt& p) { p.set_present(PickAlt::PR::code); p.code() = NumericString{v}; }); };
+    auto list  = [&](std::vector<int64_t> v) { return pick([&](PickAlt& p) {
+        p.set_present(PickAlt::PR::list); for (auto x : v) p.list().push_back(PercentInt{x}); }); };
+    expect_delta("inl 5 (0..9)              → pass", inl(5), PickAlt::asn_DEF, 0);
+    expect_delta("inl 10 (0..9)             → fail", inl(10), PickAlt::asn_DEF, 1);
+    expect_delta("named PercentInt 101      → fail", named(101), PickAlt::asn_DEF, 1);
+    expect_delta("code \"1\" (SIZE 2..3)     → fail", code("1"), PickAlt::asn_DEF, 1);
+    expect_delta("code \"1X\" (alphabet)     → fail", code("1X"), PickAlt::asn_DEF, 1);
+    expect_delta("list of 3 (SIZE 1..2)     → fail", list({1, 2, 3}), PickAlt::asn_DEF, 1);
+    expect_delta("list {1,200} (element)    → fail", list({1, 200}), PickAlt::asn_DEF, 1);
+    { HasPick h{}; h.v = inl(10); expect_delta("HasPick.v inl 10          → fail", h, HasPick::asn_DEF, 1); }
+    { Picks l; l.push_back(inl(1)); l.push_back(inl(10)); l.push_back(named(101));
+      expect_delta("Picks {1, 10, 101}        → 2 fails", l, asn_DEF_Picks, 2); }
 
     // ByteCount (0..MAX) — uint64_t (UInteger), semi-constrained, lower=0
     std::printf("ByteCount (0..MAX) — uint64_t\n");
