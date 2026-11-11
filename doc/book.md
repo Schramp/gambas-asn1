@@ -440,8 +440,14 @@ Point ::= SEQUENCE {
 ```
 
 **SET** is like SEQUENCE but the wire order of members is not specified. The decoder
-must accept them in any order. gambas-asn1 decodes SETs using the same tag-driven path
-as SEQUENCE.
+must accept them in any order (X.690 §8.11.2), and gambas-asn1 does, in the C++, Rust
+and Java runtimes; encode writes canonical tag order (X.680 §8.6). Each component occurs
+at most once (X.690 §8.11.1), also in an extensible SET, so a second TLV for a component
+already read is a decode error, as in asn1c:
+
+```
+duplicate component 'a' in SET S1
+```
 
 **SEQUENCE OF** is a variable-length homogeneous list. **SET OF** is the same without
 order guarantee. Both map to `asn1::VectorSeqOf<T>` in generated code.
@@ -2332,7 +2338,6 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 | **Aligned PER (APER)** | Only the UNALIGNED variant of PER (UPER) is implemented, in the C++, Rust and Java runtimes; the ALIGNED variant (X.691: octet alignment of constrained whole numbers above 255, of length determinants and of string contents, padding to an octet) is not. A contained value with `encoding: aper` (or `ENCODED BY` aligned PER) keeps its raw bytes and reports `aligned PER contents are not supported` (C++, Rust) or `PER_ALIGNED contents are not supported` (Java) ([Issue #758](https://github.com/Schramp/gambas-asn1/issues/758)). |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
-| **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
 | **Indefinite-length encode** | Decoder accepts indefinite-length BER. Encoder always uses definite-length encoding. |
 | **RandomFiller coverage** | ENUMERATED fill, UInteger, Real, Null, OID, UTCTime, and GeneralizedTime fill paths have zero test coverage. |
 
@@ -2565,7 +2570,8 @@ root ones, since BER ignores the extension marker (X.690 §8.1.1.4). Decoding
 an extensible SEQUENCE or SET skips the TLVs left after its last known member:
 the extension additions of a later version of the type (X.680 §7.1). They
 are not kept, so re-encoding leaves them out. In a type without an extension
-marker, such TLVs are an error. A recursive type (X.680 §3.6.55) needs nothing
+marker, such TLVs are an error. A SET component given twice is an error in
+either case (X.690 §8.11.1). A recursive type (X.680 §3.6.55) needs nothing
 special: a member is a reference, and a recursion ends at an OPTIONAL member,
 a CHOICE or a SEQUENCE OF. Decoding counts each SEQUENCE/SET, CHOICE and
 SEQUENCE OF/SET OF level and fails past 256 levels (`Nesting.MAX_DECODE_DEPTH`

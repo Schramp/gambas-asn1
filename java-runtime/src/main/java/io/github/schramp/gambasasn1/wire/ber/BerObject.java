@@ -501,7 +501,9 @@ public final class BerObject {
      * sequential member walk can decode them: BER allows SET components in
      * any order (X.690 §8.11.2), and the table holds them in canonical tag
      * order (X.680 §8.6). A TLV no member matches goes last, where the walk
-     * reports it.
+     * reports it. Each component occurs at most once (X.690 §8.11.1): a
+     * second TLV for a member already seen is a {@link DecodeException},
+     * whether or not the SET is extensible.
      */
     private static BerReader setInTableOrder(Asn1Seq s, BerReader r) throws DecodeException {
         List<MemberMeta> rows = s.spec().members();
@@ -516,8 +518,11 @@ public final class BerObject {
             byte[] raw = src.bytesSince(start);
             long at = r.absoluteBit(start);
             int i = 0;
-            while (i < rows.size() && (slot[i] != null || !setMemberMatches(s, i, t))) {
+            while (i < rows.size() && !setMemberMatches(s, i, t)) {
                 i++;
+            }
+            if (i < rows.size() && slot[i] != null) {
+                throw new DecodeException("duplicate component '" + rows.get(i).name() + "' in SET " + s.spec().name(), at / 8);
             }
             if (i < rows.size()) {
                 slot[i] = raw;

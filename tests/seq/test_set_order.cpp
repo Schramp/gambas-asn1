@@ -6,6 +6,7 @@
 //   - BER encode writes canonical tag order (X.680 §8.6, as DER requires,
 //     X.690 §10.3).
 //   - PER encodes the root components in canonical tag order (X.691 §20).
+//   - A component occurring twice is a decode error (X.690 §8.11.1).
 //
 // Expected bytes are asn1c's DER / UPER output for the same value
 // (third = 2, first = FALSE, zeroth = 199, second absent).
@@ -65,6 +66,15 @@ int main() {
     check("BER encode writes canonical order (asn1c DER)", ber_enc(a) == canonical_order);
     check("PER encodes root components in canonical order (asn1c UPER 63 90)",
           per_enc(a) == std::vector<uint8_t>{0x63, 0x90});
+
+    const std::vector<uint8_t> zeroth_twice = {
+        0x31, 0x0d, 0x80, 0x02, 0x00, 0xc7, 0x81, 0x01, 0x00, 0x83, 0x01, 0x02, 0x80, 0x01, 0x05};
+    Rec c{};
+    BerReader r{zeroth_twice};
+    BerDecodeStream s{r};
+    auto dup = BerCodec::instance().decode(s, Rec::asn_DEF, &c);
+    check("BER decode rejects a component given twice",
+          !dup && dup.error().message.find("duplicate component 'zeroth' in SET Rec") != std::string::npos);
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
