@@ -277,8 +277,13 @@ fn set_member_matches(obj: &dyn Asn1Seq, i: usize, t: Tag) -> bool {
 ///        sequential member walk can decode them. BER allows SET components
 ///        in any order (X.690 §8.11.2); the table holds them in canonical
 ///        tag order (X.680 §8.6). A TLV matching no member (an unknown
-///        extension addition) goes last.
-/// @return The reordered TLV bytes.
+///        extension addition) goes last. Each component occurs at most
+///        once (X.690 §8.11.1), so a second TLV for a member already seen
+///        is an error, whether or not the SET is extensible. Mirrors
+///        `set_in_table_order` in `BerCodec.cpp`.
+/// @param obj      The SET being decoded.
+/// @param content  The SET's contents octets.
+/// @return The reordered TLV bytes, or the read or duplicate error.
 fn set_in_table_order(obj: &dyn Asn1Seq, content: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let count = obj.spec().members.len();
     let mut slot: Vec<Option<&[u8]>> = vec![None; count];
@@ -288,7 +293,13 @@ fn set_in_table_order(obj: &dyn Asn1Seq, content: &[u8]) -> Result<Vec<u8>, Deco
         let p0 = scan.pos();
         let t = scan.read_tlv()?.tag;
         let raw = &content[p0..scan.pos()];
-        match (0..count).find(|&i| slot[i].is_none() && set_member_matches(obj, i, t)) {
+        match (0..count).find(|&i| set_member_matches(obj, i, t)) {
+            Some(i) if slot[i].is_some() => {
+                return Err(DecodeError::new(
+                    format!("duplicate component '{}' in SET {}", obj.spec().members[i].name, obj.spec().name),
+                    p0,
+                ));
+            }
             Some(i) => slot[i] = Some(raw),
             None => unmatched.push(raw),
         }

@@ -4,6 +4,8 @@ import io.github.schramp.gambasasn1.wire.io.DecodeException;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.ext_ber.Outer1;
 import gen.ext_ber.Outer2;
@@ -13,10 +15,12 @@ import gen.ext_ber.V1;
 import gen.ext_ber.V2;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -92,5 +96,13 @@ class ExtBerTest {
         Asn1Pdu v = TYPES.get(from.type()).get();
         BerObject.decode(v, from.der());
         assertArrayEquals(from.der(), BerObject.encode(v));
+    }
+
+    /** An extensible SET still holds each component at most once (X.690 §8.11.1). */
+    @Test
+    void extensibleSetRejectsAComponentGivenTwice() {
+        DecodeException e = assertThrows(DecodeException.class,
+                () -> BerObject.decode(new S1(), HexFormat.of().parseHex("3106800101800102")));
+        assertTrue(e.getMessage().contains("duplicate component 'a' in SET S1"), e.getMessage());
     }
 }

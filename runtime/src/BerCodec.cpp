@@ -747,10 +747,16 @@ private:
     ///        sequential walk in decode_body() can decode them. BER allows
     ///        SET components in any order (X.690 §8.11.2); the table holds
     ///        them in canonical tag order (X.680 §8.6). A TLV matching no
-    ///        member (an unknown extension addition) goes last.
-    /// @return The reordered TLV bytes, or the read error.
-    static Expected<std::vector<uint8_t>, DecodeError> set_in_table_order(const SequenceSpec& spec,
+    ///        member (an unknown extension addition) goes last. Each
+    ///        component occurs at most once (X.690 §8.11.1), so a second
+    ///        TLV for a member already seen is an error, whether or not the
+    ///        SET is extensible.
+    /// @param def   The SET's descriptor (its name goes into the error).
+    /// @param scan  Reader over the SET's contents.
+    /// @return The reordered TLV bytes, or the read or duplicate error.
+    static Expected<std::vector<uint8_t>, DecodeError> set_in_table_order(const TypeDescriptor& def,
                                                                          BerReader scan) {
+        const auto& spec = *def.sequence_spec;
         std::vector<std::span<const uint8_t>> slot(static_cast<std::size_t>(spec.count));
         std::vector<std::span<const uint8_t>> unmatched;
         while (!scan.at_end()) {
@@ -762,7 +768,10 @@ private:
             auto raw = rest.subspan(0, scan.pos() - p0);
             bool placed = false;
             for (int i = 0; i < spec.count && !placed; ++i) {
-                if (!slot[i].empty() || !set_member_matches(spec.members[i], t)) continue;
+                if (!set_member_matches(spec.members[i], t)) continue;
+                if (!slot[i].empty())
+                    return make_unexpected<std::vector<uint8_t>, DecodeError>(DecodeError(
+                        std::string("duplicate component '") + spec.members[i].name + "' in SET " + def.name));
                 slot[i] = raw;
                 placed = true;
             }
@@ -779,7 +788,7 @@ private:
         const auto& spec = *def.sequence_spec;
         std::vector<uint8_t> set_buf;
         if (spec.is_set) {
-            auto ordered = set_in_table_order(spec, inner);
+            auto ordered = set_in_table_order(def, inner);
             if (!ordered) return decode_err(ordered.error());
             set_buf = std::move(*ordered);
             inner = inner.sub(std::span<const uint8_t>{set_buf.data(), set_buf.size()});
