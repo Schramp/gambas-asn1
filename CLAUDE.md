@@ -112,6 +112,7 @@ The value is read once on first call to `asn1::debug_flags()`; no rebuild needed
 | `0x08` | `DBG_PER` | PER bit-level ops — per-field bit position, width, value on encode/decode |
 | `0x10` | `DBG_BER_WRITE` | BER encode: each member/alt written — name, tag class+number, EXPLICIT/IMPLICIT, byte count; absent optional members; SEQUENCE-OF element counts; out-of-range CHOICE index |
 | `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations on encode or decode — type name, delta, codec (BER/JER/…). Failures are **silent** without this flag; `record_validate_fail`/`bump_validate_fail` always fire. |
+| `0x80` | `DBG_BER_SEGMENTS` | BER decode of a constructed-form string (X.690 §8.6.4/§8.7.3/§8.23.6) — universal tag of the segments, octets read, octets joined. |
 
 ```bash
 # Trace BER encoding:

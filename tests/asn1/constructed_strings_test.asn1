@@ -3,9 +3,12 @@
 -- segments. asn1c's CER encoder (X.690 §9.2) does so for values longer
 -- than 1000 octets. Tagged covers IMPLICIT tags over the segments, Plain the
 -- strings' own UNIVERSAL tags; Bits and Name carry the X.690 worked examples.
+-- Wrapped holds an OCTET STRING CONTAINING a value (X.682 §11), whose
+-- segments join to the contained encoding.
 ConstructedStringsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
 Tagged ::= SEQUENCE { o [0] OCTET STRING, b [1] BIT STRING, s [2] IA5String }
 Plain ::= SEQUENCE { o OCTET STRING, b BIT STRING, v VisibleString, u UTF8String }
 Bits ::= BIT STRING
 Name ::= VisibleString
+Wrapped ::= SEQUENCE { c [0] OCTET STRING (CONTAINING Name) }
 END

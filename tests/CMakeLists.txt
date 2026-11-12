@@ -1258,6 +1258,34 @@ add_test(NAME xer_vectors_119 COMMAND test_xer_vectors_119
     ${CMAKE_CURRENT_SOURCE_DIR}/vectors/per_strings_119.vectors)
 set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 
+# ---- Constructed-form strings (X.690 §8.6.4, §8.7.3, §8.23.6; CER §9.2) ------
+# Each row of vectors/constructed_strings_test.vectors: BER with constructed
+# strings (asn1c CER or an X.690 example) must decode to the value of asn1c's
+# DER and re-encode to that DER; see tests/vectors/make_constructed_vectors.py.
+set(CONSTRUCTED_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_constructed_strings)
+set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped)
+set(_cs_outputs)
+set(_cs_sources)
+foreach(t IN LISTS CONSTRUCTED_TYPES)
+    list(APPEND _cs_outputs ${CONSTRUCTED_GEN_DIR}/${t}.hpp ${CONSTRUCTED_GEN_DIR}/${t}.cpp)
+    list(APPEND _cs_sources ${CONSTRUCTED_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_cs_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CONSTRUCTED_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+            -o ${CONSTRUCTED_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+    COMMENT "Generating C++ from constructed_strings_test.asn1"
+)
+add_executable(test_constructed_strings seq/test_constructed_strings.cpp ${_cs_sources})
+target_include_directories(test_constructed_strings PRIVATE ${CONSTRUCTED_GEN_DIR})
+target_link_libraries(test_constructed_strings PRIVATE asn1cpp_runtime)
+add_test(NAME constructed_strings COMMAND test_constructed_strings
+    ${CMAKE_CURRENT_SOURCE_DIR}/vectors/constructed_strings_test.vectors)
+set_tests_properties(constructed_strings PROPERTIES TIMEOUT 30)
+
 # ---- asn1c PER vector suite: data-126 (126-per-extensions-OK.asn1) ----------
 # Mirrors asn1c check-126.-gen-UPER.c: XER decode → UPER encode → binary compare
 # → UPER decode → XER re-encode compare.
