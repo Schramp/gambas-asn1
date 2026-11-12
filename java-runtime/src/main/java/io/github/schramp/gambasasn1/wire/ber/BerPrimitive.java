@@ -345,7 +345,9 @@ public final class BerPrimitive {
 
     /**
      * Decode counterpart of {@link #encodeAny}: captures every remaining
-     * octet of the reader, or of the EXPLICIT tag's contents, verbatim.
+     * octet of the reader, or of the EXPLICIT tag's contents, verbatim,
+     * once {@link BerReader#checkAnyContents} has found them to be complete
+     * BER encodings.
      */
     private static void decodeAny(Asn1Any any, BerTagging framing, BerReader r) throws DecodeException {
         switch (framing.resolve()) {
@@ -355,13 +357,17 @@ public final class BerPrimitive {
                 if (!outer.tag().equals(tag)) {
                     throw new DecodeException("expected EXPLICIT tag " + tag + ", got " + outer.tag(), start);
                 }
-                any.set(outer.value().remainingBytes());
+                byte[] contents = outer.value().remainingBytes();
+                BerReader.checkAnyContents(contents);
+                any.set(contents);
             }
             case BerTagging.Implicit(Tag tag) -> throw new DecodeException("ANY cannot be IMPLICIT tagged", r.position());
             case BerTagging.Unsupported(String reason) -> throw new DecodeException("ANY not supported: " + reason, r.position());
             default -> {
                 ByteSource src = r.source();
-                any.set(src.remainingBytes());
+                byte[] contents = src.remainingBytes();
+                BerReader.checkAnyContents(contents);
+                any.set(contents);
                 src.skip(src.remaining(), "ANY");
             }
         }

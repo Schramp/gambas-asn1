@@ -473,7 +473,18 @@ generated type never replaces one of the schema's own.
 
 **ANY** holds a raw BER encoding whose type is not known at compile time. Used in
 extensibility points and algorithm identifier parameters. Decoded as a verbatim byte
-buffer (`asn1::AnyBer`).
+buffer (`asn1::AnyBer`). Decoding checks that the bytes are complete BER encodings
+(X.690 §8.1): every TLV complete, a constructed one's contents again complete TLVs, an
+indefinite length closed by its end-of-contents octets, at most 256 levels deep. The
+values themselves are not decoded, as their type is not known. As in asn1c, an exact
+`00 00` inside a definite-length frame is kept as part of the value. The C++, Rust and
+Java runtimes report a failed check as
+
+```
+malformed ANY contents: <reason>
+```
+
+for example `malformed ANY contents: unterminated indefinite-length encoding`.
 
 ### Tags and Tagging Modes
 
@@ -2236,11 +2247,13 @@ Cross-validation: **440/440** records across seeds {1, 7, 42, 99}, 10 records pe
 all 11 checks passing. Wire-fuzz (8 corruption modes, 180k ETSI + 45k PKIX records):
 zero signal kills, zero assertion failures.
 
-The asn1c BER vector suite for schema 62 (33 vectors): 27 pass, 5 intentionally skipped
-(malformed nested BER inside ANY — stored verbatim, consistent with standard behaviour).
+The asn1c BER vector suite for schema 62 (32 vectors) passes in full, in the C++ and
+Rust runtimes, including the 5 whose ANY contents are malformed (decode must fail).
 
-The asn1c XER→UPER→XER vector suite for schema 119 (25 vectors): 11 pass, 14 skipped
-(PER-incompatible inputs — alphabet/size constraint violations expected to fail encode).
+The asn1c XER→UPER→XER vector suite for schema 119 (25 inputs) passes in full, in the
+C++, Rust and Java runtimes: the 11 valid inputs encode to asn1c's UPER byte for byte
+(`tests/vectors/per_strings_119.vectors`), and the 14 `-P` inputs, which break an
+alphabet or SIZE constraint, fail to encode.
 
 ### UPER (PER) Codec
 

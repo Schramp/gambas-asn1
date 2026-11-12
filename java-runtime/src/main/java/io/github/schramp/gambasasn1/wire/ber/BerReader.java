@@ -286,6 +286,76 @@ public final class BerReader {
         return new Tlv(tag, src.window(start, end));
     }
 
+    /**
+     * Checks that {@code bytes}, the octets of an ANY value, are zero or
+     * more complete BER encodings (X.690 §8.1); their types are not known,
+     * so their values are not decoded. Mirrors C++ {@code check_any_tlvs}
+     * ({@code BerCodec.cpp}) and Rust {@code check_any_contents}.
+     *
+     * @throws DecodeException {@code malformed ANY contents: <reason>}, at
+     *         the offset in {@code bytes} of the first malformed TLV
+     */
+    public static void checkAnyContents(byte[] bytes) throws DecodeException {
+        BerReader r = new BerReader(bytes);
+        try {
+            while (!r.atEnd()) {
+                r.checkAnyTlv(0, true);
+            }
+        } catch (DecodeException e) {
+            throw new DecodeException("malformed ANY contents: " + e.getMessage(), e.position());
+        }
+    }
+
+    /**
+     * One TLV of an ANY value: a constructed one's contents are themselves
+     * complete encodings (X.690 §3.2), and an indefinite length is closed by
+     * its end-of-contents octets (§8.1.3.6, §8.1.5). Tag 0 is otherwise
+     * refused, except an exact {@code 00 00} in a definite-length frame,
+     * which asn1c keeps as legacy ANY bytes ({@code octet_string_ber_read_child}).
+     *
+     * @param depth    nesting level inside the ANY, limited to {@link Nesting#MAX_DECODE_DEPTH}
+     * @param definite true when the enclosing frame has a definite length
+     */
+    private void checkAnyTlv(int depth, boolean definite) throws DecodeException {
+        if (depth > Nesting.MAX_DECODE_DEPTH) {
+            throw new DecodeException("ANY contents nest deeper than " + Nesting.MAX_DECODE_DEPTH + " levels",
+                    src.position());
+        }
+        if (definite && src.peek() == 0 && src.peek(1) == 0) {
+            src.skip(2, "zero octets");
+            return;
+        }
+        Tag tag = readTag();
+        if (tag.tagClass() == TagClass.UNIVERSAL && tag.number() == 0) {
+            throw new DecodeException("end-of-contents octets outside an indefinite-length encoding", src.position());
+        }
+        int lenPos = src.position();
+        int len = readLength();
+        if (len >= 0) {
+            ByteSource contents = src.sub(len, "contents");
+            if (tag.constructed()) {
+                BerReader inner = new BerReader(contents);
+                while (!inner.atEnd()) {
+                    inner.checkAnyTlv(depth + 1, true);
+                }
+            }
+            return;
+        }
+        if (!tag.constructed()) {
+            throw new DecodeException("indefinite-length encoding on primitive type", lenPos);
+        }
+        for (;;) {
+            if (src.remaining() < 2) {
+                throw new DecodeException("unterminated indefinite-length encoding", src.position());
+            }
+            if (src.peek() == 0 && src.peek(1) == 0) {
+                src.skip(2, "end-of-contents");
+                return;
+            }
+            checkAnyTlv(depth + 1, false);
+        }
+    }
+
     /** Definite length, or -1 for the indefinite form. */
     private int readLength() throws DecodeException {
         int first = src.read("length");

@@ -255,6 +255,45 @@ class BuiltinAliasBerTest {
         assertEquals(v.asMemberRef(), back.asMemberRef());
     }
 
+    /**
+     * The ANY contents of asn1c's data-62 vectors 13/15/17/21/23 (-B: decode
+     * must fail) inside the {@code [21]} of {@link ExplicitAny}: each breaks
+     * the TLV structure X.690 §8.1 requires (an indefinite length not closed,
+     * a lone 00 left over).
+     */
+    static Stream<String> brokenAnyContents() {
+        return Stream.of("E1800000E280", "E180E2800000E3800000", "E1801305746573743200",
+                "E180BF7B00B700", "E180BF7B05B70205000000");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("brokenAnyContents")
+    void malformedAnyContentsAreADecodeError(String contents) {
+        byte[] any = HexFormat.of().parseHex(contents);
+        byte[] der = new byte[any.length + 2];
+        der[0] = (byte) 0xB5;
+        der[1] = (byte) any.length;
+        System.arraycopy(any, 0, der, 2, any.length);
+        DecodeException e = assertThrows(DecodeException.class, () -> BerObject.decode(new ExplicitAny(), der));
+        assertEquals(true, e.getMessage().startsWith("malformed ANY contents: "), e.getMessage());
+    }
+
+    /**
+     * asn1c's data-62 vector 24 (-L: decode must succeed): one complete TLV,
+     * then an exact 00 00 in the definite frame, which asn1c keeps as ANY bytes.
+     */
+    @Test
+    void zeroPairInADefiniteFrameIsKept() throws DecodeException {
+        byte[] any = HexFormat.of().parseHex("E180BF7B05B70313017A00000000");
+        byte[] der = new byte[any.length + 2];
+        der[0] = (byte) 0xB5;
+        der[1] = (byte) any.length;
+        System.arraycopy(any, 0, der, 2, any.length);
+        ExplicitAny v = new ExplicitAny();
+        BerObject.decode(v, der);
+        assertArrayEquals(any, v.value.get());
+    }
+
     @Test
     void ownXerNameIsTheAsn1Name() {
         assertEquals("Hyphen-Flag", new Hyphen_Flag().ownElementXerName());
