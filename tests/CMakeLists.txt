@@ -2280,6 +2280,22 @@ add_custom_command(
 )
 list(APPEND java_leg_outputs ${java_etsi_gen}/.stamp)
 
+# asn1c's data-119 PER string suite (119-per-strings-OK.asn1, mirrored under
+# tests-asn1c-compiler) into gen.per_strings_119, for PerStrings119Test.
+set(JAVA_119_ASN1 ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/119-per-strings-OK.asn1)
+set(java_119_gen ${JAVA_LEGS_GEN_DIR}/gen/per_strings_119)
+add_custom_command(
+    OUTPUT  ${java_119_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_119_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_119_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.per_strings_119 --flat-package
+            -pdu=PDU ${JAVA_119_ASN1} -o ${java_119_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_119_gen}/.stamp
+    DEPENDS asn1cpp ${JAVA_119_ASN1}
+    COMMENT "Generating Java from 119-per-strings-OK.asn1"
+)
+list(APPEND java_leg_outputs ${java_119_gen}/.stamp)
+
 # One RRC message (3GPP TS 25.331) into gen.rrc, for the UPER bit-position
 # test: an OCTET STRING value that starts and ends off a byte boundary.
 set(JAVA_RRC_ASN1 ${CMAKE_SOURCE_DIR}/examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1)
