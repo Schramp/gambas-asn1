@@ -79,6 +79,22 @@ struct IBerTypeHandler {
                                       BerReader& content,
                                       const TypeDescriptor& def,
                                       Asn1Object* dest) const;
+
+    /// @brief \c decode_value() for contents whose IMPLICIT tag has the
+    ///        constructed bit set. String types override it to join the
+    ///        segments of the constructed form (X.690 §8.6.4, §8.7.3,
+    ///        §8.23.6); for every other type it is \c decode_value().
+    /// @param codec    Codec instance, for recursive decode.
+    /// @param content  Reader over the constructed contents.
+    /// @param def      Descriptor of the value's type.
+    /// @param dest     Pre-allocated, default-constructed target object.
+    /// @return \c DecodeResult — check with \c .has_value().
+    virtual DecodeResult decode_constructed_value(const BerCodec& codec,
+                                                  BerReader& content,
+                                                  const TypeDescriptor& def,
+                                                  Asn1Object* dest) const {
+        return decode_value(codec, content, def, dest);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -145,12 +161,16 @@ public:
     ///        \c decode() does.
     /// @param content  Typically \c r.sub(tlv.value) after reading the
     ///                 member's IMPLICIT tag from \c r.
+    /// @param constructed  That IMPLICIT tag's constructed bit: a string
+    ///                 type then joins the segments of its constructed form
+    ///                 (\c IBerTypeHandler::decode_constructed_value).
     /// @param def      Descriptor of the value's type.
     /// @param dest     Pre-allocated, default-constructed target object.
     /// @return \c DecodeResult — check with \c .has_value().
     DecodeResult decode_value(BerReader& content,
                               const TypeDescriptor& def,
-                              Asn1Object* dest) const;
+                              Asn1Object* dest,
+                              bool constructed = false) const;
 
 private:
     static const IBerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind

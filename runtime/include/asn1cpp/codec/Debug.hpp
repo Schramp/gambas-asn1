@@ -13,6 +13,7 @@ enum DebugFlag : unsigned {
     DBG_BER_WRITE   = 1u << 4,  // BER encode: each member/alt written — name, tag, explicit/implicit, byte count
     DBG_NO_VALIDATE = 1u << 5,  // Suppress validate() at runtime even if ASN1CPP_VALIDATE=1
     DBG_VALIDATE_TRACE = 1u << 6,  // Constraint validation failures — type name, delta, codec (all encodings)
+    DBG_BER_SEGMENTS = 1u << 7,  // BER decode: constructed-form string segments joined — universal tag, octet counts
 };
 
 inline unsigned debug_flags() {

@@ -1735,6 +1735,7 @@ Set before running any binary linked against `libasn1cpp_runtime`:
 | `0x08` | `DBG_PER` | PER bit-level ops — every `put_bits`/`get_bits` with offset and value |
 | `0x10` | `DBG_BER_WRITE` | BER encode — member name, tag, EXPLICIT/IMPLICIT, byte count |
 | `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations — type name, delta, codec (all encodings) |
+| `0x80` | `DBG_BER_SEGMENTS` | BER decode of a constructed-form string — universal tag of the segments, octets read, octets joined (C++) |
 
 ```bash
 # Trace BER encoding:
@@ -2241,7 +2242,37 @@ BER encode and decode are complete for all types present in ETSI LI PS-PDU:
 - ANY (stored and replayed as verbatim BER bytes)
 - DEFAULT value suppression on encode, fill on decode
 - Indefinite-length encoding (decode only; encode always uses definite)
+- Constructed-form strings (decode only, C++ runtime; see below)
 - Extension marker skip on decode
+
+**Constructed-form strings.** BER lets a sender split an OCTET STRING, BIT STRING
+or character string (UTCTime and GeneralizedTime included) into segments: a
+constructed TLV, of definite or indefinite length, whose contents are the
+segments' own encodings (X.690 §8.6.4, §8.7.3, §8.23.6). CER does this for every
+string longer than 1000 octets (X.690 §9.2), so asn1c's `-ocer` output has it.
+The C++ decoder joins the segments, in order, into one value, under the type's
+own tag and under an IMPLICIT tag, also for an OCTET STRING CONTAINING another
+type, whose contained value is then decoded from the joined bytes. Segments may
+themselves be constructed. The value is rebuilt in memory, from the record that
+is already in memory: the joined contents are never larger than the encoding.
+Encode always writes the primitive form. The Rust and Java runtimes, and the
+lazy `BerProjection` reader, do not join segments yet.
+
+Segment errors fail the decode with one of:
+
+```
+segment of a constructed string is not an OCTET STRING
+segment of a constructed BIT STRING is not a BIT STRING
+BIT STRING segment other than the last has unused bits
+BIT STRING segment is empty (need at least unused-bits byte)
+BIT STRING segment has 3 unused bits in 0 octets
+constructed string segments nest deeper than 256 levels
+```
+
+The segments of a character string are OCTET STRINGs (X.690 §8.23.6), not the
+string type itself; end-of-contents octets inside a definite length are a
+wrong segment tag. Test vectors: `tests/vectors/constructed_strings_test.vectors`
+(asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples).
 
 Cross-validation: **440/440** records across seeds {1, 7, 42, 99}, 10 records per seed,
 all 11 checks passing. Wire-fuzz (8 corruption modes, 180k ETSI + 45k PKIX records):
