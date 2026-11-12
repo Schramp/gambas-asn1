@@ -2273,9 +2273,9 @@ UPER encode and decode are complete for all types present in 3GPP TS 25.331 (RRC
 Cross-validation: **40,000/40,000** records (2,000 × 4 RRC types × 5 paths) against
 asn1c UPER.
 
-The asn1c XER→UPER vector suite for schema 126 (21 vectors): 20 pass, 1 known-permissive
-(file 04-P: encoded with older 2-extension schema; our decoder accepts it via
-forward-compatible extension skipping, asn1c rejects it).
+The asn1c XER→UPER vector suite for schema 126 (21 vectors) passes in full, in the C++
+and Rust runtimes. File 04-P, whose extension's open type carries octets after the
+value, fails to decode as the suite requires, with `PER: trailing data in an open type`.
 
 ### XER Codec
 
