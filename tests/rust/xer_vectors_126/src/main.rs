@@ -8,13 +8,6 @@
 //   - -C: binary may differ from .out; .out decodes ok; round-trip XER == .in.
 //   - -P: UPER decode of .out must fail; our own round-trip must succeed.
 //   - -X: binary must equal .out; round-trip XER must differ from .in.
-//
-// KNOWN_PERMISSIVE: files whose .out was generated with an older schema
-// version (fewer extension members). Our decoder accepts them (reads only
-// as many extension members as the wire says, treating missing known
-// members as absent). asn1c rejects them. This is correct
-// forward-compatible decoder behavior — same rationale as the C++ leg's
-// own KNOWN_PERMISSIVE.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -39,11 +32,6 @@ fn check(label: &str, cond: bool, failures: &mut i32) {
 
 #[derive(PartialEq)]
 enum Kind { Ok, P, C, X }
-
-// -P files whose .out was encoded with an older schema version; our
-// permissive decoder accepts them rather than failing. Assertion: decode
-// SUCCEEDS (not fails). Mirrors the C++ leg's own KNOWN_PERMISSIVE exactly.
-const KNOWN_PERMISSIVE: &[&str] = &["data-126-04-P.in"];
 
 fn classify(name: &str) -> Kind {
     let Some(dot) = name.rfind('.') else { return Kind::Ok };
@@ -100,15 +88,10 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     }
     // -P: skip binary comparison; .out is intentionally invalid.
 
-    // 4. Decode .out: for -P must fail (unless known-permissive); for -C must succeed.
+    // 4. Decode .out: for -P must fail; for -C must succeed.
     if kind == Kind::P {
         let out_dec = per_decode(&out_bytes);
-        let known = KNOWN_PERMISSIVE.contains(&name);
-        if known {
-            check(&format!("{name}  UPER decode of .out succeeds (known-permissive: old encoding)"), out_dec, &mut failures);
-        } else {
-            check(&format!("{name}  UPER decode of .out fails (as expected)"), !out_dec, &mut failures);
-        }
+        check(&format!("{name}  UPER decode of .out fails (as expected)"), !out_dec, &mut failures);
     } else if kind == Kind::C {
         check(&format!("{name}  UPER decode of .out succeeds"), per_decode(&out_bytes), &mut failures);
     }

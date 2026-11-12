@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import gen.choice_ber.Ext;
 import gen.choice_ber.ExtRoot;
 import io.github.schramp.gambasasn1.wire.ber.Tag;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
@@ -71,5 +72,22 @@ class ChoicePerTest {
     void rootIndexBeyondTheRootFails() {
         // Plain has 3 alternatives in 2 bits; index 3 is none of them.
         assertThrows(DecodeException.class, () -> PerObject.decode(new gen.choice_ber.Plain(), new byte[] {(byte) 0xC0}));
+    }
+
+    /**
+     * X.691 §11.2: a known extension alternative's open type holds one
+     * complete encoding; octets after it (asn1c's Ext {@code b TRUE}, the
+     * open type 2 octets longer) are an error unless relaxed.
+     */
+    @Test
+    void trailingOctetsInAKnownAlternativesOpenTypeFail() throws DecodeException {
+        byte[] longer = HexFormat.of().parseHex("800380FFFF");
+        DecodeException e = assertThrows(DecodeException.class, () -> PerObject.decode(new Ext(), longer));
+        assertEquals(true, e.getMessage().contains("PER: trailing data in an open type"), e.getMessage());
+        Ext got = new Ext();
+        PerObject.decode(got, longer, DecodeRelaxedTest.RELAXED);
+        Ext want = new Ext();
+        PerObject.decode(want, HexFormat.of().parseHex("800180"));
+        assertEquals(want, got);
     }
 }

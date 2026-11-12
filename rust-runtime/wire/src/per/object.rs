@@ -169,10 +169,33 @@ fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer, opts: Option<&c
     Ok(())
 }
 
+/// @brief Checks that the decode of an open-type field used up its octets.
+///        The field holds one complete encoding (X.691 §11.2), so after the
+///        value only the padding of §11.1.3.1 may follow, or the field is
+///        the one zero octet that stands for an empty encoding. asn1c's
+///        `uper_open_type_get` applies the same rule.
+/// @param inner The reader the value was decoded from.
+/// @param bytes The field's octets.
+/// @param r     The enclosing reader, just past the field (error position).
+/// @return `Err` when an octet or more is left over.
+fn end_open_type(inner: &Reader, bytes: &[u8], r: &Reader) -> Result<(), DecodeError> {
+    let used = inner.bit_pos();
+    let empty_encoding = used == 0 && bytes == [0];
+    if bytes.len() * 8 - used >= 8 && !empty_encoding {
+        return Err(DecodeError::new("PER: trailing data in an open type", r.bit_pos()));
+    }
+    Ok(())
+}
+
+/// @brief Decodes member `i`, a SEQUENCE extension addition, from its
+///        open-type field.
+/// @return `Err` when the value does not decode or octets are left over.
+/// @see X.691 §19.9, §11.2.
 fn decode_open_type(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
     let bytes = get_octets(r)?;
     let mut inner = r.sub(&bytes);
-    access_decode(obj, i, &mut inner)
+    access_decode(obj, i, &mut inner)?;
+    end_open_type(&inner, &bytes, r)
 }
 
 fn skip_open_type(r: &mut Reader) -> Result<(), DecodeError> {
@@ -275,7 +298,10 @@ fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut W
     Ok(())
 }
 
-/// @brief Decode counterpart of [`encode_group_open_type`].
+/// @brief Decode counterpart of [`encode_group_open_type`]: one extension
+///        addition group from its open-type field.
+/// @return `Err` when a member does not decode or octets are left over.
+/// @see X.691 §19.9, §11.2.
 fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &mut Reader) -> Result<(), DecodeError> {
     let bytes = get_octets(r)?;
     let mut g = r.sub(&bytes);
@@ -293,7 +319,7 @@ fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &m
             obj.set_default(i);
         }
     }
-    Ok(())
+    end_open_type(&g, &bytes, r)
 }
 
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
@@ -399,7 +425,10 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
         .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.bit_pos()))
 }
 
-/// @brief Decode the CHOICE index and the selected alternative (X.691 §23).
+/// @brief Decode the CHOICE index and the selected alternative (X.691 §23);
+///        an extension alternative comes from its open-type field (§23.8).
+/// @return `Err` when the alternative does not decode, or octets are left
+///         over in its open type.
 fn decode_choice_alternative(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
     let root_count = choice_root_count(obj);
     let spec_ext_at = obj.spec().ext_at;
@@ -430,7 +459,8 @@ fn decode_choice_alternative(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result
         let bytes = get_octets(r)?;
         let mut inner = r.sub(&bytes);
         let constraints = obj.spec().alternatives[def_idx].constraints;
-        decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
+        decode_bare(obj.select_mut(def_idx), constraints, &mut inner)?;
+        end_open_type(&inner, &bytes, r)
     }
 }
 

@@ -315,14 +315,44 @@ static void encode_open_type(const PerCodec& codec, PerEncodeStream& stream,
     per_detail::put_octets(stream, tmp.data(), tmp.size());
 }
 
-// X.691 §10.2 — see encode_open_type above.
+/// @brief Check that the decode of an open-type field used up its octets.
+///        The field holds one complete encoding (X.691 §11.2), so after the
+///        value only the padding of §11.1.3.1 may follow, or the field is
+///        the one zero octet that stands for an empty encoding. asn1c's
+///        uper_open_type_get applies the same rule.
+/// @param inner   The sub-stream the value was decoded from.
+/// @param bytes   The field's octets.
+/// @param stream  The enclosing stream, just past the field (error offset).
+/// @return An error when an octet or more is left over.
+static DecodeResult end_open_type(const PerDecodeStream& inner, std::span<const uint8_t> bytes,
+                                  const PerDecodeStream& stream) {
+    const int used = PerCodec::stream_bit_pos(inner);
+    const int left = static_cast<int>(bytes.size()) * 8 - used;
+    const bool empty_encoding = used == 0 && bytes.size() == 1 && bytes[0] == 0;
+    if (left >= 8 && !empty_encoding)
+        return decode_err(DecodeError("PER: trailing data in an open type",
+                                      static_cast<std::size_t>(PerCodec::stream_bit_pos(stream) / 8)));
+    return decode_ok();
+}
+
+/// @brief Decode a value from its open-type field: a length-prefixed octet
+///        string holding the value's complete encoding.
+/// @param codec   The PER codec.
+/// @param stream  The stream positioned at the field's length determinant.
+/// @param mdef    The value's type.
+/// @param mptr    Where the value goes.
+/// @return An error when the value does not decode or octets are left over.
+/// @see X.691 §11.2 — open type fields.
 static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& stream,
                                      const TypeDescriptor& mdef, Asn1Object* mptr) {
     auto bytes_r = per_detail::get_octets(stream);
     if (!bytes_r) return decode_err(bytes_r.error());
-    PerDecodeStream tmp_s = stream.sub(std::span<const uint8_t>{bytes_r->data(), bytes_r->size()});
+    std::span<const uint8_t> bytes{bytes_r->data(), bytes_r->size()};
+    PerDecodeStream tmp_s = stream.sub(bytes);
     IDecodeStream& ds = tmp_s;
-    return codec.decode(ds, mdef, mptr);
+    auto r = codec.decode(ds, mdef, mptr);
+    if (!r) return r;
+    return end_open_type(tmp_s, bytes, stream);
 }
 
 // ---------------------------------------------------------------------------
@@ -1332,13 +1362,16 @@ public:
 };
 
 /// @brief Decode counterpart of SequencePerHandler::encode_group_open_type:
-///        one extension addition group from its open type (X.691 §18.9).
+///        one extension addition group from its open-type field.
+/// @return An error when a member does not decode or octets are left over.
+/// @see X.691 §19.9, §11.2.
 static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStream& stream,
                                            const SequenceSpec& spec, int begin, int end,
                                            Asn1Object* dest) {
     auto bytes_r = per_detail::get_octets(stream);
     if (!bytes_r) return decode_err(bytes_r.error());
-    PerDecodeStream gs = stream.sub(std::span<const uint8_t>{bytes_r->data(), bytes_r->size()});
+    std::span<const uint8_t> bytes{bytes_r->data(), bytes_r->size()};
+    PerDecodeStream gs = stream.sub(bytes);
     std::vector<bool> present(static_cast<std::size_t>(end - begin), true);
     for (int i = begin; i < end; ++i) {
         if (!spec.group_member_optional[i]) continue;
@@ -1358,7 +1391,7 @@ static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStrea
         auto r = codec.decode(ds, *mbr.type_descriptor, mbr.optional_ops.member_ptr(dest, mbr.offset));
         if (!r) return r;
     }
-    return decode_ok();
+    return end_open_type(gs, bytes, stream);
 }
 
 class ChoicePerHandler final : public IPerTypeHandler {

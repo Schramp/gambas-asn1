@@ -2154,6 +2154,16 @@ UPER extension handling is complete:
   one bit, the octet count as a length determinant and the octets, as asn1c writes it.
 - Unknown extension members from newer senders are skipped by consuming the open-type
   length prefix. `PerDecodeStream::skipped_extensions()` reports the skip count.
+- A known extension member, extension addition group or CHOICE extension alternative is
+  decoded from its open type, which holds one complete encoding (X.691 §11.2): after the
+  value only the padding of its last octet may follow, or the open type is the single
+  `00` octet of an empty encoding. An octet or more left over fails the decode in the
+  C++, Rust and Java runtimes, as asn1c's `uper_open_type_get` does; Java's relaxed
+  decoding (`DecodeOptions.withRelaxed(true)`) accepts it:
+
+  ```
+  PER: trailing data in an open type
+  ```
 
 **Canonical ordering**: The generator (`Generator.cpp`) emits CHOICE alternative tables
 in canonical tag order (tag class ascending, then tag number ascending, separately for

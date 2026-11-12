@@ -513,6 +513,7 @@ public final class PerObject {
                     decodePart(s.presentMember(a.begin()), spec.members().get(a.begin()).constraints(),
                             spec.members().get(a.begin()).name(), a.begin(), in);
                 }
+                in.endOpenType();
             }
         }
         for (int j = 0; j < additions.size(); j++) {
@@ -630,8 +631,9 @@ public final class PerObject {
             return;
         }
         int i = root + (int) ext;
-        decodePart(ch.select(i), spec.alternatives().get(i).constraints(), spec.alternatives().get(i).name(), i,
-                r.subJustRead(field));
+        PerReader in = r.subJustRead(field);
+        decodePart(ch.select(i), spec.alternatives().get(i).constraints(), spec.alternatives().get(i).name(), i, in);
+        in.endOpenType();
         decodeContainedAlternative(ch, r);
     }
 

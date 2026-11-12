@@ -3,9 +3,12 @@ package legs;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import gen.ext_ber.V1;
+import gen.ext_ber.V2;
 import io.github.schramp.gambasasn1.wire.per.PerLength;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
 import io.github.schramp.gambasasn1.wire.per.PerWriter;
@@ -101,5 +104,20 @@ class SequencePerTest {
         PerObject.decode(v, w.toByteArray());
         // id 5 and flag TRUE: the DER of the id 3 / FALSE vector with both values changed.
         assertArrayEquals(java.util.HexFormat.of().parseHex("30068001058201FF"), BerObject.encode(v));
+    }
+
+    /**
+     * X.691 §11.2: an extension addition's open type holds one complete
+     * encoding. V2 {@code id 3, flag TRUE}, flag's open type 2 octets longer
+     * ({@code 80 FF FF}), is an error unless relaxed.
+     */
+    @Test
+    void trailingOctetsInAnAdditionsOpenTypeFail() throws DecodeException {
+        byte[] longer = java.util.HexFormat.of().parseHex("80414140380FFFF0");
+        DecodeException e = assertThrows(DecodeException.class, () -> PerObject.decode(new V2(), longer));
+        assertTrue(e.getMessage().contains("PER: trailing data in an open type"), e.getMessage());
+        V2 got = new V2();
+        PerObject.decode(got, longer, DecodeRelaxedTest.RELAXED);
+        assertTrue(got.flag().get());
     }
 }

@@ -6,17 +6,12 @@
 //   - -C: binary may differ from .out; .out decodes ok; round-trip XER == .in.
 //   - -P: UPER decode of .out must fail; our own round-trip must succeed.
 //   - -X: binary must equal .out; round-trip XER must differ from .in.
-//
-// KNOWN_PERMISSIVE: files whose .out was generated with an older schema version
-// (e.g., fewer extension members). Our decoder accepts them (reads only as many
-// extension members as the wire says, treating missing known members as absent).
-// asn1c rejects them. This is correct forward-compatible decoder behavior.
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
 #include <string>
 #include <vector>
-#include <algorithm>
 #include <span>
 #include <sstream>
 #include <asn1cpp/asn1cpp.hpp>
@@ -81,12 +76,6 @@ static bool per_decode(std::span<const uint8_t> bytes, PDU& out) {
 
 enum class Kind { OK, P, C, X };
 
-// -P files whose .out was encoded with an older schema version; our permissive decoder
-// accepts them rather than failing. Assertion: decode SUCCEEDS (not fails).
-static const std::vector<std::string> KNOWN_PERMISSIVE = {
-    "data-126-04-P.in",
-};
-
 static Kind classify(const std::string& name) {
     auto dot = name.rfind('.');
     if (dot == std::string::npos || dot == 0) return Kind::OK;
@@ -138,15 +127,8 @@ static void process(const fs::path& path) {
     if (kind == Kind::P) {
         PDU tmp{};
         bool out_dec = per_decode(out_bytes, tmp);
-        bool known = std::find(KNOWN_PERMISSIVE.begin(), KNOWN_PERMISSIVE.end(), name)
-                     != KNOWN_PERMISSIVE.end();
-        if (known) {
-            std::snprintf(lbl, sizeof lbl, "%s  UPER decode of .out succeeds (known-permissive: old encoding)", name.c_str());
-            check(lbl, out_dec);
-        } else {
-            std::snprintf(lbl, sizeof lbl, "%s  UPER decode of .out fails (as expected)", name.c_str());
-            check(lbl, !out_dec);
-        }
+        std::snprintf(lbl, sizeof lbl, "%s  UPER decode of .out fails (as expected)", name.c_str());
+        check(lbl, !out_dec);
     } else if (kind == Kind::C) {
         PDU tmp{};
         bool out_ok = per_decode(out_bytes, tmp);

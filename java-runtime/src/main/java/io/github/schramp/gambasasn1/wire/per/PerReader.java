@@ -102,6 +102,21 @@ public final class PerReader {
     }
 
     /**
+     * Ends the decode of an open-type field read with {@link #sub}: its
+     * octets are one complete encoding (X.691 §11.2), so after the value
+     * only the padding of §11.1.3.1 may follow, or the field is the one zero
+     * octet that stands for an empty encoding. Relaxed, anything may follow.
+     *
+     * @throws DecodeException when an octet or more is left over
+     */
+    public void endOpenType() throws DecodeException {
+        boolean emptyEncoding = pos == 0 && buf.length == 1 && buf[0] == 0;
+        if (remaining() >= 8 && !emptyEncoding && !options.relaxed()) {
+            throw error("PER: trailing data in an open type");
+        }
+    }
+
+    /**
      * {@link #sub} over the octets this reader has just read, so the nested
      * reader's positions are the octets' place in the input. For an open
      * type below 16K octets (one length determinant, X.691 §11.9.3.8) that
