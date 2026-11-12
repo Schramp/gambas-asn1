@@ -1,0 +1,25 @@
+# Type<TAB>XER value. The asn1c data-119 suite inputs (tests/tests-c-compiler/
+# data-119, the files without -P), one line each; make_ber_vectors.py turns
+# each into asn1c's encodings, its UPER among them.
+# data-119-01.in
+PDU	<PDU><ns></ns></PDU>
+# data-119-02.in
+PDU	<PDU><ns>0123456789</ns></PDU>
+# data-119-03.in
+PDU	<PDU><ns></ns></PDU>
+# data-119-05.in
+PDU	<PDU><ia5>yabloko</ia5><vs>yabloko</vs></PDU>
+# data-119-08.in
+PDU	<PDU><ia5-c>CAPITALS</ia5-c><vs-c>CAPITALS</vs-c></PDU>
+# data-119-09.in
+PDU	<PDU><ia5></ia5><ia5-c></ia5-c><ia5-ce></ia5-ce><vs></vs><vs-c></vs-c><vs-ce></vs-ce></PDU>
+# data-119-15.in
+PDU	<PDU><ut-ir>ABCabc,12234</ut-ir></PDU>
+# data-119-16.in
+PDU	<PDU><real>3.14159265</real></PDU>
+# data-119-17.in
+PDU	<PDU><oid>1.3.6.1.4.1.9363.1.5.1</oid></PDU>
+# data-119-18.in
+PDU	<PDU><many><PDU><bm>abra kadabra</bm></PDU><PDU><bm-c>AAAAZZZZ</bm-c></PDU><PDU><bm-cs>шесть!</bm-cs></PDU><PDU><bm-ce>ABC</bm-ce></PDU><PDU><bm-ce>ABCabc (extensibility in play)</bm-ce></PDU><PDU><bm-ir>ABXZ</bm-ir></PDU></many></PDU>
+# data-119-19.in
+PDU	<PDU><many><PDU><us>kadabra</us></PDU><PDU><us-c>AAAAZZZZ</us-c></PDU><PDU><us-cs>шесть!</us-cs></PDU><PDU><us-ce>ABC</us-ce></PDU><PDU><us-ce>ABCabc (extensibility in play)</us-ce></PDU><PDU><us-ir>ABXZ</us-ir></PDU></many></PDU>
