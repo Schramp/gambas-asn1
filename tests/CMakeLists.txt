@@ -1231,7 +1231,8 @@ add_test(NAME xer_vectors_70 COMMAND test_xer_vectors_70
 set_tests_properties(xer_vectors_70 PROPERTIES TIMEOUT 30)
 
 # ---- asn1c PER vector suite: data-119 (119-per-strings-OK.asn1) -------------
-# Mirrors asn1c check-119.c: XER decode → UPER encode → UPER decode → XER encode.
+# Mirrors asn1c check-119.c: XER decode → UPER encode → UPER decode → XER encode;
+# then each non -P input's UPER against asn1c's (vectors/per_strings_119.vectors).
 # (none): round-trip output must equal input (whitespace-stripped).
 # -P: PER-incompatible (constraint violations); skipped — see KNOWN_SKIP in test file.
 set(XER_VEC_119_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_vectors_119)
@@ -1253,7 +1254,8 @@ add_executable(test_xer_vectors_119
 target_include_directories(test_xer_vectors_119 PRIVATE ${XER_VEC_119_GEN_DIR})
 target_link_libraries(test_xer_vectors_119 PRIVATE asn1cpp_runtime)
 add_test(NAME xer_vectors_119 COMMAND test_xer_vectors_119
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119
+    ${CMAKE_CURRENT_SOURCE_DIR}/vectors/per_strings_119.vectors)
 set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 
 # ---- asn1c PER vector suite: data-126 (126-per-extensions-OK.asn1) ----------
@@ -2476,11 +2478,10 @@ endif()
 # Rust leg of the real asn1c data-119 XER/UPER-vector fixture
 # cross-validation — same schema (119-per-strings-OK.asn1), same real
 # ground-truth .in fixtures, same check-119.c pass/fail semantics as the
-# C++ xer_vectors_119 test above (KNOWN_P skip set mirrored exactly); see
-# tests/rust/xer_vectors_119/src/main.rs for the full port, including the
-# Rust-only skip set for the two fixtures that exercise the still-
-# unimplemented X.691 §18.8 extension-addition escape. Own output
-# directory, same reasoning as RUST_XV70_GEN_DIR above.
+# C++ xer_vectors_119 test above, including asn1c's UPER for every non -P
+# input (vectors/per_strings_119.vectors); see
+# tests/rust/xer_vectors_119/src/main.rs. Own output directory, same
+# reasoning as RUST_XV70_GEN_DIR above.
 set(RUST_XV119_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_119)
 add_custom_command(
     OUTPUT  ${RUST_XV119_GEN_DIR}/lib.rs
@@ -2497,7 +2498,8 @@ if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_xer_vectors_119
         COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
                 ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_119/Cargo.toml --
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119
+                ${CMAKE_CURRENT_SOURCE_DIR}/vectors/per_strings_119.vectors)
     set_tests_properties(rust_xer_vectors_119 PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_XV119_GEN_DIR=${RUST_XV119_GEN_DIR}")
