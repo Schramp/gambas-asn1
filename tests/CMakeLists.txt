@@ -2519,6 +2519,31 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
 endif()
 
+# Rust leg of the constructed_strings test above: the same vectors
+# (vectors/constructed_strings_test.vectors) and the same accepted and
+# refused segment structures; see tests/rust/constructed_strings/src/main.rs.
+set(RUST_CS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_constructed_strings)
+add_custom_command(
+    OUTPUT  ${RUST_CS_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+                                   -o ${RUST_CS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+    COMMENT "Generating Rust from constructed_strings_test.asn1"
+)
+add_custom_target(gen_rust_constructed_strings ALL DEPENDS ${RUST_CS_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_constructed_strings
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/constructed_strings/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/vectors/constructed_strings_test.vectors)
+    set_tests_properties(rust_constructed_strings PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CS_GEN_DIR=${RUST_CS_GEN_DIR}")
+endif()
+
 # Rust leg of the real asn1c data-119 XER/UPER-vector fixture
 # cross-validation — same schema (119-per-strings-OK.asn1), same real
 # ground-truth .in fixtures, same check-119.c pass/fail semantics as the

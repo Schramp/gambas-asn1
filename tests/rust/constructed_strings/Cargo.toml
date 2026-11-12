@@ -1,0 +1,14 @@
+[package]
+name = "constructed-strings-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "decode the constructed-form string vectors of tests/vectors/constructed_strings_test.vectors with compiler-generated constructed_strings_test.asn1 types; port of tests/seq/test_constructed_strings.cpp. build.rs pulls the generated files from ASN1CPP_RUST_CS_GEN_DIR (set by tests/CMakeLists.txt rust_constructed_strings), so this is not meant to be built with a bare cargo build."
+
+[[bin]]
+name = "constructed_strings"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
