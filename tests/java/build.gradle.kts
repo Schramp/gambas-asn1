@@ -34,7 +34,11 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    // The legs read these at run time; as inputs, a changed vector reruns them.
+    inputs.dir("../vectors").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("../tests-c-compiler/data-119").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("vectors.dir", layout.projectDirectory.dir("../vectors").asFile.absolutePath)
+    systemProperty("asn1c.suite.dir", layout.projectDirectory.dir("../tests-c-compiler").asFile.absolutePath)
     systemProperty("etsi.sample", layout.projectDirectory
             .file("../../examples/sample.source.ETSI-LI-PS-PDU/nested-decoder/pdu-00000001.etsi").asFile.absolutePath)
     testLogging {
