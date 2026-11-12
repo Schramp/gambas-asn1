@@ -290,6 +290,84 @@ pub(crate) fn check_any_contents(data: &[u8]) -> Result<(), DecodeError> {
         .map_err(|e| DecodeError::new(format!("malformed ANY contents: {}", e.message), e.pos))
 }
 
+/// @brief Joins the segments of a constructed BIT STRING, OCTET STRING or
+///        character string: `data` (the constructed contents, for an
+///        indefinite length without the end-of-contents octets) holds
+///        primitive or nested constructed encodings with the universal tag
+///        `universal`, which are concatenated in order. Mirrors C++
+///        `join_segments` / `string_contents` (`BerCodec.cpp`), with the
+///        same errors.
+/// @param universal  3 for BIT STRING segments, 4 for OCTET STRING segments
+///                   (which character strings use too, X.690 §8.23.3).
+/// @return The joined contents; for BIT STRING with the last segment's
+///         unused-bits octet in front, so it decodes as a primitive one.
+/// @see X.690 §8.6.4 (BIT STRING), §8.7.3 (OCTET STRING), §8.23.6.
+pub(crate) fn join_segments(data: &[u8], universal: u32) -> Result<Vec<u8>, DecodeError> {
+    let mut out = Vec::with_capacity(data.len());
+    let bits = universal == crate::ber::tag::universal::BIT_STRING;
+    if bits {
+        out.push(0);
+    }
+    let mut unused = 0u8;
+    join_into(data, universal, 1, &mut out, &mut unused)?;
+    if bits {
+        out[0] = unused;
+    }
+    if crate::debug::debug_flags() & crate::debug::DBG_BER_SEGMENTS != 0 {
+        eprintln!("[BER-SEGMENTS] universal {universal}: {} contents octets joined into {}", data.len(), out.len());
+    }
+    Ok(out)
+}
+
+/// @brief Appends the segments in `data` to `out`; part of [`join_segments`].
+/// @param depth   Nesting level, limited to [`crate::nesting::MAX_DECODE_DEPTH`].
+/// @param unused  BIT STRING only: unused bits of the last segment so far.
+fn join_into(data: &[u8], universal: u32, depth: u32, out: &mut Vec<u8>, unused: &mut u8) -> Result<(), DecodeError> {
+    let mut r = Reader::new(data);
+    if depth > crate::nesting::MAX_DECODE_DEPTH {
+        return Err(DecodeError::new(
+            format!("constructed string segments nest deeper than {} levels", crate::nesting::MAX_DECODE_DEPTH),
+            0,
+        ));
+    }
+    let bits = universal == crate::ber::tag::universal::BIT_STRING;
+    while !r.at_end() {
+        let at = r.pos();
+        let seg = r.read_tlv()?;
+        if seg.tag.class != crate::ber::tag::TagClass::Universal || seg.tag.number != universal {
+            let msg = if bits {
+                "segment of a constructed BIT STRING is not a BIT STRING"
+            } else {
+                "segment of a constructed string is not an OCTET STRING"
+            };
+            return Err(DecodeError::new(msg, at));
+        }
+        if seg.tag.constructed {
+            join_into(seg.value, universal, depth + 1, out, unused)?;
+            continue;
+        }
+        let mut value = seg.value;
+        if bits {
+            if *unused != 0 {
+                return Err(DecodeError::new("BIT STRING segment other than the last has unused bits", at));
+            }
+            let Some((&u, rest)) = value.split_first() else {
+                return Err(DecodeError::new("BIT STRING segment is empty (need at least unused-bits byte)", at));
+            };
+            if u > 7 || (u != 0 && rest.is_empty()) {
+                return Err(DecodeError::new(
+                    format!("BIT STRING segment has {u} unused bits in {} octets", rest.len()),
+                    at,
+                ));
+            }
+            *unused = u;
+            value = rest;
+        }
+        out.extend_from_slice(value);
+    }
+    Ok(())
+}
+
 /// EXPLICIT tagging (X.690 §8.14.3) decode — read the
 /// constructed outer TLV, check its tag, then decode the inner value from a
 /// sub-`Reader` over the outer TLV's content (the complete inner natural-tag
@@ -332,6 +410,40 @@ mod tests {
         check_any_contents(&hex("020105")).unwrap();
         // 00 01 is no end-of-contents octets.
         assert!(check_any_contents(&hex("0001FF")).is_err());
+    }
+
+    #[test]
+    fn segments_join_in_order() {
+        use crate::ber::tag::universal::{BIT_STRING, OCTET_STRING};
+        // X.690 §8.23.6 example contents, then nested definite and indefinite segments.
+        assert_eq!(join_segments(&hex("04034A6F6E04026573"), OCTET_STRING).unwrap(), b"Jones");
+        assert_eq!(join_segments(&hex("240504034A6F6E04026573"), OCTET_STRING).unwrap(), b"Jones");
+        assert_eq!(join_segments(&hex("248004034A6F6E000004026573"), OCTET_STRING).unwrap(), b"Jones");
+        assert_eq!(join_segments(&[], OCTET_STRING).unwrap(), b"");
+        // X.690 §8.6.4.2: the unused-bits octet of the last segment goes in front.
+        assert_eq!(join_segments(&hex("0303000A3B0305045F291CD0"), BIT_STRING).unwrap(), hex("040A3B5F291CD0"));
+        assert_eq!(join_segments(&[], BIT_STRING).unwrap(), hex("00"));
+    }
+
+    #[test]
+    fn malformed_segments_are_refused() {
+        use crate::ber::tag::universal::{BIT_STRING, OCTET_STRING};
+        let err = |s: &str, u| join_segments(&hex(s), u).unwrap_err().message;
+        assert_eq!(err("1A034A6F6E", OCTET_STRING), "segment of a constructed string is not an OCTET STRING");
+        assert_eq!(err("04000000", OCTET_STRING), "segment of a constructed string is not an OCTET STRING");
+        assert_eq!(err("040200FF", BIT_STRING), "segment of a constructed BIT STRING is not a BIT STRING");
+        assert_eq!(err("03020180030200FF", BIT_STRING),
+                   "BIT STRING segment other than the last has unused bits");
+        assert_eq!(err("0300", BIT_STRING), "BIT STRING segment is empty (need at least unused-bits byte)");
+        assert_eq!(err("030103", BIT_STRING), "BIT STRING segment has 3 unused bits in 0 octets");
+    }
+
+    #[test]
+    fn segment_nesting_is_limited() {
+        let deep = |n: usize| [[0x24u8, 0x80].repeat(n), vec![0x00; 2 * n]].concat();
+        join_segments(&deep(200), crate::ber::tag::universal::OCTET_STRING).unwrap();
+        let e = join_segments(&deep(300), crate::ber::tag::universal::OCTET_STRING).unwrap_err();
+        assert_eq!(e.message, "constructed string segments nest deeper than 256 levels");
     }
 
     #[test]
