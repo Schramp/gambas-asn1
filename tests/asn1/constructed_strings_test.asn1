@@ -1,0 +1,11 @@
+-- Constructed-form strings on BER decode (X.690 §8.6.4, §8.7.3, §8.23.6):
+-- a sender may split an OCTET STRING, BIT STRING or character string into
+-- segments. asn1c's CER encoder (X.690 §9.2) does so for values longer
+-- than 1000 octets. Tagged covers IMPLICIT tags over the segments, Plain the
+-- strings' own UNIVERSAL tags; Bits and Name carry the X.690 worked examples.
+ConstructedStringsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+Tagged ::= SEQUENCE { o [0] OCTET STRING, b [1] BIT STRING, s [2] IA5String }
+Plain ::= SEQUENCE { o OCTET STRING, b BIT STRING, v VisibleString, u UTF8String }
+Bits ::= BIT STRING
+Name ::= VisibleString
+END
