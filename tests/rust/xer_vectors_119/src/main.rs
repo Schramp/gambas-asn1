@@ -58,16 +58,6 @@ fn known_p() -> HashSet<&'static str> {
     .collect()
 }
 
-/// Rust-only skip set: `-ce` (extensible FROM/SIZE) fixtures whose value
-/// actually falls outside the root alphabet/size (X.691 §18.8
-/// extension-addition escape) — `per::strings::encode_string`/
-/// `decode_string` panic loudly on this path rather than silently
-/// mis-encoding (that module's own doc); the C++ leg implements the
-/// escape and passes these.
-fn rust_known_skip() -> HashSet<&'static str> {
-    ["data-119-18.in", "data-119-19.in"].into_iter().collect()
-}
-
 fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
@@ -80,25 +70,18 @@ fn per_decode(bytes: &[u8]) -> Result<PDU::PDU, asn1cpp_wire::per::reader::Decod
     asn1cpp_wire::per::object::decode_pdu(bytes)
 }
 
-/// Returns true if this file was skipped (not counted as pass/fail).
-fn process(path: &Path, p_skip: &HashSet<&str>, rust_skip: &HashSet<&str>, failures: &mut i32) -> bool {
+fn process(path: &Path, known_p: &HashSet<&str>, failures: &mut i32) {
     let name = path.file_name().unwrap().to_string_lossy().to_string();
-
-    if rust_skip.contains(name.as_str()) {
-        println!("  \x1b[33mSKIP\x1b[0m  {name}");
-        return true;
-    }
 
     // A handful of fixtures could exercise codegen combinations still
     // stubbed/unimplemented at runtime — catch here so one genuine gap
     // doesn't take down the whole sweep; reported as a FAIL like any
     // other unmet expectation, not silently absorbed.
-    let is_p = p_skip.contains(name.as_str());
+    let is_p = known_p.contains(name.as_str());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process_inner(path, &name, is_p)));
     match result {
         Ok(local_failures) => {
             *failures += local_failures;
-            false
         }
         Err(payload) => {
             let msg = payload
@@ -108,7 +91,6 @@ fn process(path: &Path, p_skip: &HashSet<&str>, rust_skip: &HashSet<&str>, failu
                 .unwrap_or("panic");
             println!("  \x1b[31mFAIL\x1b[0m  {name}  panicked: {msg}");
             *failures += 1;
-            false
         }
     }
 }
@@ -170,18 +152,14 @@ fn main() {
 
     std::panic::set_hook(Box::new(|_| {}));
 
-    let p_skip = known_p();
-    let rust_skip = rust_known_skip();
+    let known_p = known_p();
     let processed = files.len();
     let mut failures = 0;
-    let mut skipped = 0;
     for f in &files {
-        if process(f, &p_skip, &rust_skip, &mut failures) {
-            skipped += 1;
-        }
+        process(f, &known_p, &mut failures);
     }
 
-    println!("\n  Processed {processed} files, {skipped} skipped, {failures} failed.");
+    println!("\n  Processed {processed} files, {failures} failed.");
     if failures != 0 {
         std::process::exit(1);
     }
