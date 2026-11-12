@@ -2508,9 +2508,8 @@ endif()
 # Rust leg of the real asn1c data-126 XER/UPER-vector fixture
 # cross-validation — same schema (126-per-extensions-OK.asn1), same real
 # ground-truth .in/.out fixtures, same check-126.-gen-UPER.c pass/fail
-# semantics as the C++ xer_vectors_126 test above (KNOWN_PERMISSIVE
-# mirrored exactly); see tests/rust/xer_vectors_126/src/main.rs for the
-# full port. Own output directory, same reasoning as RUST_XV70_GEN_DIR
+# semantics as the C++ xer_vectors_126 test above; see
+# tests/rust/xer_vectors_126/src/main.rs for the full port. Own output directory, same reasoning as RUST_XV70_GEN_DIR
 # above.
 set(RUST_XV126_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_126)
 add_custom_command(
