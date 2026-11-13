@@ -7,6 +7,8 @@
  * EncryptionContainer.encryptedPayload (container_fields.json). For each
  * packet it prints the byte range of its contents octets and, when they hold
  * an IPv4 header whose total length matches, its addresses and protocol.
+ * A packet sent in constructed form (segments) has no single range; it is
+ * reported as such.
  * It checks that the record's bytes at that range are the decoded packet and
  * exits with status 1 when they are not.
  *
@@ -79,6 +81,12 @@ public final class CcOffsets {
             for (Extraction.Hit<IPCCContents> hit : Extract.all(pdu, d, IPCCContents.class)) {
                 Asn1OctetString packet = hit.value().iPPackets();
                 if (packet == null) {
+                    continue;
+                }
+                if (p.contentsBitOffset(packet) < 0) {
+                    // Sent in constructed form (as CER does above 1000 octets): spread over segments.
+                    System.out.printf("PS-PDU #%d  iPPackets  in segments, no single byte range (%d octets)  %s%n",
+                            pduNum, packet.get().length, describe(packet.get()));
                     continue;
                 }
                 long from = p.contentsBitOffset(packet) / 8;
