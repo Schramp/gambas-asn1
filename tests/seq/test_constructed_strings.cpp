@@ -17,6 +17,8 @@
 #include "Name.hpp"
 #include "Plain.hpp"
 #include "Tagged.hpp"
+#include "Opt.hpp"
+#include "OptSet.hpp"
 #include "Wrapped.hpp"
 
 using namespace asn1;
@@ -69,6 +71,8 @@ static const std::map<std::string, std::function<Outcome(const std::vector<uint8
     {"Bits", roundtrip<Bits>},
     {"Name", roundtrip<Name>},
     {"Wrapped", roundtrip<Wrapped>},
+    {"Opt", roundtrip<Opt>},
+    {"OptSet", roundtrip<OptSet>},
 };
 
 static void vectors(const char* path) {
@@ -131,6 +135,11 @@ int main(int argc, char** argv) {
     accepted("CONTAINING value split across segments", "Wrapped",
              "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573");
     accepted("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0");
+    accepted("constructed OPTIONAL and extension members", "Opt",
+             "3080A08004024A6F04016E0000A2070402ABCD0401EF0000", "300A80034A6F6E8203ABCDEF");
+    accepted("constructed OPTIONAL character string", "Opt", "3080A10504034A6F6E0000", "300581034A6F6E");
+    accepted("SET members out of order, one constructed", "OptSet",
+             "310AA1050403414243800141", "31088001418103414243");
 
     refused("character string segment with its own tag", "Name", unhex("3A051A034A6F6E"),
             "segment of a constructed string is not an OCTET STRING");
