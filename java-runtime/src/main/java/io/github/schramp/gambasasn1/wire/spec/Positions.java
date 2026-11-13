@@ -158,6 +158,12 @@ public final class Positions {
         return s == null ? -1 : s.placement;
     }
 
+    /** Absolute bit just after the contents of {@code node}, or -1. Used by the decoders. */
+    public long contentsEndBit(Object node) {
+        Span s = find(node);
+        return s == null ? -1 : s.contentsEnd;
+    }
+
     /** Absolute bit where the contents of {@code node} start, or -1. Used by the decoders. */
     public long contentsBit(Object node) {
         Span s = find(node);

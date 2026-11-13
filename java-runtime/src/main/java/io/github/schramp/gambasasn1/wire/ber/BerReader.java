@@ -367,20 +367,23 @@ public final class BerReader {
      *
      * @param universal 3 for BIT STRING segments, 4 for OCTET STRING segments
      *                  (which character strings use too)
+     * @param relaxed   {@link DecodeOptions#relaxed()}: a BIT STRING segment
+     *                  with unused bits and no octets counts as empty, as a
+     *                  primitive BIT STRING does under relaxed decoding
      * @return the joined contents; for BIT STRING with the last segment's
      *         unused-bits octet in front, so it decodes as a primitive one
      * @throws DecodeException for a wrong segment tag, unused bits before the
      *         last BIT STRING segment, or nesting deeper than
      *         {@link #MAX_SEGMENT_DEPTH} levels
      */
-    public static byte[] joinSegments(ByteSource contents, int universal) throws DecodeException {
+    public static byte[] joinSegments(ByteSource contents, int universal, boolean relaxed) throws DecodeException {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(contents.remaining() + 1);
         boolean bits = universal == UniversalTag.BIT_STRING;
         if (bits) {
             out.write(0);
         }
         int[] unused = {0};
-        joinInto(new BerReader(contents), universal, 1, false, out, unused);
+        joinInto(new BerReader(contents), universal, 1, false, relaxed, out, unused);
         byte[] joined = out.toByteArray();
         if (bits) {
             joined[0] = (byte) unused[0];
@@ -408,9 +411,10 @@ public final class BerReader {
      * @param untilEoc true for the segments of an indefinite-length segment:
      *                 stop after its end-of-contents (X.690 §8.1.5); false:
      *                 stop at the end of {@code r}
+     * @param relaxed  see {@link #joinSegments}
      * @param unused   BIT STRING only: unused bits of the last segment so far
      */
-    private static void joinInto(BerReader r, int universal, int depth, boolean untilEoc,
+    private static void joinInto(BerReader r, int universal, int depth, boolean untilEoc, boolean relaxed,
             java.io.ByteArrayOutputStream out, int[] unused) throws DecodeException {
         if (depth > MAX_SEGMENT_DEPTH) {
             throw new DecodeException("constructed string segments nest deeper than " + MAX_SEGMENT_DEPTH
@@ -443,12 +447,12 @@ public final class BerReader {
                 if (!tag.constructed()) {
                     throw new DecodeException("indefinite-length encoding on primitive type", lenPos);
                 }
-                joinInto(r, universal, depth + 1, true, out, unused);
+                joinInto(r, universal, depth + 1, true, relaxed, out, unused);
                 continue;
             }
             ByteSource v = src.sub(len, "contents");
             if (tag.constructed()) {
-                joinInto(new BerReader(v), universal, depth + 1, false, out, unused);
+                joinInto(new BerReader(v), universal, depth + 1, false, relaxed, out, unused);
                 continue;
             }
             if (bits) {
@@ -459,11 +463,11 @@ public final class BerReader {
                     throw new DecodeException("BIT STRING segment is empty (need at least unused-bits byte)", at);
                 }
                 int u = v.read("BIT STRING");
-                if (u > 7 || (u != 0 && v.atEnd())) {
+                if (u > 7 || (u != 0 && v.atEnd() && !relaxed)) {
                     throw new DecodeException("BIT STRING segment has " + u + " unused bits in " + v.remaining()
                             + " octets", at);
                 }
-                unused[0] = u;
+                unused[0] = v.atEnd() ? 0 : u;
             }
             out.writeBytes(v.remainingBytes());
         }
