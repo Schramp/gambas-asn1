@@ -309,7 +309,7 @@ pub(crate) fn join_segments(data: &[u8], universal: u32) -> Result<Vec<u8>, Deco
         out.push(0);
     }
     let mut unused = 0u8;
-    join_into(data, universal, 1, &mut out, &mut unused)?;
+    join_into(&mut Reader::new(data), universal, 1, false, &mut out, &mut unused)?;
     if bits {
         out[0] = unused;
     }
@@ -319,22 +319,46 @@ pub(crate) fn join_segments(data: &[u8], universal: u32) -> Result<Vec<u8>, Deco
     Ok(out)
 }
 
-/// @brief Appends the segments in `data` to `out`; part of [`join_segments`].
-/// @param depth   Nesting level, limited to [`crate::nesting::MAX_DECODE_DEPTH`].
-/// @param unused  BIT STRING only: unused bits of the last segment so far.
-fn join_into(data: &[u8], universal: u32, depth: u32, out: &mut Vec<u8>, unused: &mut u8) -> Result<(), DecodeError> {
-    let mut r = Reader::new(data);
-    if depth > crate::nesting::MAX_DECODE_DEPTH {
+/// Deepest nesting of constructed string segments a decoder accepts,
+/// counting the constructed string itself as level 1. X.690 sets no limit;
+/// this is the limit of the reference decoder (asn1c,
+/// `BER_EXPLICIT_TAG_DEPTH_LIMIT`), and CER never nests segments. Same
+/// value as C++ `kMaxSegmentDepth` (`BerCodec.cpp`).
+pub(crate) const MAX_SEGMENT_DEPTH: u32 = 30;
+
+/// @brief Appends the segments read by `r` to `out`; part of
+///        [`join_segments`]. Reads each segment's identifier and length
+///        only, and walks a nested indefinite-length segment on the same
+///        reader up to its end-of-contents, so every octet is visited once
+///        whatever the nesting. Mirrors C++ `join_segments`.
+/// @param depth      Nesting level, limited to [`MAX_SEGMENT_DEPTH`].
+/// @param until_eoc  True for the segments of an indefinite-length segment:
+///                   stop after its end-of-contents (X.690 §8.1.5); false:
+///                   stop at the end of `r`.
+/// @param unused     BIT STRING only: unused bits of the last segment so far.
+fn join_into(r: &mut Reader, universal: u32, depth: u32, until_eoc: bool, out: &mut Vec<u8>, unused: &mut u8) -> Result<(), DecodeError> {
+    if depth > MAX_SEGMENT_DEPTH {
         return Err(DecodeError::new(
-            format!("constructed string segments nest deeper than {} levels", crate::nesting::MAX_DECODE_DEPTH),
-            0,
+            format!("constructed string segments nest deeper than {MAX_SEGMENT_DEPTH} levels"),
+            r.pos,
         ));
     }
     let bits = universal == crate::ber::tag::universal::BIT_STRING;
-    while !r.at_end() {
-        let at = r.pos();
-        let seg = r.read_tlv()?;
-        if seg.tag.class != crate::ber::tag::TagClass::Universal || seg.tag.number != universal {
+    loop {
+        if until_eoc {
+            if r.remaining().starts_with(&[0, 0]) {
+                r.pos += 2;
+                return Ok(());
+            }
+            if r.at_end() {
+                return Err(DecodeError::new("unterminated indefinite-length encoding", r.pos));
+            }
+        } else if r.at_end() {
+            return Ok(());
+        }
+        let at = r.pos;
+        let tag = read_tag(r.data, &mut r.pos).ok_or_else(|| DecodeError::new("truncated or oversized tag", r.pos))?;
+        if tag.class != crate::ber::tag::TagClass::Universal || tag.number != universal {
             let msg = if bits {
                 "segment of a constructed BIT STRING is not a BIT STRING"
             } else {
@@ -342,11 +366,26 @@ fn join_into(data: &[u8], universal: u32, depth: u32, out: &mut Vec<u8>, unused:
             };
             return Err(DecodeError::new(msg, at));
         }
-        if seg.tag.constructed {
-            join_into(seg.value, universal, depth + 1, out, unused)?;
+        let len = r.read_length()?;
+        if len.indefinite {
+            if !tag.constructed {
+                return Err(DecodeError::new("indefinite-length encoding on primitive type", r.pos - 1));
+            }
+            join_into(r, universal, depth + 1, true, out, unused)?;
             continue;
         }
-        let mut value = seg.value;
+        if r.data.len() - r.pos < len.len {
+            return Err(DecodeError::new(
+                format!("need {} bytes but only {} remain", len.len, r.data.len() - r.pos),
+                r.pos,
+            ));
+        }
+        let mut value = &r.data[r.pos..r.pos + len.len];
+        r.pos += len.len;
+        if tag.constructed {
+            join_into(&mut r.sub(value), universal, depth + 1, false, out, unused)?;
+            continue;
+        }
         if bits {
             if *unused != 0 {
                 return Err(DecodeError::new("BIT STRING segment other than the last has unused bits", at));
@@ -365,7 +404,6 @@ fn join_into(data: &[u8], universal: u32, depth: u32, out: &mut Vec<u8>, unused:
         }
         out.extend_from_slice(value);
     }
-    Ok(())
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3) decode — read the
@@ -441,9 +479,18 @@ mod tests {
     #[test]
     fn segment_nesting_is_limited() {
         let deep = |n: usize| [[0x24u8, 0x80].repeat(n), vec![0x00; 2 * n]].concat();
-        join_segments(&deep(200), crate::ber::tag::universal::OCTET_STRING).unwrap();
-        let e = join_segments(&deep(300), crate::ber::tag::universal::OCTET_STRING).unwrap_err();
-        assert_eq!(e.message, "constructed string segments nest deeper than 256 levels");
+        // asn1c's limit: 29 nested segments inside the string, not 30.
+        join_segments(&deep(29), crate::ber::tag::universal::OCTET_STRING).unwrap();
+        let e = join_segments(&deep(30), crate::ber::tag::universal::OCTET_STRING).unwrap_err();
+        assert_eq!(e.message, "constructed string segments nest deeper than 30 levels");
+    }
+
+    /// Segments at several nesting levels, indefinite and definite, each
+    /// nested indefinite segment ending at its own end-of-contents.
+    #[test]
+    fn segments_at_several_levels_join_in_order() {
+        let data = hex("24800401412480040142000004014300002406040144040145040146");
+        assert_eq!(join_segments(&data, crate::ber::tag::universal::OCTET_STRING).unwrap(), b"ABCDEF");
     }
 
     #[test]

@@ -176,6 +176,8 @@ int main(int argc, char** argv) {
     accepted("empty constructed BIT STRING", "Bits", "2300", "030100");
     accepted("nested constructed segment", "Name", "3A0B240504034A6F6E04026573", "1A054A6F6E6573");
     accepted("nested indefinite segment", "Name", "3A80248004034A6F6E0000040265730000", "1A054A6F6E6573");
+    accepted("segments at several nesting levels", "Name",
+             "3A80248004014124800401420000040143000024060401440401450401460000", "1A06414243444546");
     accepted("CONTAINING value split across segments", "Wrapped",
              "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573");
     accepted("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0");
@@ -209,10 +211,17 @@ int main(int argc, char** argv) {
     contained();
     projection();
 
-    std::vector<uint8_t> deep{0x3A, 0x80};
-    for (int i = 0; i < 300; ++i) { deep.push_back(0x24); deep.push_back(0x80); }
-    for (int i = 0; i < 301; ++i) { deep.push_back(0); deep.push_back(0); }
-    refused("segments nested 300 deep", "Name", deep, "constructed string segments nest deeper than");
+    // asn1c's limit: 29 nested segments inside the string decode, 30 do not.
+    auto nested = [](int n) {
+        std::vector<uint8_t> v{0x3A, 0x80};
+        for (int i = 0; i < n; ++i) { v.push_back(0x24); v.push_back(0x80); }
+        v.insert(v.end(), {0x04, 0x01, 0x41});
+        for (int i = 0; i <= n; ++i) { v.push_back(0); v.push_back(0); }
+        return v;
+    };
+    accepted("segments nested 29 deep", "Name", hex(nested(29)), "1A0141");
+    refused("segments nested 30 deep", "Name", nested(30), "constructed string segments nest deeper than 30 levels");
+    refused("segments nested 300 deep", "Name", nested(300), "constructed string segments nest deeper than 30 levels");
 
     // Segmented CHOICE alternatives, through each alternative lookup.
     accepted("CHOICE context-tag index, segmented alternative", "CtxChoice", "A006040141040142", "80024142");
