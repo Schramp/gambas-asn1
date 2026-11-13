@@ -2292,12 +2292,15 @@ segment of a constructed BIT STRING is not a BIT STRING
 BIT STRING segment other than the last has unused bits
 BIT STRING segment is empty (need at least unused-bits byte)
 BIT STRING segment has 3 unused bits in 0 octets
-constructed string segments nest deeper than 256 levels
+constructed string segments nest deeper than 30 levels
 ```
 
 The segments of a character string are OCTET STRINGs (X.690 §8.23.6), not the
 string type itself; end-of-contents octets inside a definite length are a
-wrong segment tag. Test vectors: `tests/vectors/constructed_strings_test.vectors`
+wrong segment tag. Segments nest at most 30 levels deep, counting the string
+itself: the limit of asn1c (X.690 sets none; CER never nests segments). The
+join reads each segment's header once, so its cost is linear in the size of
+the value at any nesting. Test vectors: `tests/vectors/constructed_strings_test.vectors`
 (asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples). Random
 records in constructed form: `randgen --corrupt-percent P --corrupt-mode segment`.
 
