@@ -1867,6 +1867,19 @@ type in `targets.txt`. It adds independent ground-truth legs when the tools are 
 
 - **asn1c**, when `asn1c` is on `PATH`, in `ASN1C_BIN_DIR` or in `/usr/local/bin`
   (`--asn1c-dir DIR` to point elsewhere, `--no-asn1c` to skip it).
+  Besides asn1c's XER of the records (`asn1c.B2X vs cpp.B2X` and the Rust and
+  Java rows), asn1c re-encodes that XER in CER (X.690 §9: indefinite lengths
+  everywhere, strings above 1000 octets split into segments) and each runtime
+  must decode the CER file to the XER asn1c decodes from it
+  (`asn1c.B2X(asn1c.CER) vs cpp.B2X(asn1c.CER)`, and the same for `rust` and
+  `java`). The reference is asn1c's decode of the CER file, because CER can
+  change the form of a value: it sorts SET OF components by their CER encodings
+  (§9.3) and drops trailing zero bits of a BIT STRING with named bits (§11.2.2).
+  These rows gate. A type asn1c cannot encode in CER skips
+  them with asn1c's message (`asn1c CER leg: skipped (...)`). asn1c stops at
+  the first record it cannot encode in CER; the rows then cover the records
+  before it, and the sweep prints `asn1c CER leg: asn1c encoded N of M records
+  in CER (...)`.
 - **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
   it). The schema is compiled once with `-bber +der` and once with `-buper`, and
   `erl_harness.escript` adds these rows per target:
