@@ -95,6 +95,22 @@ struct IBerTypeHandler {
                                                   Asn1Object* dest) const {
         return decode_value(codec, content, def, dest);
     }
+
+    /// @brief True for a handler whose type may also be encoded in
+    ///        constructed form as segments (BIT STRING, OCTET STRING,
+    ///        character strings, X.690 §8.6.4, §8.7.3, §8.23.6). Only these
+    ///        get \c decode_constructed_value() from \c BerCodec::decode_value;
+    ///        a constructed tag over any other type (an IMPLICIT-tagged
+    ///        SEQUENCE, say) goes to \c decode_value() directly.
+    bool joins_segments() const { return joins_segments_; }
+
+protected:
+    constexpr IBerTypeHandler() = default;
+    /// @param joins_segments  See \c joins_segments().
+    constexpr explicit IBerTypeHandler(bool joins_segments) : joins_segments_(joins_segments) {}
+
+private:
+    bool joins_segments_ = false;
 };
 
 // ---------------------------------------------------------------------------
