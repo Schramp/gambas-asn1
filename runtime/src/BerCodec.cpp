@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
-#include <format>
 #include <vector>
 #include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/BerCodec.hpp>
@@ -1505,6 +1504,20 @@ DecodeResult BerCodec::decode_value(BerReader& content,
                                      bool constructed) const {
     DecodeDepthGuard depth_guard{content.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
+    if (def.is_explicit) {
+        // An IMPLICIT tag on a type whose own tag is EXPLICIT replaces that
+        // outer tag only (X.680 §31.2.7): the contents are the one TLV the
+        // EXPLICIT tag wraps, the type's encoding with its natural tag.
+        TypeDescriptor inner = def;
+        inner.tag = def.natural_tag;
+        inner.is_explicit = false;
+        auto res = ber_handler_of(inner).decode(*this, content, inner, dest);
+        if (res.has_value() && !content.at_end())
+            return decode_err(DecodeError(std::string("trailing data after the EXPLICIT-tagged value of ") +
+                                          def.name, content.pos()));
+        if (res.has_value()) validate_on_decode("BER", def, dest);
+        return res;
+    }
     const auto& h = ber_handler_of(def);
     auto res = constructed && h.joins_segments() ? h.decode_constructed_value(*this, content, def, dest)
                                                  : h.decode_value(*this, content, def, dest);

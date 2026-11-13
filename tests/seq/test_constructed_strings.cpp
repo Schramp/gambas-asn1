@@ -19,6 +19,8 @@
 #include "Tagged.hpp"
 #include "Opt.hpp"
 #include "OptSet.hpp"
+#include "Lab.hpp"
+#include "LabChoice.hpp"
 #include "Wrapped.hpp"
 
 using namespace asn1;
@@ -73,6 +75,8 @@ static const std::map<std::string, std::function<Outcome(const std::vector<uint8
     {"Wrapped", roundtrip<Wrapped>},
     {"Opt", roundtrip<Opt>},
     {"OptSet", roundtrip<OptSet>},
+    {"Lab", roundtrip<Lab>},
+    {"LabChoice", roundtrip<LabChoice>},
 };
 
 static void vectors(const char* path) {
@@ -140,6 +144,12 @@ int main(int argc, char** argv) {
     accepted("constructed OPTIONAL character string", "Opt", "3080A10504034A6F6E0000", "300581034A6F6E");
     accepted("SET members out of order, one constructed", "OptSet",
              "310AA1050403414243800141", "31088001418103414243");
+    accepted("IMPLICIT tag on EXPLICIT-tagged types", "Lab",
+             "301EA8050C03616263A30F170D3234303130313132303030305AA60404020102", "301EA8050C03616263A30F170D3234303130313132303030305AA60404020102");
+    accepted("IMPLICIT tag on an EXPLICIT-tagged type, inner value segmented", "Lab",
+             "3022A8050C03616263A30F170D3234303130313132303030305AA6082406040101040102", "301EA8050C03616263A30F170D3234303130313132303030305AA60404020102");
+    accepted("CHOICE alternative: IMPLICIT tag on an EXPLICIT-tagged type", "LabChoice",
+             "A8050C03616263", "A8050C03616263");
 
     refused("character string segment with its own tag", "Name", unhex("3A051A034A6F6E"),
             "segment of a constructed string is not an OCTET STRING");
