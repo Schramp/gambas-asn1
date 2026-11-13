@@ -25,4 +25,16 @@ Lab ::= SEQUENCE { c [8] IMPLICIT Label, t [3] IMPLICIT Stamp, o [6] IMPLICIT Oc
 LabChoice ::= CHOICE { c [8] IMPLICIT Label, n [1] INTEGER }
 -- BerProjection leaves: an IMPLICIT-tagged SEQUENCE and an EXPLICIT-tagged string.
 Outer ::= SEQUENCE { p [0] Tagged, x [1] EXPLICIT IA5String }
+-- CHOICE alternatives in segments, through each of the decoder's alternative
+-- lookups: a context-tag index, a dispatch table (an untagged CHOICE
+-- alternative), and a linear scan (universal and context tags mixed).
+CtxChoice ::= CHOICE { a [0] OCTET STRING, b [1] IA5String }
+NestChoice ::= CHOICE { x CtxChoice, y [2] OCTET STRING }
+MixChoice ::= CHOICE { a [0] OCTET STRING, b IA5String }
+-- Form checks: INTEGER is primitive only (X.690 §8.3.1), a SEQUENCE
+-- constructed only (§8.9.1), and a UTCTime TLV must carry its own tag.
+Num ::= SEQUENCE { n [1] INTEGER }
+When ::= SEQUENCE { t UTCTime }
+Inner ::= SEQUENCE { a INTEGER }
+Holder ::= SEQUENCE { s Inner OPTIONAL, n INTEGER }
 END

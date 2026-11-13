@@ -2297,7 +2297,20 @@ constructed string segments nest deeper than 256 levels
 
 The segments of a character string are OCTET STRINGs (X.690 §8.23.6), not the
 string type itself; end-of-contents octets inside a definite length are a
-wrong segment tag. Test vectors: `tests/vectors/constructed_strings_test.vectors`
+wrong segment tag.
+
+Only strings take the constructed form. BOOLEAN, INTEGER, ENUMERATED, REAL,
+NULL, OBJECT IDENTIFIER and RELATIVE-OID are primitive only (X.690 §8.2.1,
+§8.3.1, §8.4, §8.5.1, §8.8.1, §8.19.1, §8.20.1), and SEQUENCE, SET,
+SEQUENCE OF and SET OF constructed only (§8.9.1–§8.12.1). A value in the
+other form fails the decode. Under an IMPLICIT tag C++ reports, for example:
+
+```
+constructed encoding of primitive type INTEGER
+```
+
+Rust and Java report the tag they expected (`expected tag ..., got ...`).
+Test vectors: `tests/vectors/constructed_strings_test.vectors`
 (asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples). Random
 records in constructed form: `randgen --corrupt-percent P --corrupt-mode segment`.
 

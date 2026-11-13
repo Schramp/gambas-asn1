@@ -6,11 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.constructed_strings.Bits;
+import gen.constructed_strings.CtxChoice;
+import gen.constructed_strings.Holder;
+import gen.constructed_strings.MixChoice;
 import gen.constructed_strings.Name;
+import gen.constructed_strings.NestChoice;
+import gen.constructed_strings.Num;
 import gen.constructed_strings.Opt;
 import gen.constructed_strings.OptSet;
 import gen.constructed_strings.Plain;
 import gen.constructed_strings.Tagged;
+import gen.constructed_strings.When;
 import gen.constructed_strings.Wrapped;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
@@ -40,14 +46,20 @@ import org.junit.jupiter.params.provider.MethodSource;
 class ConstructedStringsTest {
     private static final HexFormat HEX = HexFormat.of().withUpperCase();
 
-    static final Map<String, Supplier<AsMemberRef>> TYPES = Map.of(
-            "Tagged", Tagged::new,
-            "Plain", Plain::new,
-            "Bits", Bits::new,
-            "Name", Name::new,
-            "Wrapped", Wrapped::new,
-            "Opt", Opt::new,
-            "OptSet", OptSet::new);
+    static final Map<String, Supplier<AsMemberRef>> TYPES = Map.ofEntries(
+            Map.entry("Tagged", Tagged::new),
+            Map.entry("Plain", Plain::new),
+            Map.entry("Bits", Bits::new),
+            Map.entry("Name", Name::new),
+            Map.entry("Wrapped", Wrapped::new),
+            Map.entry("Opt", Opt::new),
+            Map.entry("OptSet", OptSet::new),
+            Map.entry("CtxChoice", CtxChoice::new),
+            Map.entry("NestChoice", NestChoice::new),
+            Map.entry("MixChoice", MixChoice::new),
+            Map.entry("Num", Num::new),
+            Map.entry("When", When::new),
+            Map.entry("Holder", Holder::new));
 
     /** Decodes {@code ber} as the whole input, then re-encodes the value. */
     private static byte[] roundtrip(String type, byte[] ber) throws DecodeException {
@@ -93,7 +105,13 @@ class ConstructedStringsTest {
                         "3080A08004024A6F04016E0000A2070402ABCD0401EF0000", "300A80034A6F6E8203ABCDEF"),
                 Arguments.of("constructed OPTIONAL character string", "Opt", "3080A10504034A6F6E0000", "300581034A6F6E"),
                 Arguments.of("SET members out of order, one constructed", "OptSet",
-                        "310AA1050403414243800141", "31088001418103414243"));
+                        "310AA1050403414243800141", "31088001418103414243"),
+                Arguments.of("CHOICE context-tag index, segmented alternative", "CtxChoice", "A006040141040142", "80024142"),
+                Arguments.of("CHOICE context-tag index, segmented character string", "CtxChoice", "A106040141040142", "81024142"),
+                Arguments.of("CHOICE dispatch table, segmented alternative", "NestChoice", "A206040141040142", "82024142"),
+                Arguments.of("CHOICE dispatch table, via the untagged CHOICE", "NestChoice", "A106040141040142", "81024142"),
+                Arguments.of("CHOICE linear scan, segmented IMPLICIT alternative", "MixChoice", "A006040141040142", "80024142"),
+                Arguments.of("CHOICE linear scan, segmented untagged string", "MixChoice", "3606040141040142", "16024142"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -127,7 +145,10 @@ class ConstructedStringsTest {
                         HEX.parseHex("300DA00680044A6F6E658101008200"),
                         "segment of a constructed string is not an OCTET STRING"),
                 Arguments.of("segments nested 300 deep", "Name", deep,
-                        "constructed string segments nest deeper than 256 levels"));
+                        "constructed string segments nest deeper than 256 levels"),
+                Arguments.of("constructed IMPLICIT INTEGER", "Num", HEX.parseHex("3005A103020105"), "expected tag"),
+                Arguments.of("UTCTime member with an OCTET STRING tag", "When", HEX.parseHex("300724050403313233"), "expected tag"),
+                Arguments.of("OPTIONAL SEQUENCE in primitive form", "Holder", HEX.parseHex("30051003020105"), "mandatory member 'n' missing"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -146,9 +167,9 @@ class ConstructedStringsTest {
         assertEquals("Jones", w.c().value().value.get());
     }
 
-    /** The primitive form still decodes as before. */
+    /** A primitive string decodes and re-encodes to itself. */
     @Test
-    void primitiveFormUnchanged() throws DecodeException {
+    void primitiveFormRoundTrips() throws DecodeException {
         assertArrayEquals(HEX.parseHex("1A054A6F6E6573"), roundtrip("Name", HEX.parseHex("1A054A6F6E6573")));
     }
 }

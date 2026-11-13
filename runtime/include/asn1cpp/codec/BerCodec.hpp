@@ -57,6 +57,18 @@ public:
 class BerCodec;
 
 /// @brief Internal per-type BER handler interface.
+/// @brief Which BER encoding forms a handler's type allows, checked by
+///        \c BerCodec::decode_value on a value whose IMPLICIT tag the
+///        caller already consumed.
+enum class BerForm : uint8_t {
+    Unchecked,  ///< no check there: SEQUENCE, SET, SEQUENCE OF, CHOICE, ANY
+    Primitive,  ///< primitive only: BOOLEAN, INTEGER, ENUMERATED, REAL, NULL,
+                ///< OBJECT IDENTIFIER, RELATIVE-OID (X.690 §8.2.1, §8.3.1,
+                ///< §8.4, §8.5.1, §8.8.1, §8.19.1, §8.20.1)
+    Segmented,  ///< primitive, or constructed as segments: BIT STRING, OCTET
+                ///< STRING, character strings (X.690 §8.6.4, §8.7.3, §8.23.6)
+};
+
 /// One stateless singleton exists per ASN.1 type kind (SEQUENCE, CHOICE, …)
 /// and per primitive tag.  Not part of the public API — use \c BerCodec directly.
 struct IBerTypeHandler {
@@ -96,21 +108,23 @@ struct IBerTypeHandler {
         return decode_value(codec, content, def, dest);
     }
 
+    /// @brief The encoding forms this handler's type allows; see \c BerForm.
+    BerForm form() const { return form_; }
+
     /// @brief True for a handler whose type may also be encoded in
-    ///        constructed form as segments (BIT STRING, OCTET STRING,
-    ///        character strings, X.690 §8.6.4, §8.7.3, §8.23.6). Only these
+    ///        constructed form as segments (\c BerForm::Segmented). Only these
     ///        get \c decode_constructed_value() from \c BerCodec::decode_value;
-    ///        a constructed tag over any other type (an IMPLICIT-tagged
-    ///        SEQUENCE, say) goes to \c decode_value() directly.
-    bool joins_segments() const { return joins_segments_; }
+    ///        a constructed tag over a \c BerForm::Unchecked type (an
+    ///        IMPLICIT-tagged SEQUENCE, say) goes to \c decode_value() directly.
+    bool joins_segments() const { return form_ == BerForm::Segmented; }
 
 protected:
     constexpr IBerTypeHandler() = default;
-    /// @param joins_segments  See \c joins_segments().
-    constexpr explicit IBerTypeHandler(bool joins_segments) : joins_segments_(joins_segments) {}
+    /// @param form  See \c form().
+    constexpr explicit IBerTypeHandler(BerForm form) : form_(form) {}
 
 private:
-    bool joins_segments_ = false;
+    BerForm form_ = BerForm::Unchecked;
 };
 
 // ---------------------------------------------------------------------------
@@ -164,7 +178,8 @@ public:
     /// @param dest   Pre-allocated, default-constructed target object.
     /// @param constructed  The consumed tag's constructed bit: a string type
     ///               then joins the segments of its constructed form
-    ///               (\c IBerTypeHandler::decode_constructed_value).
+    ///               (\c IBerTypeHandler::decode_constructed_value), and a
+    ///               primitive-only type (\c BerForm::Primitive) is an error.
     /// @return \c DecodeResult — check with \c .has_value(). On success the
     ///         value is checked against \p def's constraints, as decode() does.
     /// @see X.690 §8.14.3 — an IMPLICIT tag replaces the identifier only, so
