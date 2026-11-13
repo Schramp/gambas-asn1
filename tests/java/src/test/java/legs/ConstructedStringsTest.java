@@ -18,11 +18,13 @@ import gen.constructed_strings.Plain;
 import gen.constructed_strings.Tagged;
 import gen.constructed_strings.When;
 import gen.constructed_strings.Wrapped;
+import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.spec.ContainedStatus;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.Positions;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -174,6 +176,45 @@ class ConstructedStringsTest {
     void refused(String label, String type, byte[] ber, String error) {
         DecodeException e = assertThrows(DecodeException.class, () -> roundtrip(type, ber));
         assertTrue(e.getMessage().contains(error), e.getMessage());
+    }
+
+    /**
+     * A joined value's octets are spread over its segments: it keeps its
+     * encoding span but has no contents or value span, and a CONTAINING
+     * value decoded from it is not placed in the input.
+     */
+    @Test
+    void joinedValuesHaveNoContentsOrValueSpan() throws DecodeException {
+        Plain pl = new Plain();
+        Positions p = BerObject.decodeWithPositions(pl, HEX.parseHex("30102407040201020401030301001A000C00"), null)
+                .positions();
+        assertArrayEquals(new byte[] {1, 2, 3}, pl.o().get());
+        assertEquals(16, p.bitOffset(pl.o()));
+        assertEquals(72, p.sizeBits(pl.o()));
+        assertEquals(-1, p.contentsBitOffset(pl.o()));
+        assertEquals(-1, p.valueSizeBits(pl.o()));
+
+        Wrapped joined = new Wrapped();
+        p = BerObject.decodeWithPositions(joined, HEX.parseHex("300DA00B04021A0504054A6F6E6573"), null).positions();
+        assertEquals("Jones", joined.c().value().value.get());
+        assertEquals(-1, p.contentsBitOffset(joined.c()));
+        assertEquals(-1, p.bitOffset(joined.c().value()));
+
+        Wrapped primitive = new Wrapped();
+        p = BerObject.decodeWithPositions(primitive, HEX.parseHex("300980071A054A6F6E6573"), null).positions();
+        assertEquals(32, p.contentsBitOffset(primitive.c()));
+        assertEquals(32, p.bitOffset(primitive.c().value()));
+    }
+
+    /** Relaxed decoding takes a BIT STRING segment with unused bits and no octets as empty, as it does a primitive one. */
+    @Test
+    void relaxedReachesTheSegments() throws DecodeException {
+        for (String ber : List.of("030103", "2303030103")) {
+            Bits v = new Bits();
+            BerReader r = new BerReader(HEX.parseHex(ber)).withOptions(DecodeOptions.DEFAULT.withRelaxed(true));
+            BerObject.decode(v, r);
+            assertEquals("030100", HEX.formatHex(BerObject.encode(v)), ber);
+        }
     }
 
     /** The contained value is decoded from the joined segments, not from the segment TLVs. */

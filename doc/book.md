@@ -2827,7 +2827,12 @@ where the decoded value itself lies, without any encoding rule to apply:
 | CHOICE | its chosen alternative's value span |
 | PER OCTET STRING, BIT STRING, contained field | the octets or bits after the length determinant, unless the length is 16K or more (fragmented, X.691 §11.9.3.8) |
 
-Every other node reports -1.
+Every other node reports -1. A BER string sent in constructed form (segments,
+X.690 §8.7.3, as CER writes strings above 1000 octets) is joined from octets
+spread over its segment TLVs, so it has no contents or value span: it keeps
+its encoding span (`bitOffset`, `sizeBits`) and reports -1 for the others. The
+inner value of a contained field in constructed form then has no positions
+either, as its bytes are not one range of the input.
 `decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
 it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
@@ -2901,7 +2906,8 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   - BER: a BOOLEAN with more than one contents octet is TRUE when any of
     them is non-zero.
   - BER: a NULL with contents is accepted.
-  - BER: a BIT STRING with unused bits but no octets is empty.
+  - BER: a BIT STRING with unused bits but no octets is empty, also as a
+    segment of a constructed one.
   - PER and JER: data after the value is ignored.
   - XER: asn1c's text forms are accepted, the same as `decodeLenient`.
 - **Trace** (null by default) receives one line per member, alternative

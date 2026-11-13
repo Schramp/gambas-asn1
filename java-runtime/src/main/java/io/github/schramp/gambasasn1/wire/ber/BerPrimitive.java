@@ -144,7 +144,7 @@ public final class BerPrimitive {
         int to = from + v.remaining();
         boolean joined = segments >= 0 && tlv.tag().constructed();
         if (joined) {
-            v = new ByteSource(BerReader.joinSegments(v, segments));
+            v = new ByteSource(BerReader.joinSegments(v, segments, r.options().relaxed()));
         }
         switch (p) {
             // X.690 §8.2.2: any non-zero contents octet is TRUE.
@@ -186,9 +186,11 @@ public final class BerPrimitive {
             }
             default -> throw new DecodeException("no BER form for " + p.xerElementName(), start);
         }
-        if (r.positions() != null) {
+        // A joined value's octets are spread over its segments, so it has no
+        // contents or value span in the input.
+        if (r.positions() != null && !joined) {
             r.markContents(p, from, to);
-            if (p instanceof Asn1BitString b && to > from && !joined) {
+            if (p instanceof Asn1BitString b && to > from) {
                 // The value leaves out the unused-bits octet and the unused bits (X.690 §8.6.2).
                 long at = r.absoluteBit(from + 1);
                 r.positions().recordValue(p, at, at + b.bitCount());
