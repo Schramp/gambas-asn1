@@ -23,6 +23,12 @@
 #include "Lab.hpp"
 #include "LabChoice.hpp"
 #include "Outer.hpp"
+#include "CtxChoice.hpp"
+#include "NestChoice.hpp"
+#include "MixChoice.hpp"
+#include "Num.hpp"
+#include "When.hpp"
+#include "Holder.hpp"
 #include "Wrapped.hpp"
 
 using namespace asn1;
@@ -79,6 +85,12 @@ static const std::map<std::string, std::function<Outcome(const std::vector<uint8
     {"OptSet", roundtrip<OptSet>},
     {"Lab", roundtrip<Lab>},
     {"LabChoice", roundtrip<LabChoice>},
+    {"CtxChoice", roundtrip<CtxChoice>},
+    {"NestChoice", roundtrip<NestChoice>},
+    {"MixChoice", roundtrip<MixChoice>},
+    {"Num", roundtrip<Num>},
+    {"When", roundtrip<When>},
+    {"Holder", roundtrip<Holder>},
 };
 
 static void vectors(const char* path) {
@@ -210,6 +222,19 @@ int main(int argc, char** argv) {
     accepted("segments nested 29 deep", "Name", hex(nested(29)), "1A0141");
     refused("segments nested 30 deep", "Name", nested(30), "constructed string segments nest deeper than 30 levels");
     refused("segments nested 300 deep", "Name", nested(300), "constructed string segments nest deeper than 30 levels");
+
+    // Segmented CHOICE alternatives, through each alternative lookup.
+    accepted("CHOICE context-tag index, segmented alternative", "CtxChoice", "A006040141040142", "80024142");
+    accepted("CHOICE context-tag index, segmented character string", "CtxChoice", "A106040141040142", "81024142");
+    accepted("CHOICE dispatch table, segmented alternative", "NestChoice", "A206040141040142", "82024142");
+    accepted("CHOICE dispatch table, via the untagged CHOICE", "NestChoice", "A106040141040142", "81024142");
+    accepted("CHOICE linear scan, segmented IMPLICIT alternative", "MixChoice", "A006040141040142", "80024142");
+    accepted("CHOICE linear scan, segmented untagged string", "MixChoice", "3606040141040142", "16024142");
+
+    // Forms X.690 does not allow (asn1c refuses each too).
+    refused("constructed IMPLICIT INTEGER", "Num", unhex("3005A103020105"), "constructed encoding of primitive type");
+    refused("UTCTime member with an OCTET STRING tag", "When", unhex("300724050403313233"), "wrong tag for");
+    refused("OPTIONAL SEQUENCE in primitive form", "Holder", unhex("30051003020105"), "wrong tag for Inner");
 
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

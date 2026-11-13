@@ -70,6 +70,12 @@ fn by_type(name: &str, ber: &[u8]) -> Result<Vec<u8>, String> {
         "Wrapped" => roundtrip::<Wrapped::Wrapped>(ber),
         "Opt" => roundtrip::<Opt::Opt>(ber),
         "OptSet" => roundtrip::<OptSet::OptSet>(ber),
+        "CtxChoice" => roundtrip::<CtxChoice::CtxChoice>(ber),
+        "NestChoice" => roundtrip::<NestChoice::NestChoice>(ber),
+        "MixChoice" => roundtrip::<MixChoice::MixChoice>(ber),
+        "Num" => roundtrip::<Num::Num>(ber),
+        "When" => roundtrip::<When::When>(ber),
+        "Holder" => roundtrip::<Holder::Holder>(ber),
         _ => panic!("unknown type {name}"),
     }
 }
@@ -153,6 +159,19 @@ fn main() {
     accepted("segments nested 29 deep", "Name", &hex(&nested(29)), "1A0141", &mut f);
     refused("segments nested 30 deep", "Name", &nested(30), "constructed string segments nest deeper than 30 levels", &mut f);
     refused("segments nested 300 deep", "Name", &nested(300), "constructed string segments nest deeper than 30 levels", &mut f);
+
+    // Segmented CHOICE alternatives, through each alternative lookup.
+    accepted("CHOICE context-tag index, segmented alternative", "CtxChoice", "A006040141040142", "80024142", &mut f);
+    accepted("CHOICE context-tag index, segmented character string", "CtxChoice", "A106040141040142", "81024142", &mut f);
+    accepted("CHOICE dispatch table, segmented alternative", "NestChoice", "A206040141040142", "82024142", &mut f);
+    accepted("CHOICE dispatch table, via the untagged CHOICE", "NestChoice", "A106040141040142", "81024142", &mut f);
+    accepted("CHOICE linear scan, segmented IMPLICIT alternative", "MixChoice", "A006040141040142", "80024142", &mut f);
+    accepted("CHOICE linear scan, segmented untagged string", "MixChoice", "3606040141040142", "16024142", &mut f);
+
+    // Forms X.690 does not allow (asn1c refuses each too).
+    refused("constructed IMPLICIT INTEGER", "Num", &unhex("3005A103020105"), "expected tag", &mut f);
+    refused("UTCTime member with an OCTET STRING tag", "When", &unhex("300724050403313233"), "expected tag", &mut f);
+    refused("OPTIONAL SEQUENCE in primitive form", "Holder", &unhex("30051003020105"), "expected tag", &mut f);
 
     println!("{}", if f == 0 { "all passed" } else { "FAILED" });
     std::process::exit(if f == 0 { 0 } else { 1 });

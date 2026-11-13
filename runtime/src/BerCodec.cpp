@@ -155,6 +155,7 @@ struct ErrorBerHandler final : IBerTypeHandler {
 };
 
 struct BooleanBerHandler final : IBerTypeHandler {
+    constexpr BooleanBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -185,6 +186,7 @@ struct BooleanBerHandler final : IBerTypeHandler {
 };
 
 struct IntegerBerHandler final : IBerTypeHandler {
+    constexpr IntegerBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         int64_t v = static_cast<const Integer*>(src)->value();
@@ -214,6 +216,7 @@ private:
 };
 
 struct UIntegerBerHandler final : IBerTypeHandler {
+    constexpr UIntegerBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -243,6 +246,7 @@ private:
 };
 
 struct NullBerHandler final : IBerTypeHandler {
+    constexpr NullBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object*) const override {
         w.write_primitive(def.tag, {});
@@ -262,6 +266,7 @@ struct NullBerHandler final : IBerTypeHandler {
 };
 
 struct RealBerHandler final : IBerTypeHandler {
+    constexpr RealBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -432,7 +437,7 @@ static bool same_string_tag(const Tag& tag, const Tag& expected) {
 }
 
 struct BitStringBerHandler final : IBerTypeHandler {
-    constexpr BitStringBerHandler() : IBerTypeHandler(true) {}
+    constexpr BitStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -473,7 +478,7 @@ struct BitStringBerHandler final : IBerTypeHandler {
 };
 
 struct OctetStringBerHandler final : IBerTypeHandler {
-    constexpr OctetStringBerHandler() : IBerTypeHandler(true) {}
+    constexpr OctetStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -517,7 +522,7 @@ struct OctetStringBerHandler final : IBerTypeHandler {
 ///        value once all its members are known (\c decode_contained_members).
 ///        A modified inner value is re-encoded on write.
 struct ContainedBerHandler final : IBerTypeHandler {
-    constexpr ContainedBerHandler() : IBerTypeHandler(true) {}
+    constexpr ContainedBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the contained bytes as a primitive TLV with \c def.tag:
     ///        the universal OCTET STRING tag, or the tag of a type assignment
     ///        (X.680 §31.2).
@@ -563,6 +568,7 @@ struct ContainedBerHandler final : IBerTypeHandler {
 };
 
 struct OidBerHandler final : IBerTypeHandler {
+    constexpr OidBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -593,6 +599,7 @@ struct OidBerHandler final : IBerTypeHandler {
 };
 
 struct RelOidBerHandler final : IBerTypeHandler {
+    constexpr RelOidBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -641,19 +648,23 @@ static DecodeResult set_string_contents(const BerReader& r, std::span<const uint
 }
 
 struct UtcTimeBerHandler final : IBerTypeHandler {
-    constexpr UtcTimeBerHandler() : IBerTypeHandler(true) {}
+    constexpr UtcTimeBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
-    /// @brief Read one TLV and take its contents, in primitive or
-    ///        constructed form (X.690 §8.25, §8.26: encoded as a VisibleString).
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), in primitive or
+    ///        constructed form, and take its contents (X.690 §8.25, §8.26:
+    ///        encoded as a VisibleString).
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (!same_string_tag(tlv->tag, def.tag))
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         return set_string_contents(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
@@ -668,19 +679,23 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
 };
 
 struct GenTimeBerHandler final : IBerTypeHandler {
-    constexpr GenTimeBerHandler() : IBerTypeHandler(true) {}
+    constexpr GenTimeBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
-    /// @brief Read one TLV and take its contents, in primitive or
-    ///        constructed form (X.690 §8.25, §8.26: encoded as a VisibleString).
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), in primitive or
+    ///        constructed form, and take its contents (X.690 §8.25, §8.26:
+    ///        encoded as a VisibleString).
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (!same_string_tag(tlv->tag, def.tag))
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         return set_string_contents(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
@@ -695,7 +710,7 @@ struct GenTimeBerHandler final : IBerTypeHandler {
 };
 
 struct AsnStringBerHandler final : IBerTypeHandler {
-    constexpr AsnStringBerHandler() : IBerTypeHandler(true) {}
+    constexpr AsnStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
@@ -802,6 +817,7 @@ struct AnyBerHandler final : IBerTypeHandler {
 };
 
 struct EnumeratedBerHandler final : IBerTypeHandler {
+    constexpr EnumeratedBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         long v = static_cast<const EnumValue*>(src)->value();
@@ -1554,6 +1570,8 @@ DecodeResult BerCodec::decode_value(BerReader& content,
         return res;
     }
     const auto& h = ber_handler_of(def);
+    if (constructed && h.form() == BerForm::Primitive)
+        return decode_err(DecodeError(std::string("constructed encoding of primitive type ") + def.name, content.pos()));
     auto res = constructed && h.joins_segments() ? h.decode_constructed_value(*this, content, def, dest)
                                                  : h.decode_value(*this, content, def, dest);
     if (res.has_value()) validate_on_decode("BER", def, dest);

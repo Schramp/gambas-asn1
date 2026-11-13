@@ -52,7 +52,9 @@ impl BerTagging {
     /// number only: a string member may arrive in primitive or constructed
     /// form (X.690 §8.6.1, §8.7.1, §8.23.6), and the members a decoder
     /// tells apart by tag have distinct class and number (X.680 §25.6.1,
-    /// §25.7, §27.3).
+    /// §25.7, §27.3). The member's decoder then checks the form: a
+    /// SEQUENCE, SET, SEQUENCE OF or EXPLICIT tag sent primitive is an
+    /// error (X.690 §8.9.1-§8.12.1, §8.14), as in C++.
     pub fn starts_with(self, tag: Tag, t: Tag) -> bool {
         match self {
             BerTagging::DelegateChoice(tags) => tags().iter().any(|d| d.tag.matches_identifier(&t)),

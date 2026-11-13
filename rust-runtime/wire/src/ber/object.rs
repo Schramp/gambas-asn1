@@ -116,7 +116,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
         MemberRefMut::Choice(inner) => match framing {
             BerTagging::Explicit(tag) => {
                 let tlv = r.read_tlv()?;
-                if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
                 let mut inner_r = r.sub(tlv.value);
@@ -131,7 +131,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
             match framing {
                 BerTagging::Explicit(tag) => {
                     let tlv = r.read_tlv()?;
-                    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                    if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                     }
                     let mut outer = r.sub(tlv.value);
@@ -140,14 +140,14 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                 }
                 BerTagging::Implicit(tag) => {
                     let tlv = r.read_tlv()?;
-                    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                    if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                     }
                     decode_seqof_content(inner, r.sub(tlv.value))
                 }
                 BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => {
                     let tlv = r.read_tlv()?;
-                    if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
+                    if !tlv.tag.constructed || tlv.tag.class != natural.class || tlv.tag.number != natural.number {
                         return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
                     }
                     decode_seqof_content(inner, r.sub(tlv.value))
@@ -158,7 +158,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
         MemberRefMut::Enumerated(slot, _spec) => match framing {
             BerTagging::Explicit(tag) => {
                 let tlv = r.read_tlv()?;
-                if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
                 let mut inner_r = r.sub(tlv.value);
@@ -175,7 +175,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
     match ber {
         BerTagging::Explicit(tag) => {
             let tlv = r.read_tlv()?;
-            if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+            if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
             let mut outer = r.sub(tlv.value);
@@ -185,7 +185,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
         }
         BerTagging::Implicit(tag) => {
             let tlv = r.read_tlv()?;
-            if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+            if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
             let mut content = r.sub(tlv.value);
@@ -194,7 +194,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
         BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => {
             let natural = inner.spec().tag;
             let tlv = r.read_tlv()?;
-            if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
+            if !tlv.tag.constructed || tlv.tag.class != natural.class || tlv.tag.number != natural.number {
                 return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
             }
             let mut content = r.sub(tlv.value);
@@ -363,7 +363,7 @@ fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Decod
 pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     let tag = obj.spec().tag;
     let tlv = r.read_tlv()?;
-    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+    if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
     }
     let mut content = r.sub(tlv.value);
@@ -419,7 +419,7 @@ pub fn encode_choice_tagged(obj: &dyn Asn1Choice, tag: Tag, out: &mut Vec<u8>, o
 /// Decode counterpart of `encode_choice_tagged`.
 pub fn decode_choice_tagged_into(obj: &mut dyn Asn1Choice, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
     let tlv = r.read_tlv()?;
-    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+    if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
     }
     let mut inner = r.sub(tlv.value);
@@ -430,7 +430,7 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     match obj.spec().own_tag {
         Some(tag) => {
             let tlv = r.read_tlv()?;
-            if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+            if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
             let mut inner = r.sub(tlv.value);
