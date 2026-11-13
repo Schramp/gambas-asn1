@@ -122,6 +122,8 @@ fn main() {
     accepted("empty constructed BIT STRING", "Bits", "2300", "030100", &mut f);
     accepted("nested constructed segment", "Name", "3A0B240504034A6F6E04026573", "1A054A6F6E6573", &mut f);
     accepted("nested indefinite segment", "Name", "3A80248004034A6F6E0000040265730000", "1A054A6F6E6573", &mut f);
+    accepted("segments at several nesting levels", "Name",
+             "3A80248004014124800401420000040143000024060401440401450401460000", "1A06414243444546", &mut f);
     accepted("CONTAINING value split across segments", "Wrapped",
              "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573", &mut f);
     accepted("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0", &mut f);
@@ -152,8 +154,11 @@ fn main() {
           w.as_ref().is_ok_and(|w| w.c.status() == ContainedStatus::Decoded
                                    && w.c.value().is_some_and(|n| n.0 .0.as_str() == "Jones")), &mut f);
 
-    let deep = [vec![0x3Au8, 0x80], [0x24u8, 0x80].repeat(300), vec![0u8; 2 * 301]].concat();
-    refused("segments nested 300 deep", "Name", &deep, "constructed string segments nest deeper than", &mut f);
+    // asn1c's limit: 29 nested segments inside the string decode, 30 do not.
+    let nested = |n: usize| [vec![0x3Au8, 0x80], [0x24u8, 0x80].repeat(n), vec![0x04, 0x01, 0x41], vec![0u8; 2 * (n + 1)]].concat();
+    accepted("segments nested 29 deep", "Name", &hex(&nested(29)), "1A0141", &mut f);
+    refused("segments nested 30 deep", "Name", &nested(30), "constructed string segments nest deeper than 30 levels", &mut f);
+    refused("segments nested 300 deep", "Name", &nested(300), "constructed string segments nest deeper than 30 levels", &mut f);
 
     // Segmented CHOICE alternatives, through each alternative lookup.
     accepted("CHOICE context-tag index, segmented alternative", "CtxChoice", "A006040141040142", "80024142", &mut f);

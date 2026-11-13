@@ -98,6 +98,8 @@ class ConstructedStringsTest {
                 Arguments.of("empty constructed BIT STRING", "Bits", "2300", "030100"),
                 Arguments.of("nested constructed segment", "Name", "3A0B240504034A6F6E04026573", "1A054A6F6E6573"),
                 Arguments.of("nested indefinite segment", "Name", "3A80248004034A6F6E0000040265730000", "1A054A6F6E6573"),
+                Arguments.of("segments at several nesting levels", "Name",
+                        "3A80248004014124800401420000040143000024060401440401450401460000", "1A06414243444546"),
                 Arguments.of("CONTAINING value split across segments", "Wrapped",
                         "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573"),
                 Arguments.of("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0"),
@@ -120,14 +122,28 @@ class ConstructedStringsTest {
         assertEquals(der, HEX.formatHex(roundtrip(type, HEX.parseHex(ber))));
     }
 
-    static Stream<Arguments> refused() {
-        byte[] deep = new byte[2 + 2 * 300 + 2 * 301];
-        deep[0] = 0x3A;
-        deep[1] = (byte) 0x80;
-        for (int i = 0; i < 300; i++) {
-            deep[2 + 2 * i] = 0x24;
-            deep[3 + 2 * i] = (byte) 0x80;
+    /** {@code 3A 80}, {@code n} nested {@code 24 80}, {@code 04 01 41}, the end-of-contents octets. */
+    static byte[] nested(int n) {
+        byte[] b = new byte[2 + 2 * n + 3 + 2 * (n + 1)];
+        b[0] = 0x3A;
+        b[1] = (byte) 0x80;
+        for (int i = 0; i < n; i++) {
+            b[2 + 2 * i] = 0x24;
+            b[3 + 2 * i] = (byte) 0x80;
         }
+        b[2 + 2 * n] = 0x04;
+        b[3 + 2 * n] = 0x01;
+        b[4 + 2 * n] = 0x41;
+        return b;
+    }
+
+    /** asn1c's limit: 29 nested segments inside the string decode. */
+    @Test
+    void segmentsNested29Deep() throws DecodeException {
+        assertEquals("1A0141", HEX.formatHex(roundtrip("Name", nested(29))));
+    }
+
+    static Stream<Arguments> refused() {
         return Stream.of(
                 Arguments.of("character string segment with its own tag", "Name", HEX.parseHex("3A051A034A6F6E"),
                         "segment of a constructed string is not an OCTET STRING"),
@@ -144,8 +160,10 @@ class ConstructedStringsTest {
                 Arguments.of("IMPLICIT member segment with the member's tag", "Tagged",
                         HEX.parseHex("300DA00680044A6F6E658101008200"),
                         "segment of a constructed string is not an OCTET STRING"),
-                Arguments.of("segments nested 300 deep", "Name", deep,
-                        "constructed string segments nest deeper than 256 levels"),
+                Arguments.of("segments nested 30 deep", "Name", nested(30),
+                        "constructed string segments nest deeper than 30 levels"),
+                Arguments.of("segments nested 300 deep", "Name", nested(300),
+                        "constructed string segments nest deeper than 30 levels"),
                 Arguments.of("constructed IMPLICIT INTEGER", "Num", HEX.parseHex("3005A103020105"), "expected tag"),
                 Arguments.of("UTCTime member with an OCTET STRING tag", "When", HEX.parseHex("300724050403313233"), "expected tag"),
                 Arguments.of("OPTIONAL SEQUENCE in primitive form", "Holder", HEX.parseHex("30051003020105"), "mandatory member 'n' missing"));

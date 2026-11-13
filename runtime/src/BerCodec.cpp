@@ -296,54 +296,88 @@ struct RealBerHandler final : IBerTypeHandler {
     }
 };
 
+/// @brief Deepest nesting of constructed string segments a decoder accepts,
+///        counting the constructed string itself as level 1. X.690 sets no
+///        limit; this is the limit of the reference decoder (asn1c,
+///        \c BER_EXPLICIT_TAG_DEPTH_LIMIT), and CER never nests segments.
+inline constexpr int kMaxSegmentDepth = 30;
+
 /// @brief Append the segments of a constructed BIT STRING, OCTET STRING or
 ///        character string to \p out: each one a primitive or (nested)
 ///        constructed encoding with the universal tag \p universal, joined
-///        in order. Part of \c join_string_contents.
-/// @param r          Reader over the constructed contents (for an
-///                   indefinite length, without the end-of-contents octets).
+///        in order. Reads each segment's identifier and length only, and
+///        walks a nested indefinite-length segment on the same reader up to
+///        its end-of-contents, so every octet is visited once whatever the
+///        nesting. Part of \c join_string_contents.
+/// @param r          Reader positioned at the first segment.
 /// @param universal  3 for BIT STRING segments, 4 for OCTET STRING segments
 ///                   (which character strings use too, X.690 §8.23.6).
-/// @param depth      Nesting level of \p r, limited to \c kMaxDecodeDepth.
+/// @param depth      Nesting level of these segments, limited to \c kMaxSegmentDepth.
+/// @param until_eoc  True for the segments of an indefinite-length segment:
+///                   stop after its end-of-contents (X.690 §8.1.5). False:
+///                   stop at the end of \p r.
 /// @param out        Joined contents; for BIT STRING without the unused-bits octets.
 /// @param unused     BIT STRING only: unused bits of the last segment so far.
 /// @return An error for a wrong segment tag, an unused-bits count in a
-///         segment that is not the last, or too deep nesting.
+///         segment that is not the last, too deep nesting, or a malformed
+///         or truncated segment header.
 /// @see X.690 §8.6.4 (BIT STRING), §8.7.3 (OCTET STRING), §8.23.6 (character strings).
-static DecodeResult join_segments(BerReader r, uint32_t universal, int depth,
+static DecodeResult join_segments(BerReader& r, uint32_t universal, int depth, bool until_eoc,
                                   std::vector<uint8_t>& out, uint8_t& unused) {
-    if (depth > kMaxDecodeDepth)
+    if (depth > kMaxSegmentDepth)
         return decode_err(DecodeError("constructed string segments nest deeper than " +
-                                      std::to_string(kMaxDecodeDepth) + " levels", r.pos()));
+                                      std::to_string(kMaxSegmentDepth) + " levels", r.pos()));
     const bool bits = universal == 3;
-    while (!r.at_end()) {
+    for (;;) {
+        if (until_eoc) {
+            auto eoc = r.peek(2);
+            if (eoc.size() == 2 && eoc[0] == 0 && eoc[1] == 0) {
+                (void)r.read_bytes(2);
+                return decode_ok();
+            }
+            if (r.at_end())
+                return decode_err(DecodeError("unterminated indefinite-length encoding", r.pos()));
+        } else if (r.at_end()) {
+            return decode_ok();
+        }
         const std::size_t at = r.pos();
-        auto seg = r.read_tlv();
-        if (!seg) return decode_err(seg.error());
-        if (seg->tag.cls != TagClass::Universal || seg->tag.number != universal)
+        auto tag = r.read_tag();
+        if (!tag) return decode_err(tag.error());
+        if (tag->cls != TagClass::Universal || tag->number != universal)
             return decode_err(DecodeError(std::string("segment of a constructed ") +
                                           (bits ? "BIT STRING" : "string") + " is not a" +
                                           (bits ? " BIT STRING" : "n OCTET STRING"), at));
-        if (seg->tag.constructed) {
-            auto ok = join_segments(r.sub(seg->value), universal, depth + 1, out, unused);
+        auto len = r.read_length();
+        if (!len) return decode_err(len.error());
+        if (len->indefinite) {
+            if (!tag->constructed)
+                return decode_err(DecodeError("indefinite-length encoding on primitive type", r.pos() - 1));
+            auto ok = join_segments(r, universal, depth + 1, true, out, unused);
             if (!ok) return ok;
             continue;
         }
-        auto value = seg->value;
+        auto value = r.read_bytes(len->len);
+        if (!value) return decode_err(value.error());
+        if (tag->constructed) {
+            BerReader sub = r.sub(*value);
+            auto ok = join_segments(sub, universal, depth + 1, false, out, unused);
+            if (!ok) return ok;
+            continue;
+        }
+        auto v = *value;
         if (bits) {
             if (unused != 0)
                 return decode_err(DecodeError("BIT STRING segment other than the last has unused bits", at));
-            if (value.empty())
+            if (v.empty())
                 return decode_err(DecodeError("BIT STRING segment is empty (need at least unused-bits byte)", at));
-            if (value[0] > 7 || (value[0] != 0 && value.size() == 1))
+            if (v[0] > 7 || (v[0] != 0 && v.size() == 1))
                 return decode_err(DecodeError(std::format("BIT STRING segment has {} unused bits in {} octets",
-                                                          value[0], value.size() - 1), at));
-            unused = value[0];
-            value = value.subspan(1);
+                                                          v[0], v.size() - 1), at));
+            unused = v[0];
+            v = v.subspan(1);
         }
-        out.insert(out.end(), value.begin(), value.end());
+        out.insert(out.end(), v.begin(), v.end());
     }
-    return decode_ok();
 }
 
 /// @brief Join the segments of a constructed string value into \p buf
@@ -363,7 +397,8 @@ join_string_contents(std::span<const uint8_t> value, uint32_t universal,
     buf.reserve(value.size());
     if (universal == 3) buf.push_back(0);
     uint8_t unused = 0;
-    auto ok = join_segments(parent.sub(value), universal, 1, buf, unused);
+    BerReader segments = parent.sub(value);
+    auto ok = join_segments(segments, universal, 1, false, buf, unused);
     if (!ok) return ok;
     if (universal == 3) buf[0] = unused;
     if (debug_flags() & DBG_BER_SEGMENTS)
