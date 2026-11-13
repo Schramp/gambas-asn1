@@ -397,6 +397,9 @@ with_string_contents(const BerReader& parent, std::span<const uint8_t> value,
 
 /// @brief True when \p tag is \p expected in either form: a string type
 ///        may be encoded primitive or constructed (X.690 §8.6.1, §8.7.1, §8.23.6).
+/// @param tag       Tag read from the wire.
+/// @param expected  The type's tag (\c def.tag).
+/// @return Same class and number, whatever the constructed bit.
 static bool same_string_tag(const Tag& tag, const Tag& expected) {
     return tag.cls == expected.cls && tag.number == expected.number;
 }
@@ -431,6 +434,13 @@ struct BitStringBerHandler final : IBerTypeHandler {
         return set(content, content.rest(), true, dest);
     }
     /// @brief Decode primitive or constructed BIT STRING contents into \p dest.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
     static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
                             bool constructed, Asn1Object* dest) {
         return with_string_contents(r, value, constructed, 3, [dest](std::span<const uint8_t> contents) {
@@ -472,6 +482,13 @@ struct OctetStringBerHandler final : IBerTypeHandler {
         return set(content, content.rest(), true, dest);
     }
     /// @brief Store primitive or constructed OCTET STRING contents in \p dest.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
     static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
                             bool constructed, Asn1Object* dest) {
         return with_string_contents(r, value, constructed, 4, [dest](std::span<const uint8_t> contents) {
@@ -523,6 +540,13 @@ struct ContainedBerHandler final : IBerTypeHandler {
         return set(content, content.rest(), true, dest);
     }
     /// @brief Keep primitive or constructed OCTET STRING contents as the raw contained bytes.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
     static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
                             bool constructed, Asn1Object* dest) {
         return with_string_contents(r, value, constructed, 4, [dest](std::span<const uint8_t> contents) {

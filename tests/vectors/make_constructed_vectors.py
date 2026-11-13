@@ -7,8 +7,11 @@ INPUTS.in holds one row per value (# starts a comment):
   xer<TAB>Type<TAB>XER             asn1c encodes the value in CER, which
                                    segments strings longer than 1000 octets
                                    (X.690 §9.2), and in DER
-  ber<TAB>Type<TAB>hex<TAB>source  a constructed BER encoding copied from a
-                                   standard; asn1c decodes it to DER
+  ber<TAB>Type<TAB>hex<TAB>primitive<TAB>source
+                                   a constructed BER encoding and the
+                                   primitive encoding of the same value,
+                                   both copied from a standard; asn1c's
+                                   DER of the first must be the second
 
 OUT.vectors gets one `Type<TAB>source<TAB>BER-hex<TAB>DER-hex` line per
 row: a decoder must read BER-hex as the same value as DER-hex, and
@@ -52,9 +55,9 @@ def main():
                 der = run(tool, ty, "xer", "der", xer)
                 source = "asn1c CER"
             elif kind == "ber":
-                hexstr, source = rest.split("\t", 1)
+                hexstr, primitive, source = rest.split("\t", 2)
                 ber = bytes.fromhex(hexstr)
-                der = run(tool, ty, "ber", "der", ber)
+                der = bytes.fromhex(primitive)
             else:
                 sys.exit(f"unknown row kind {kind!r}")
             if run(tool, ty, "ber", "der", ber) != der:

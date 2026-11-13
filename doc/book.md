@@ -1399,11 +1399,17 @@ headers in place; `all` is these eight together. `segment` is different: it
 keeps the value and rewrites universally tagged BIT STRING, OCTET STRING and
 character strings into BER's constructed form (random segment sizes, definite
 or indefinite length, sometimes nested segments), re-encoding the enclosing
-lengths, so a conforming decoder must give the same value. IMPLICIT-tagged
-strings are left alone (without the schema their type is unknown). `segment`
-is not part of `all`, so header-mutation runs reproduce with the same seeds;
-`segment+all` combines them. `fuzz_ber` checks that every `segment` record
-decodes to its original value.
+lengths, so a conforming decoder must give the same value; inside an ANY or
+open type, whose octets a decoder keeps as they are, the octets change.
+IMPLICIT-tagged strings are left alone (without the schema their type is
+unknown). `segment-implicit` also rewrites every primitive TLV of application,
+context or private class: an IMPLICIT-tagged string keeps its value, any other
+type gets a form X.690 forbids, which a decoder must reject. It is for crash
+fuzzing of the IMPLICIT-tag segment paths, not value-preserving. Neither is
+part of `all`, so header-mutation runs reproduce with the same seeds;
+`segment+all` combines them. A numeric mask (`0x21`) selects header modes
+only; the segment modes go by name. `fuzz_ber` checks that every `segment`
+record decodes to its original value.
 
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed
@@ -1940,7 +1946,8 @@ were considered:
   code into two families for a niche gain.
 - **Projection / cursor (available today)** — `BerProjection` and `BerCursor` sidestep the
   issue by never building owning objects: they hand back `std::span`s into the frame on demand,
-  zero-copy and zero-allocation. The trade-off is navigation by path/tag instead of typed field
+  zero-copy and zero-allocation (except a string leaf sent in segments, which is
+  joined into a buffer). The trade-off is navigation by path/tag instead of typed field
   access. This is the supported zero-copy route for hot scan/extract paths.
 - **Hybrid owning-or-view leaves (the plausible future option)** — give only the relevant leaf
   types (OCTET STRING, the large string types, `ANY`) an internal "owned `std::string` *or*
@@ -2282,7 +2289,13 @@ type, whose contained value is then decoded from the joined bytes. Segments may
 themselves be constructed. The value is rebuilt in memory, from the record that
 is already in memory: the joined contents are never larger than the encoding.
 Encode always writes the primitive form. The lazy `BerProjection` reader joins
-segments too, in definite-length frames; see its section.
+segments too, in definite-length frames; see its section. The joining covers
+the codec entry points, which decode through the type tables: C++ `BerCodec`,
+Rust `decode_pdu` and the `ber::object` functions, Java `BerObject`. The
+single-type helpers below them read one primitive TLV and reject the
+constructed form: C++ `BerTraits<T>::decode` and `asn1::decode<BER, T>` on a
+builtin type, and the Rust `read_*_tagged` functions (`read_octet_string_tagged`,
+`read_bit_string_tagged`, ...).
 
 Segment errors fail the decode with one of:
 
