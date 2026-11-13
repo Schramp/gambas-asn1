@@ -519,6 +519,67 @@ struct AsnStringBerHandler final : IBerTypeHandler {
     }
 };
 
+static DecodeResult check_any_tlvs(BerReader r, int depth);
+
+/// @brief Check that the next TLV of an ANY value is a complete BER
+///        encoding: a constructed one's contents are themselves complete
+///        encodings (X.690 §3.2), and an indefinite length is closed by its
+///        end-of-contents octets (§8.1.3.6, §8.1.5). Tag 0 is otherwise
+///        refused, except an exact \c 00 \c 00 in a definite-length frame,
+///        which asn1c keeps as legacy ANY bytes (\c octet_string_ber_read_child).
+///        The values themselves are not decoded, as the ANY's type is not known.
+/// @param r         Reader positioned at the TLV; advanced past it.
+/// @param depth     Nesting level inside the ANY, limited to \c kMaxDecodeDepth.
+/// @param definite  True when the enclosing frame has a definite length.
+/// @return An error describing the first malformed TLV.
+static DecodeResult check_any_tlv(BerReader& r, int depth, bool definite) {
+    if (depth > kMaxDecodeDepth)
+        return decode_err(DecodeError("ANY contents nest deeper than " + std::to_string(kMaxDecodeDepth) +
+                                      " levels", r.pos()));
+    if (auto zero = r.peek(2); definite && zero.size() == 2 && zero[0] == 0 && zero[1] == 0) {
+        (void)r.read_bytes(2);
+        return decode_ok();
+    }
+    auto tag = r.read_tag();
+    if (!tag) return decode_err(tag.error());
+    if (tag->cls == TagClass::Universal && tag->number == 0)
+        return decode_err(DecodeError("end-of-contents octets outside an indefinite-length encoding", r.pos()));
+    auto len = r.read_length();
+    if (!len) return decode_err(len.error());
+    if (!len->indefinite) {
+        auto value = r.read_bytes(len->len);
+        if (!value) return decode_err(value.error());
+        return tag->constructed ? check_any_tlvs(r.sub(*value), depth + 1) : decode_ok();
+    }
+    if (!tag->constructed)
+        return decode_err(DecodeError("indefinite-length encoding on primitive type", r.pos()));
+    for (;;) {
+        auto eoc = r.peek(2);
+        if (eoc.size() < 2)
+            return decode_err(DecodeError("unterminated indefinite-length encoding", r.pos()));
+        if (eoc[0] == 0 && eoc[1] == 0) {
+            (void)r.read_bytes(2);
+            return decode_ok();
+        }
+        auto inner = check_any_tlv(r, depth + 1, false);
+        if (!inner) return inner;
+    }
+}
+
+/// @brief Check that \p r, a definite-length frame, holds zero or more
+///        complete BER encodings; see \c check_any_tlv. Part of
+///        \c AnyBerHandler::decode.
+/// @param r      Reader over the octets to check.
+/// @param depth  Nesting level inside the ANY.
+/// @return An error describing the first malformed TLV.
+static DecodeResult check_any_tlvs(BerReader r, int depth) {
+    while (!r.at_end()) {
+        auto one = check_any_tlv(r, depth, true);
+        if (!one) return one;
+    }
+    return decode_ok();
+}
+
 struct AnyBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor&, const Asn1Object* src) const override {
@@ -531,6 +592,8 @@ struct AnyBerHandler final : IBerTypeHandler {
         std::size_t n = r.remaining();
         auto raw = r.read_bytes(n);
         if (!raw) return decode_err(raw.error());
+        if (auto ok = check_any_tlvs(r.sub(*raw), 0); !ok)
+            return decode_err(DecodeError("malformed ANY contents: " + ok.error().message, ok.error().offset));
         *static_cast<OctetString*>(dest) = OctetString(std::vector<uint8_t>(raw->begin(), raw->end()));
         return decode_ok();
     }

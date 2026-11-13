@@ -332,7 +332,7 @@ fn ber_encode_explicit_(p: PrimitiveRef, tag: Tag, out: &mut Vec<u8>) {
 fn ber_decode_explicit_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Result<(), BerDecodeError> {
     match p {
         PrimitiveRefMut::Any(x) => crate::ber::reader::read_explicit(r, tag, |inner| {
-            x.0 = crate::any::decode_any(inner.remaining());
+            x.0 = crate::any::decode_any(inner.remaining())?;
             Ok(())
         }),
         other => crate::ber::reader::read_explicit(r, tag, |inner| ber_decode_plain(other, inner)),

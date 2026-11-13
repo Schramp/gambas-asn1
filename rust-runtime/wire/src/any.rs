@@ -39,8 +39,12 @@ pub(crate) fn encode_any(bytes: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(bytes);
 }
 
-pub(crate) fn decode_any(remaining: &[u8]) -> Vec<u8> {
-    remaining.to_vec()
+/// @brief Captures an ANY value's octets after checking they are complete
+///        BER encodings (see `ber::reader::check_any_contents`).
+/// @return `Err` when the octets are not well-formed TLVs.
+pub(crate) fn decode_any(remaining: &[u8]) -> Result<Vec<u8>, crate::ber::reader::DecodeError> {
+    crate::ber::reader::check_any_contents(remaining)?;
+    Ok(remaining.to_vec())
 }
 
 #[cfg(test)]

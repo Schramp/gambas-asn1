@@ -212,6 +212,82 @@ impl<'a> Reader<'a> {
         self.pos += len;
         Ok(Tlv { tag, value })
     }
+
+    /// @brief Checks that the next TLV of an ANY value is a complete BER
+    ///        encoding: a constructed one's contents are themselves
+    ///        complete encodings (X.690 §3.2), and an indefinite length is
+    ///        closed by its end-of-contents octets (§8.1.3.6, §8.1.5). Tag
+    ///        0 is otherwise refused, except an exact `00 00` in a
+    ///        definite-length frame, which asn1c keeps as legacy ANY bytes
+    ///        (`octet_string_ber_read_child`). Mirrors C++
+    ///        `check_any_tlv` (`BerCodec.cpp`).
+    /// @param depth    Nesting level inside the ANY, limited to
+    ///                 [`crate::nesting::MAX_DECODE_DEPTH`].
+    /// @param definite True when the enclosing frame has a definite length.
+    /// @return `Err` describing the first malformed TLV.
+    fn check_any_tlv(&mut self, depth: u32, definite: bool) -> Result<(), DecodeError> {
+        if depth > crate::nesting::MAX_DECODE_DEPTH {
+            return Err(DecodeError::new(
+                format!("ANY contents nest deeper than {} levels", crate::nesting::MAX_DECODE_DEPTH),
+                self.pos,
+            ));
+        }
+        if definite && self.data[self.pos..].starts_with(&[0, 0]) {
+            self.pos += 2;
+            return Ok(());
+        }
+        let tag = read_tag(self.data, &mut self.pos)
+            .ok_or_else(|| DecodeError::new("truncated or oversized tag", self.pos))?;
+        if tag.class == crate::ber::tag::TagClass::Universal && tag.number == 0 {
+            return Err(DecodeError::new("end-of-contents octets outside an indefinite-length encoding", self.pos));
+        }
+        let len = self.read_length()?;
+        if !len.indefinite {
+            if self.data.len() - self.pos < len.len {
+                return Err(DecodeError::new(
+                    format!("need {} bytes but only {} remain", len.len, self.data.len() - self.pos),
+                    self.pos,
+                ));
+            }
+            let value = &self.data[self.pos..self.pos + len.len];
+            self.pos += len.len;
+            return if tag.constructed { Reader::new(value).check_any_tlvs(depth + 1) } else { Ok(()) };
+        }
+        if !tag.constructed {
+            return Err(DecodeError::new("indefinite-length encoding on primitive type", self.pos));
+        }
+        loop {
+            let rest = &self.data[self.pos..];
+            if rest.len() < 2 {
+                return Err(DecodeError::new("unterminated indefinite-length encoding", self.pos));
+            }
+            if rest[0] == 0 && rest[1] == 0 {
+                self.pos += 2;
+                return Ok(());
+            }
+            self.check_any_tlv(depth + 1, false)?;
+        }
+    }
+
+    /// @brief Checks that this reader, a definite-length frame, holds zero
+    ///        or more complete BER encodings; see `check_any_tlv`.
+    fn check_any_tlvs(mut self, depth: u32) -> Result<(), DecodeError> {
+        while !self.at_end() {
+            self.check_any_tlv(depth, true)?;
+        }
+        Ok(())
+    }
+}
+
+/// @brief Checks that `data`, the octets of an ANY value, are zero or more
+///        complete BER encodings (X.690 §8.1); their types are not known,
+///        so their values are not decoded.
+/// @return `Err` naming the first malformed TLV, as
+///         `malformed ANY contents: <reason>`.
+pub(crate) fn check_any_contents(data: &[u8]) -> Result<(), DecodeError> {
+    Reader::new(data)
+        .check_any_tlvs(0)
+        .map_err(|e| DecodeError::new(format!("malformed ANY contents: {}", e.message), e.pos))
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3) decode — read the
@@ -236,6 +312,35 @@ pub fn read_explicit<T>(
 mod tests {
     use super::*;
     use crate::ber::tag::universal;
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn any_contents_must_be_complete_encodings() {
+        // asn1c's data-62 ANY contents: -B vectors 13/15/17/21/23 must fail.
+        for bad in ["E1800000E280", "E180E2800000E3800000", "E1801305746573743200", "E180BF7B00B700", "E180BF7B05B70205000000"] {
+            let e = check_any_contents(&hex(bad)).unwrap_err();
+            assert!(e.message.starts_with("malformed ANY contents: "), "{bad}: {}", e.message);
+        }
+        assert_eq!(check_any_contents(&hex("E1800000E280")).unwrap_err().message,
+                   "malformed ANY contents: unterminated indefinite-length encoding");
+        // -L vector 24: an exact 00 00 in a definite frame is kept, as asn1c does.
+        check_any_contents(&hex("E180BF7B05B70313017A00000000")).unwrap();
+        check_any_contents(&[]).unwrap();
+        check_any_contents(&hex("020105")).unwrap();
+        // 00 01 is no end-of-contents octets.
+        assert!(check_any_contents(&hex("0001FF")).is_err());
+    }
+
+    #[test]
+    fn any_contents_nesting_is_limited() {
+        let deep = |n: usize| [[0x30u8, 0x80].repeat(n), vec![0x00; 2 * n]].concat();
+        check_any_contents(&deep(200)).unwrap();
+        let e = check_any_contents(&deep(300)).unwrap_err();
+        assert!(e.message.contains("nest deeper than 256 levels"), "{}", e.message);
+    }
 
     #[test]
     fn reads_primitive_tlv() {

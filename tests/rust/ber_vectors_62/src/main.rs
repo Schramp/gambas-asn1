@@ -7,16 +7,13 @@
 //   - -L files: decode must succeed; re-encode may be shorter (extensions stripped).
 //   - -D files: decode must succeed; re-encode may differ (e.g. DER canonicalisation).
 //
-// Same known limitation as the C++ leg: files 13/15/17/21/23 (-B) contain
-// malformed indefinite-length content inside an ANY member. asn1c validates
-// the inner TLV structure and rejects them; asn1cpp stores ANY as raw bytes
-// without validating the nested encoding, so it accepts them — listed in
-// LENIENT_ACCEPT below and skipped in the -B check, same set as the C++ leg.
+// Files 13/15/17/21/23 (-B) break the TLV structure inside an ANY member;
+// the decoder checks that structure (X.690 §8.1) and rejects them, as asn1c
+// and the C++ leg do.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,18 +24,6 @@ fn check(label: &str, cond: bool, failures: &mut i32) {
         println!("  \x1b[31mFAIL\x1b[0m  {label}");
         *failures += 1;
     }
-}
-
-fn lenient_accept() -> HashSet<&'static str> {
-    [
-        "data-62-13-B.ber",
-        "data-62-15-B.ber",
-        "data-62-17-B.ber",
-        "data-62-21-B.ber",
-        "data-62-23-B.ber",
-    ]
-    .into_iter()
-    .collect()
 }
 
 enum Expect {
@@ -61,22 +46,16 @@ fn classify(name: &str) -> Expect {
     }
 }
 
-/// Returns true if this file was skipped (not counted as pass/fail).
-fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
+fn process(path: &Path, failures: &mut i32) {
     let name = path.file_name().unwrap().to_string_lossy().to_string();
     let exp = classify(&name);
-
-    if lenient.contains(name.as_str()) {
-        println!("  \x1b[33mSKIP\x1b[0m  {name}  (ANY inner-TLV validation not implemented)");
-        return true;
-    }
 
     let raw = fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
     if matches!(exp, Expect::Broken) {
         let decoded = asn1cpp_wire::ber::object::decode_pdu::<T::T>(&raw).is_ok();
         check(&name, !decoded, failures);
-        return false;
+        return;
     }
 
     // All non-broken files must decode successfully.
@@ -87,7 +66,7 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
         }
         Err(_) => {
             check(&format!("{name}  decode ok"), false, failures);
-            return false;
+            return;
         }
     };
 
@@ -102,7 +81,6 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
         Expect::Different => check(&format!("{name}  re-encode non-empty"), !reenc.is_empty(), failures),
         Expect::Broken => unreachable!(),
     }
-    false
 }
 
 fn main() {
@@ -124,17 +102,13 @@ fn main() {
         .collect();
     files.sort();
 
-    let lenient = lenient_accept();
     let processed = files.len();
     let mut failures = 0;
-    let mut skipped = 0;
     for f in &files {
-        if process(f, &lenient, &mut failures) {
-            skipped += 1;
-        }
+        process(f, &mut failures);
     }
 
-    println!("\n  Processed {processed} files, skipped {skipped} (ANY-leniency).");
+    println!("\n  Processed {processed} files.");
     if failures != 0 {
         println!("  {failures} test(s) FAILED");
         std::process::exit(1);
