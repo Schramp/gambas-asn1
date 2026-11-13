@@ -2451,6 +2451,9 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **Indefinite-length encode** | Decoder accepts indefinite-length BER. Encoder always uses definite-length encoding. |
 | **RandomFiller coverage** | ENUMERATED fill, UInteger, Real, Null, OID, UTCTime, and GeneralizedTime fill paths have zero test coverage. |
+| **Constructed strings: single-type helpers** | Segments of a constructed string (X.690 §8.6.4, §8.7.3, §8.23.6) are joined by the codec entry points only: C++ `BerCodec`, Rust `decode_pdu` and the `ber::object` functions, Java `BerObject`. C++ `BerTraits<T>::decode`, `asn1::decode<BER, T>` on a builtin type and the Rust `read_*_tagged` functions read one primitive TLV and reject the constructed form. See Constructed-form strings. |
+| **Constructed strings: Java positions** | A string sent in constructed form has no contents or value span in `Positions` (-1): its octets are spread over the segment TLVs. It keeps its encoding span (`bitOffset`, `sizeBits`). The inner value of a contained field in constructed form gets no positions. See Source positions. |
+| **BerProjection: EXPLICIT leaves, segmented strings** | The projection models IMPLICIT tagging only: an EXPLICIT-tagged leaf may be reported not found by `apply()` / `load()`, and `commit()` returns `false` for it. A string leaf sent in segments is joined on `apply()` / `load()`, into a buffer (the one allocation on that path), but `commit()` returns `false` for it. A frame with indefinite lengths ends the walk. See BerProjection vs full decode/encode. |
 
 ---
 
