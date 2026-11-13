@@ -112,6 +112,20 @@ static const uint8_t frame2_bytes[] = {
     0x81, 0x03, 0x01, 0x02, 0x03,  // right [1] IMPLICIT OCTET STRING = {1,2,3}
 };
 
+// frame3: frame1 with y = "hi" in constructed form, two OCTET STRING
+// segments under its IMPLICIT [1] tag (X.690 §8.23.3, §8.7.3).
+// alpha: 80 01 2A  A1 06 04 01 68 04 01 69 → 11 bytes
+static const uint8_t frame3_bytes[] = {
+    0x30, 0x12,              // Root SEQUENCE, 18 bytes
+    0xA0, 0x0B,              //   alpha [0] IMPLICIT SEQUENCE, 11 bytes
+    0x80, 0x01, 0x2A,        //     x [0] IMPLICIT INTEGER = 42
+    0xA1, 0x06,              //     y [1] IMPLICIT VisibleString, constructed
+    0x04, 0x01, 0x68,        //       segment "h"
+    0x04, 0x01, 0x69,        //       segment "i"
+    0xA1, 0x03,              //   beta [1] IMPLICIT CHOICE, 3 bytes
+    0x80, 0x01, 0x07,        //     left [0] IMPLICIT INTEGER = 7
+};
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 static void test_basic_apply() {
@@ -304,6 +318,35 @@ static void test_unbound_field_absent() {
     check("unbound_load_y_value", y.found && static_cast<VisibleString&>(y).str() == "hi");
 }
 
+static void test_constructed_leaf() {
+    BerProjection proj{root_def};
+    auto hx = proj.add_path("alpha/x");
+    auto hy = proj.add_path("alpha/y");
+    proj.finalize();
+
+    BerProjectionResult res{proj};
+    Asn1Optional<VisibleString> y;
+    res.bind(hy, y);
+
+    std::vector<uint8_t> frame(frame3_bytes, frame3_bytes + sizeof(frame3_bytes));
+    res.apply(std::span<uint8_t>(frame));
+    check("constructed_bound_joined", y.found && static_cast<VisibleString&>(y).str() == "hi");
+
+    Asn1Optional<VisibleString> loaded;
+    res.load(hy, loaded);
+    check("constructed_load_joined", loaded.found && static_cast<VisibleString&>(loaded).str() == "hi");
+
+    Asn1Optional<Integer> x;
+    res.load(hx, x);
+    check("constructed_sibling_found", x.found && static_cast<Integer&>(x).value() == 42);
+
+    // Same length as the joined value, but the frame holds segment TLVs.
+    static_cast<VisibleString&>(y).str() = "ho";
+    check("constructed_commit_refused", !res.commit(hy));
+    check("constructed_frame_unchanged",
+          std::memcmp(frame.data(), frame3_bytes, sizeof(frame3_bytes)) == 0);
+}
+
 int main() {
     printf("=== Basic apply ===\n");
     test_basic_apply();
@@ -331,6 +374,9 @@ int main() {
 
     printf("=== Unbound field location still recorded ===\n");
     test_unbound_field_absent();
+
+    printf("=== Constructed-form string leaf ===\n");
+    test_constructed_leaf();
 
     printf("\n%s — %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;

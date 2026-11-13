@@ -195,6 +195,9 @@ private:
 ///
 /// @note Only IMPLICIT-tagged fields support \c commit() — EXPLICIT tagging
 ///       causes a size mismatch (commit returns false, frame unchanged).
+///       A string leaf in constructed form (segments, X.690 §8.7.3) is
+///       joined by \c apply() / \c load() but cannot be committed either.
+///       A frame with indefinite lengths stops the walk (\c BerCursor).
 class BerProjectionResult {
 public:
     /// @brief Construct a result object bound to \p proj.
@@ -269,7 +272,7 @@ public:
     ///
     /// @param h  FieldHandle whose bound value to commit.
     /// @return   \c true when the frame was updated; \c false on size mismatch,
-    ///           unbound handle, or unfound field.
+    ///           unbound handle, unfound field, or a leaf in constructed form.
     bool commit(FieldHandle h);
 
 private:
@@ -285,6 +288,7 @@ private:
         Asn1OptionalBase* binding   = nullptr;   ///< nullptr = unbound
         size_t            value_off = SIZE_MAX;   ///< byte offset of value bytes in the frame
         size_t            value_len = 0;          ///< size of the value bytes
+        bool              constructed = false;    ///< leaf TLV in constructed form (segmented string)
     };
 
     const BerProjection* proj_;

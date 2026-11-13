@@ -2255,8 +2255,8 @@ own tag and under an IMPLICIT tag, also for an OCTET STRING CONTAINING another
 type, whose contained value is then decoded from the joined bytes. Segments may
 themselves be constructed. The value is rebuilt in memory, from the record that
 is already in memory: the joined contents are never larger than the encoding.
-Encode always writes the primitive form. The lazy `BerProjection` reader does
-not join segments yet.
+Encode always writes the primitive form. The lazy `BerProjection` reader joins
+segments too, in definite-length frames; see its section.
 
 Segment errors fail the decode with one of:
 
@@ -2428,7 +2428,13 @@ compiled into a trie of tag offsets against a `TypeDescriptor`), then applied
 per-record: `apply()` walks the trie against one frame's bytes and hands back
 `Asn1Optional<T>` views bound to each path; `commit()` re-encodes a modified
 field and patches it back into the frame in place (same-size replacement, no
-buffer growth for BER's TLV length fields). This is the same mechanism behind
+buffer growth for BER's TLV length fields). A string field sent in constructed
+form (segments, X.690 §8.7.3) is joined by `apply()` and `load()`, but
+`commit()` returns `false` for it and leaves the frame unchanged, as for an
+EXPLICIT-tagged field: the frame holds segment TLVs, not the value octets. The
+walk only follows definite lengths: a frame or member with an indefinite length
+(as CER writes every constructed value) ends it, and the fields inside are not
+found. This is the same mechanism behind
 `etsi-pcap`'s and `pseudonimiser`'s ability to touch a handful of fields across
 millions of records without paying for a full object graph each time.
 
