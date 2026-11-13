@@ -653,8 +653,9 @@ def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
     return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
 
 
-def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
-    """XER string → DER bytes via asn1c's own converter-example.
+def asn1c_x2b(tool: str, pdu_type: str, xer_text: str, out: str = "der") -> tuple[bytes, str]:
+    """XER string → BER bytes via asn1c's own converter-example, in the
+    transfer syntax `out` names (`der`, or `cer` for X.690 §9).
 
     converter-example takes a datafile argument, not stdin, unlike the
     C++/Rust tools' x2b — write to a temp file.
@@ -663,7 +664,7 @@ def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(xer_text.encode(errors=_TEXT_ERRORS))
-        r = run(tool, "-p", pdu_type, "-ixer", "-oder", xer_path)
+        r = run(tool, "-p", pdu_type, "-ixer", f"-o{out}", xer_path)
         return r.stdout, r.stderr.decode(errors="replace").strip()
     finally:
         os.unlink(xer_path)
@@ -2112,6 +2113,37 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
         if xer_java is not None:
             tally(run_comparison("asn1c.B2X vs java.B2X", xer_asn1c, xer_java, verbose))
+
+        # CER (X.690 §9): asn1c re-encodes its XER with indefinite lengths
+        # everywhere and strings above 1000 octets split into segments
+        # (§9.2); every decoder must read back the value asn1c reads from
+        # that file. The reference is asn1c's own decode of the CER, not the
+        # XER above: CER sorts SET OF components by their CER encodings
+        # (§9.3) and drops trailing zero bits of a named-bit BIT STRING
+        # (§11.2.2), so the value can differ in form from the DER one.
+        ber_cer, err_cer = asn1c_x2b(asn1c_tools["tool"], pdu_type, xer_asn1c, "cer")
+        if not ber_cer:
+            print(f"  asn1c CER leg: skipped (asn1c cannot encode this type in CER: {err_cer.splitlines()[0] if err_cer else 'no output'})")
+        else:
+            cer_path = os.path.join(target_dir, "asn1c.cer")
+            with open(cer_path, "wb") as f:
+                f.write(ber_cer)
+            xer_cer_asn1c, err = asn1c_b2x(asn1c_tools["tool"], pdu_type, cer_path)
+            if err:
+                print(f"  asn1c b2x(CER) stderr: {err}")
+            xer_cer_asn1c = dedent_xer(xer_cer_asn1c)
+            for leg, tool in (("cpp", cpp_tools["b2x"]), ("rust", rust_tools["b2x"])):
+                xer_cer, err = b2x_file(tool, pdu_type, cer_path)
+                if err:
+                    print(f"  {leg} b2x(CER) stderr: {err}")
+                tally(run_comparison(f"asn1c.B2X(asn1c.CER) vs {leg}.B2X(asn1c.CER)", xer_cer_asn1c,
+                                     dedent_xer(xer_cer), verbose))
+            if xer_java is not None:
+                xer_cer, err = java_b2x(java_tools, pdu_type, cer_path, os.path.join(target_dir, "java.cer.xer"))
+                if err:
+                    print(f"  java b2x(CER) stderr: {err}")
+                tally(run_comparison("asn1c.B2X(asn1c.CER) vs java.B2X(asn1c.CER)", xer_cer_asn1c,
+                                     dedent_xer(xer_cer), verbose))
 
         def asn1c_ber_check(label, ber_asn1c):
             if info:
