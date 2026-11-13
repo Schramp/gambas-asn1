@@ -5,6 +5,9 @@
 -- strings' own UNIVERSAL tags; Bits and Name carry the X.690 worked examples.
 -- Opt has OPTIONAL members, one of them an extension addition: their
 -- presence is decided on the tag, whichever form the value is in.
+-- Lab and LabChoice: an IMPLICIT tag on a type whose own tag is EXPLICIT
+-- replaces that outer tag only (X.680 §31.2.7), so the member stays
+-- constructed around the inner natural-tag TLV; it holds no segments.
 -- Wrapped holds an OCTET STRING CONTAINING a value (X.682 §11), whose
 -- segments join to the contained encoding.
 ConstructedStringsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
@@ -15,4 +18,9 @@ Name ::= VisibleString
 Wrapped ::= SEQUENCE { c [0] OCTET STRING (CONTAINING Name) }
 Opt ::= SEQUENCE { a [0] OCTET STRING OPTIONAL, b [1] IA5String OPTIONAL, ..., c [2] OCTET STRING OPTIONAL }
 OptSet ::= SET { a [0] OCTET STRING OPTIONAL, b [1] IA5String OPTIONAL }
+Label ::= [9] EXPLICIT UTF8String
+Stamp ::= [4] EXPLICIT UTCTime
+Octets ::= [5] EXPLICIT OCTET STRING
+Lab ::= SEQUENCE { c [8] IMPLICIT Label, t [3] IMPLICIT Stamp, o [6] IMPLICIT Octets }
+LabChoice ::= CHOICE { c [8] IMPLICIT Label, n [1] INTEGER }
 END
