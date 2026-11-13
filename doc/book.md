@@ -1392,6 +1392,19 @@ and fails only on a crash (signal, abort, Rust panic, hang); the xval Rust
 tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
 `rust_fuzz_smoke` (Rust) as fixed-seed smoke tests.
 
+BerCorruptor's `--corrupt-mode` names (`randgen --corrupt-mode SPEC`, joined
+with `+` or `,`): `flip-pc`, `rotate-class`, `tag-bump`, `tag-jump`,
+`len-bit-flip`, `len-indef`, `len-overstate`, `len-understate` mutate TLV
+headers in place; `all` is these eight together. `segment` is different: it
+keeps the value and rewrites universally tagged BIT STRING, OCTET STRING and
+character strings into BER's constructed form (random segment sizes, definite
+or indefinite length, sometimes nested segments), re-encoding the enclosing
+lengths, so a conforming decoder must give the same value. IMPLICIT-tagged
+strings are left alone (without the schema their type is unknown). `segment`
+is not part of `all`, so header-mutation runs reproduce with the same seeds;
+`segment+all` combines them. `fuzz_ber` checks that every `segment` record
+decodes to its original value.
+
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed
 record #N ...`) and exit 1; a panic, abort or signal is always a bug.
@@ -2272,7 +2285,8 @@ constructed string segments nest deeper than 256 levels
 The segments of a character string are OCTET STRINGs (X.690 §8.23.6), not the
 string type itself; end-of-contents octets inside a definite length are a
 wrong segment tag. Test vectors: `tests/vectors/constructed_strings_test.vectors`
-(asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples).
+(asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples). Random
+records in constructed form: `randgen --corrupt-percent P --corrupt-mode segment`.
 
 Cross-validation: **440/440** records across seeds {1, 7, 42, 99}, 10 records per seed,
 all 11 checks passing. Wire-fuzz (8 corruption modes, 180k ETSI + 45k PKIX records):
