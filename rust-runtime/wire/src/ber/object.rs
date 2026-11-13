@@ -262,12 +262,13 @@ pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut 
 /// decoder makes.
 /// @brief True when a TLV tagged `t` belongs to SET member `i`: its own
 ///        tag, or for an untagged CHOICE member one of the CHOICE's
-///        alternative tags.
+///        alternative tags, by class and number (X.680 §27.3: distinct
+///        tags; X.690 §8.6.1, §8.7.1, §8.23.6: either form of a string).
 fn set_member_matches(obj: &dyn Asn1Seq, i: usize, t: Tag) -> bool {
     let m = &obj.spec().members[i];
     if matches!(m.ber, BerTagging::Delegate) {
         if let MemberRef::Choice(c) = obj.get_member(i) {
-            return c.spec().ber_tags.iter().any(|d| d.tag == t);
+            return c.spec().ber_tags.iter().any(|d| d.tag.matches_identifier(&t));
         }
     }
     m.ber.starts_with(m.tag, t)

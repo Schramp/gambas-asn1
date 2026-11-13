@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.constructed_strings.Bits;
 import gen.constructed_strings.Name;
+import gen.constructed_strings.Opt;
+import gen.constructed_strings.OptSet;
 import gen.constructed_strings.Plain;
 import gen.constructed_strings.Tagged;
 import gen.constructed_strings.Wrapped;
@@ -43,7 +45,9 @@ class ConstructedStringsTest {
             "Plain", Plain::new,
             "Bits", Bits::new,
             "Name", Name::new,
-            "Wrapped", Wrapped::new);
+            "Wrapped", Wrapped::new,
+            "Opt", Opt::new,
+            "OptSet", OptSet::new);
 
     /** Decodes {@code ber} as the whole input, then re-encodes the value. */
     private static byte[] roundtrip(String type, byte[] ber) throws DecodeException {
@@ -84,7 +88,12 @@ class ConstructedStringsTest {
                 Arguments.of("nested indefinite segment", "Name", "3A80248004034A6F6E0000040265730000", "1A054A6F6E6573"),
                 Arguments.of("CONTAINING value split across segments", "Wrapped",
                         "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573"),
-                Arguments.of("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0"));
+                Arguments.of("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0"),
+                Arguments.of("constructed OPTIONAL and extension members", "Opt",
+                        "3080A08004024A6F04016E0000A2070402ABCD0401EF0000", "300A80034A6F6E8203ABCDEF"),
+                Arguments.of("constructed OPTIONAL character string", "Opt", "3080A10504034A6F6E0000", "300581034A6F6E"),
+                Arguments.of("SET members out of order, one constructed", "OptSet",
+                        "310AA1050403414243800141", "31088001418103414243"));
     }
 
     @ParameterizedTest(name = "{0}")

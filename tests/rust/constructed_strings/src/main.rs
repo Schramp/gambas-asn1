@@ -68,6 +68,8 @@ fn by_type(name: &str, ber: &[u8]) -> Result<Vec<u8>, String> {
         "Bits" => roundtrip_alias::<Bits::Bits>(ber),
         "Name" => roundtrip_alias::<Name::Name>(ber),
         "Wrapped" => roundtrip::<Wrapped::Wrapped>(ber),
+        "Opt" => roundtrip::<Opt::Opt>(ber),
+        "OptSet" => roundtrip::<OptSet::OptSet>(ber),
         _ => panic!("unknown type {name}"),
     }
 }
@@ -117,6 +119,11 @@ fn main() {
     accepted("CONTAINING value split across segments", "Wrapped",
              "300DA00B04021A0504054A6F6E6573", "300980071A054A6F6E6573", &mut f);
     accepted("BIT STRING, unused bits in the last segment", "Bits", "230803020080030205E0", "03030580E0", &mut f);
+    accepted("constructed OPTIONAL and extension members", "Opt",
+             "3080A08004024A6F04016E0000A2070402ABCD0401EF0000", "300A80034A6F6E8203ABCDEF", &mut f);
+    accepted("constructed OPTIONAL character string", "Opt", "3080A10504034A6F6E0000", "300581034A6F6E", &mut f);
+    accepted("SET members out of order, one constructed", "OptSet",
+             "310AA1050403414243800141", "31088001418103414243", &mut f);
 
     refused("character string segment with its own tag", "Name", &unhex("3A051A034A6F6E"),
             "segment of a constructed string is not an OCTET STRING", &mut f);

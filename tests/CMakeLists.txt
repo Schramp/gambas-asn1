@@ -1263,7 +1263,7 @@ set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 # strings (asn1c CER or an X.690 example) must decode to the value of asn1c's
 # DER and re-encode to that DER; see tests/vectors/make_constructed_vectors.py.
 set(CONSTRUCTED_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_constructed_strings)
-set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped)
+set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped Opt OptSet)
 set(_cs_outputs)
 set(_cs_sources)
 foreach(t IN LISTS CONSTRUCTED_TYPES)
@@ -2251,7 +2251,7 @@ set(java_leg_promoted_name_clash_PDUS
 set(java_leg_zero_width_items_PDUS
     Nulls Fives Flags Rows)
 set(java_leg_constructed_strings_PDUS
-    Tagged Plain Bits Name Wrapped)
+    Tagged Plain Bits Name Wrapped Opt OptSet)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent

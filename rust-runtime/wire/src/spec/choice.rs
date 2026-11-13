@@ -48,12 +48,15 @@ impl BerTagging {
 
     /// Whether a member with this framing and table tag `tag` starts with
     /// wire tag `t`: any of the CHOICE's alternative tags for
-    /// `DelegateChoice` (by class and number, as CHOICE dispatch matches),
-    /// otherwise `tag` itself.
+    /// `DelegateChoice`, otherwise `tag` itself. Both compare class and
+    /// number only: a string member may arrive in primitive or constructed
+    /// form (X.690 §8.6.1, §8.7.1, §8.23.6), and the members a decoder
+    /// tells apart by tag have distinct class and number (X.680 §25.6.1,
+    /// §25.7, §27.3).
     pub fn starts_with(self, tag: Tag, t: Tag) -> bool {
         match self {
             BerTagging::DelegateChoice(tags) => tags().iter().any(|d| d.tag.matches_identifier(&t)),
-            _ => tag == t,
+            _ => tag.matches_identifier(&t),
         }
     }
 }
