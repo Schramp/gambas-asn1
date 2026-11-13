@@ -20,7 +20,9 @@
 //                        e.g. flip-pc+tag-jump, or a numeric mask 0xNN / N.
 //                        Names: flip-pc rotate-class tag-bump tag-jump
 //                               len-bit-flip len-indef len-overstate
-//                               len-understate (all = OR of every name)
+//                               len-understate (all = OR of these), and
+//                               segment: value-preserving, strings rewritten
+//                               into BER's constructed form (not in all)
 //   --xer-safe-magic     exclude -0.0 from the magic-REAL-value set
 //                        (NaN/+Inf/-Inf/+0.0/-0.0, see FillConfig::
 //                        magic_real_prob's own doc) -- -0.0 is the one

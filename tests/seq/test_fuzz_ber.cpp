@@ -14,6 +14,10 @@
 // no validate_fail_count regressions on the clean encode path. Decode of
 // corrupted data is expected to fail or succeed silently — both fine; what
 // matters is that the decoder does not abort.
+//
+// The value-preserving "segment" mode is checked harder: the strings are
+// rewritten into BER's constructed form (X.690 §8.6.4, §8.7.3, §8.23.3), so
+// every record must decode, to the value of the original encoding.
 
 #include <cstdio>
 #include <random>
@@ -95,6 +99,35 @@ static void roundtrip_clean(int seeds, int records) {
     }
 }
 
+/// @brief CORRUPT_SEGMENT keeps the value: each segmented record decodes and
+///        re-encodes to the original encoding, and some records do change.
+static void segment_keeps_value(int seeds, int records, double percent) {
+    std::printf("=== mode: %-12s (value-preserving, percent=%.2f)\n", "segment", percent);
+    int same = 0, changed = 0, wrong = 0;
+    for (int seed = 1; seed <= seeds; ++seed) {
+        std::mt19937 rng(static_cast<uint64_t>(seed));
+        FillConfig cfg;
+        cfg.max_depth = 6;
+        cfg.max_seq_of = 4;
+        RandomFiller filler{rng, cfg};
+        for (int rec = 0; rec < records; ++rec) {
+            Bag b{};
+            filler.fill(&b, Bag::asn_DEF);
+            auto clean = encode_bag(b);
+            auto buf = clean;
+            corrupt_ber(buf, percent, rng, CORRUPT_SEGMENT);
+            if (buf != clean) ++changed;
+            Bag out{};
+            if (decode_bag(buf, out) && encode_bag(out) == clean) ++same; else ++wrong;
+        }
+    }
+    std::printf("    same_value=%-4d wrong=%-4d changed=%-4d\n", same, wrong, changed);
+    if (wrong != 0 || changed == 0) {
+        std::printf("    \033[31mFAIL\033[0m segment mode must keep every value and change some records\n");
+        ++failures;
+    }
+}
+
 int main() {
     std::printf("\n=== BER fuzz sweep (in-tree) ===\n\n");
 
@@ -117,6 +150,8 @@ int main() {
         {"all",            CORRUPT_ALL},
     };
     for (auto& m : modes) sweep_mode(m.name, m.mask, SEEDS, RECS, PCT);
+    segment_keeps_value(SEEDS, RECS, 50.0);
+    sweep_mode("segment+all", CORRUPT_SEGMENT | CORRUPT_ALL, SEEDS, RECS, PCT);
 
     if (failures == 0) {
         std::printf("\nALL OK — no decoder crashes across %zu modes\n",
