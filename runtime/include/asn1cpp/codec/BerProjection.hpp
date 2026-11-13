@@ -193,10 +193,13 @@ private:
 /// }
 /// @endcode
 ///
-/// @note Only IMPLICIT-tagged fields support \c commit() — EXPLICIT tagging
-///       causes a size mismatch (commit returns false, frame unchanged).
+/// @note The projection models IMPLICIT tagging only: a leaf's TLV contents
+///       must be the contents of the leaf type itself. An EXPLICIT-tagged
+///       leaf (X.690 §8.14) is not supported: \c apply() / \c load() may
+///       report it not found, and \c commit() returns false (size mismatch).
 ///       A string leaf in constructed form (segments, X.690 §8.7.3) is
-///       joined by \c apply() / \c load() but cannot be committed either.
+///       joined by \c apply() / \c load() but cannot be committed; other
+///       constructed leaves (an IMPLICIT-tagged SEQUENCE) commit normally.
 ///       A frame with indefinite lengths stops the walk (\c BerCursor).
 class BerProjectionResult {
 public:
@@ -272,7 +275,8 @@ public:
     ///
     /// @param h  FieldHandle whose bound value to commit.
     /// @return   \c true when the frame was updated; \c false on size mismatch,
-    ///           unbound handle, unfound field, or a leaf in constructed form.
+    ///           unbound handle, unfound field, or a string leaf in
+    ///           constructed form (segments).
     bool commit(FieldHandle h);
 
 private:
@@ -288,7 +292,7 @@ private:
         Asn1OptionalBase* binding   = nullptr;   ///< nullptr = unbound
         size_t            value_off = SIZE_MAX;   ///< byte offset of value bytes in the frame
         size_t            value_len = 0;          ///< size of the value bytes
-        bool              constructed = false;    ///< leaf TLV in constructed form (segmented string)
+        bool              constructed = false;    ///< constructed bit of the leaf TLV (segments when the leaf is a string)
     };
 
     const BerProjection* proj_;

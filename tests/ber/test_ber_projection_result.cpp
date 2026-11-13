@@ -340,8 +340,9 @@ static void test_constructed_leaf() {
     res.load(hx, x);
     check("constructed_sibling_found", x.found && static_cast<Integer&>(x).value() == 42);
 
-    // Same length as the joined value, but the frame holds segment TLVs.
-    static_cast<VisibleString&>(y).str() = "ho";
+    // Same length as the segment TLVs (6 octets), so only the constructed-form
+    // guard refuses: the frame holds segment TLVs, not value octets.
+    static_cast<VisibleString&>(y).str() = "abcdef";
     check("constructed_commit_refused", !res.commit(hy));
     check("constructed_frame_unchanged",
           std::memcmp(frame.data(), frame3_bytes, sizeof(frame3_bytes)) == 0);

@@ -305,7 +305,10 @@ bool BerProjectionResult::commit(FieldHandle h)
     if (!s.binding || !s.binding->found || s.value_off == SIZE_MAX) return false;
     // A string in constructed form holds segment TLVs, not its value octets
     // (X.690 §8.7.3), so the re-encoded primitive contents cannot replace them.
-    if (s.constructed) return false;
+    // Other constructed leaves (an IMPLICIT-tagged SEQUENCE, say) re-encode to
+    // the same contents shape and commit normally.
+    const IBerTypeHandler* handler = s.binding->desc->ber_handler;
+    if (s.constructed && handler && handler->joins_segments()) return false;
 
     // Encode the current value into the scratch buffer (reused across commit() calls)
     encode_buf_.clear();
