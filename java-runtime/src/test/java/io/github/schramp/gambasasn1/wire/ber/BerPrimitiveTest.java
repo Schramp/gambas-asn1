@@ -188,10 +188,21 @@ class BerPrimitiveTest {
         assertThrows(IllegalArgumentException.class, () -> new Asn1BitString(new byte[0], 3));
     }
 
+    /** X.690 §8.7.3, §8.23.3: the segments of the constructed form are joined. */
     @Test
-    void constructedStringFormIsRejected() {
-        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1OctetString(), BerTagging.DELEGATE,
-                new BerReader(bytes(0x24, 0x04, 0x04, 0x02, 0x01, 0x02))));
+    void constructedStringFormIsJoined() throws DecodeException {
+        Asn1OctetString o = new Asn1OctetString();
+        BerPrimitive.decode(o, BerTagging.DELEGATE, new BerReader(bytes(0x24, 0x07, 0x04, 0x02, 0x01, 0x02, 0x04, 0x01, 0x03)));
+        assertArrayEquals(bytes(0x01, 0x02, 0x03), o.get());
+        Asn1VisibleString v = new Asn1VisibleString();
+        BerPrimitive.decode(v, BerTagging.DELEGATE, new BerReader(bytes(0x3A, 0x80, 0x04, 0x01, 'h', 0x04, 0x01, 'i', 0x00, 0x00)));
+        assertEquals("hi", v.get());
+        // The segments of a character string are OCTET STRINGs, not the string type itself.
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1VisibleString(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x3A, 0x03, 0x1A, 0x01, 'x'))));
+        // INTEGER has no constructed form.
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1Integer(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x22, 0x03, 0x02, 0x01, 0x01))));
     }
 
     @Test
