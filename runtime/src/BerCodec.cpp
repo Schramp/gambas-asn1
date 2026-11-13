@@ -1473,9 +1473,10 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
-                                     Asn1Object* dest) const {
+                                     Asn1Object* dest,
+                                     bool constructed) const {
     BerReader content{value};
-    return decode_value(content, def, dest);
+    return decode_value(content, def, dest, constructed);
 }
 
 DecodeResult BerCodec::decode_value(BerReader& content,
