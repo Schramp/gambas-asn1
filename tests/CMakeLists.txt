@@ -1263,7 +1263,7 @@ set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 # strings (asn1c CER or an X.690 example) must decode to the value of asn1c's
 # DER and re-encode to that DER; see tests/vectors/make_constructed_vectors.py.
 set(CONSTRUCTED_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_constructed_strings)
-set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped Opt OptSet Label Stamp Octets Lab LabChoice)
+set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped Opt OptSet Label Stamp Octets Lab LabChoice Outer)
 set(_cs_outputs)
 set(_cs_sources)
 foreach(t IN LISTS CONSTRUCTED_TYPES)

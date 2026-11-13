@@ -2460,9 +2460,12 @@ per-record: `apply()` walks the trie against one frame's bytes and hands back
 field and patches it back into the frame in place (same-size replacement, no
 buffer growth for BER's TLV length fields). A string field sent in constructed
 form (segments, X.690 §8.7.3) is joined by `apply()` and `load()`, but
-`commit()` returns `false` for it and leaves the frame unchanged, as for an
-EXPLICIT-tagged field: the frame holds segment TLVs, not the value octets. The
-walk only follows definite lengths: a frame or member with an indefinite length
+`commit()` returns `false` for it and leaves the frame unchanged: the frame
+holds segment TLVs, not the value octets. Other constructed fields (an
+IMPLICIT-tagged SEQUENCE such as `pSHeader/microSecondTimeStamp`) commit
+normally. Projection models IMPLICIT tagging only: an EXPLICIT-tagged field is
+not supported, so `apply()` and `load()` may report it not found and `commit()`
+returns `false` for it. The walk only follows definite lengths: a frame or member with an indefinite length
 (as CER writes every constructed value) ends it, and the fields inside are not
 found. This is the same mechanism behind
 `etsi-pcap`'s and `pseudonimiser`'s ability to touch a handful of fields across

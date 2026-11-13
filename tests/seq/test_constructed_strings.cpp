@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/BerProjection.hpp>
 #include "Bits.hpp"
 #include "Name.hpp"
 #include "Plain.hpp"
@@ -21,6 +22,7 @@
 #include "OptSet.hpp"
 #include "Lab.hpp"
 #include "LabChoice.hpp"
+#include "Outer.hpp"
 #include "Wrapped.hpp"
 
 using namespace asn1;
@@ -127,6 +129,32 @@ static void contained() {
           ok && v.c.status() == ContainedStatus::Decoded && v.c.value() && v.c.value()->str() == "Jones");
 }
 
+/// BerProjection over constructed leaves (IMPLICIT tagging only): an
+/// IMPLICIT-tagged SEQUENCE leaf re-encodes to the same contents shape and
+/// commits; an EXPLICIT-tagged leaf is outside the projection model.
+static void projection() {
+    // Outer { p { o '01'H, b ''B, s "ab" }, x "cd" }
+    auto frame = unhex("3012A00A80010181010082026162A10416026364");
+    BerProjection proj{Outer::asn_DEF};
+    auto hp = proj.add_path("p");
+    auto hx = proj.add_path("x");
+    proj.finalize();
+    BerProjectionResult res{proj};
+    Asn1Optional<Tagged> p;
+    res.bind(hp, p);
+    res.apply(std::span<uint8_t>(frame));
+    check("projection: IMPLICIT SEQUENCE leaf found",
+          p.found && static_cast<Tagged&>(p).s.str() == "ab");
+    static_cast<Tagged&>(p).s.str() = "zz";
+    check("projection: IMPLICIT SEQUENCE leaf commits", res.commit(hp));
+    check("projection: committed frame",
+          hex(frame) == "3012A00A8001018101008202" "7A7A" "A10416026364");
+
+    Asn1Optional<Ia5String> x;
+    res.load(hx, x);
+    check("projection: EXPLICIT-tagged leaf not found", !x.found);
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) { fprintf(stderr, "usage: %s constructed_strings_test.vectors\n", argv[0]); return 2; }
     vectors(argv[1]);
@@ -169,6 +197,7 @@ int main(int argc, char** argv) {
             "segment of a constructed string is not an OCTET STRING");
 
     contained();
+    projection();
 
     // asn1c's limit: 29 nested segments inside the string decode, 30 do not.
     auto nested = [](int n) {

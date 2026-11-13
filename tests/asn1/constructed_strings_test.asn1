@@ -23,4 +23,6 @@ Stamp ::= [4] EXPLICIT UTCTime
 Octets ::= [5] EXPLICIT OCTET STRING
 Lab ::= SEQUENCE { c [8] IMPLICIT Label, t [3] IMPLICIT Stamp, o [6] IMPLICIT Octets }
 LabChoice ::= CHOICE { c [8] IMPLICIT Label, n [1] INTEGER }
+-- BerProjection leaves: an IMPLICIT-tagged SEQUENCE and an EXPLICIT-tagged string.
+Outer ::= SEQUENCE { p [0] Tagged, x [1] EXPLICIT IA5String }
 END
