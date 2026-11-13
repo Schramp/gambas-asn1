@@ -152,6 +152,16 @@ int main() {
     for (auto& m : modes) sweep_mode(m.name, m.mask, SEEDS, RECS, PCT);
     segment_keeps_value(SEEDS, RECS, 50.0);
     sweep_mode("segment+all", CORRUPT_SEGMENT | CORRUPT_ALL, SEEDS, RECS, PCT);
+    sweep_mode("segment-implicit", CORRUPT_SEGMENT_IMPLICIT, SEEDS, RECS, 50.0);
+
+    // A numeric mask selects header modes only; the segment modes go by name.
+    CorruptMask m = 0;
+    if (!parse_corrupt_mask("0xffffffff", m) || m != CORRUPT_ALL
+        || parse_corrupt_mask("0x100", m)
+        || !parse_corrupt_mask("segment-implicit", m) || m != CORRUPT_SEGMENT_IMPLICIT) {
+        std::printf("    \033[31mFAIL\033[0m corrupt-mode parsing\n");
+        ++failures;
+    }
 
     if (failures == 0) {
         std::printf("\nALL OK — no decoder crashes across %zu modes\n",

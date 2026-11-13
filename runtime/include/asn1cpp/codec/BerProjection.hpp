@@ -179,7 +179,7 @@ private:
 /// res.bind(h_liid, liid);
 /// res.bind(h_ts,   ts);
 ///
-/// // Hot loop — zero allocation:
+/// // Hot loop — no allocation (a string leaf sent in segments is joined into a buffer):
 /// while (auto frame = next_frame()) {
 ///     res.apply(frame);
 ///     if (liid.found) route(static_cast<VisibleString&>(liid), frame);

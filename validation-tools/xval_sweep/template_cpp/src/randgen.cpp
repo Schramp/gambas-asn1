@@ -81,8 +81,9 @@ int main(int argc, char** argv) {
                 std::cerr << "Bad --corrupt-mode: " << spec << "\n"
                           << "Valid tokens: all flip-pc rotate-class tag-bump tag-jump\n"
                           << "              len-bit-flip len-indef len-overstate len-understate\n"
+                          << "              segment segment-implicit\n"
                           << "Combine with '+' or ',' (e.g. flip-pc+tag-jump),\n"
-                          << "or pass a hex/decimal mask (e.g. 0x21).\n";
+                          << "or pass a hex/decimal mask of header modes (e.g. 0x21).\n";
                 return 1;
             }
         }

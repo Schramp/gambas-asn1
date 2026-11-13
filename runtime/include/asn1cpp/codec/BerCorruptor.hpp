@@ -57,10 +57,17 @@ enum CorruptModeBit : CorruptMask {
     /// Value-preserving: rewrite a universally tagged BIT STRING, OCTET STRING or
     /// character string into the constructed form (X.690 §8.6.4, §8.7.3, §8.23.3) —
     /// random segment sizes, definite or indefinite length, sometimes nested — and
-    /// re-encode the enclosing lengths. A conforming decoder gives the same value.
+    /// re-encode the enclosing lengths. A conforming decoder gives the same value,
+    /// except inside an ANY or open type, whose octets a decoder keeps as they are.
     /// IMPLICIT-tagged strings are left alone: without the schema their type is unknown.
     /// Not part of \c CORRUPT_ALL, so header-mutation runs keep their seeds.
     CORRUPT_SEGMENT        = 1u << 8,
+    /// \c CORRUPT_SEGMENT, and also every primitive TLV of application, context
+    /// or private class, as OCTET STRING segments. An IMPLICIT-tagged string
+    /// keeps its value; any other type gets a form X.690 forbids (a constructed
+    /// INTEGER, X.690 §8.3.1), which a decoder must reject. Not value-preserving:
+    /// it drives the decoders' IMPLICIT-tag segment paths for crash fuzzing.
+    CORRUPT_SEGMENT_IMPLICIT = 1u << 9,
 };
 
 inline std::string_view corrupt_mode_name(CorruptModeBit m) {
@@ -75,6 +82,7 @@ inline std::string_view corrupt_mode_name(CorruptModeBit m) {
     case CORRUPT_LEN_UNDERSTATE: return "len-understate";
     case CORRUPT_ALL:            return "all";
     case CORRUPT_SEGMENT:        return "segment";
+    case CORRUPT_SEGMENT_IMPLICIT: return "segment-implicit";
     }
     return "?";
 }
@@ -90,12 +98,15 @@ inline bool parse_corrupt_mode_token(std::string_view name, CorruptMask& bit) {
     if (name == "len-overstate")   { bit = CORRUPT_LEN_OVERSTATE;   return true; }
     if (name == "len-understate")  { bit = CORRUPT_LEN_UNDERSTATE;  return true; }
     if (name == "segment")         { bit = CORRUPT_SEGMENT;         return true; }
+    if (name == "segment-implicit") { bit = CORRUPT_SEGMENT_IMPLICIT; return true; }
     return false;
 }
 
 /// @brief Parse a CLI mask spec into a \c CorruptMask.
 /// Accepts one or more mode names joined by \c '+' or \c ',' (e.g. \c "flip-pc+tag-jump"),
-/// or a hex/decimal numeric mask (\c "0x21" / \c "33").  Empty input → \c CORRUPT_ALL.
+/// or a hex/decimal numeric mask (\c "0x21" / \c "33") of header modes: a
+/// numeric mask is limited to \c CORRUPT_ALL's bits, so the segment modes,
+/// which change the record's size, are only chosen by name.  Empty input → \c CORRUPT_ALL.
 /// @param spec  Input string.
 /// @param out   Receives the parsed mask on success.
 /// @return True on success; false if any token is unknown or the result would be zero.
@@ -107,14 +118,14 @@ inline bool parse_corrupt_mask(std::string_view spec, CorruptMask& out) {
         char* end = nullptr;
         std::string s(spec);
         unsigned long v = std::strtoul(s.c_str(), &end, 16);
-        if (end && *end == '\0') { out = static_cast<CorruptMask>(v); return v != 0; }
+        if (end && *end == '\0') { out = static_cast<CorruptMask>(v) & CORRUPT_ALL; return out != 0; }
         return false;
     }
     if (!spec.empty() && std::isdigit(static_cast<unsigned char>(spec[0]))) {
         char* end = nullptr;
         std::string s(spec);
         unsigned long v = std::strtoul(s.c_str(), &end, 10);
-        if (end && *end == '\0') { out = static_cast<CorruptMask>(v); return v != 0; }
+        if (end && *end == '\0') { out = static_cast<CorruptMask>(v) & CORRUPT_ALL; return out != 0; }
         return false;
     }
     CorruptMask mask = 0;
@@ -279,7 +290,10 @@ inline void corrupt_ber_range(std::vector<uint8_t>& buf, std::size_t begin,
 /// @brief True for a universal tag number whose type BER may send in
 ///        constructed form: BIT STRING, OCTET STRING, ObjectDescriptor and
 ///        the character strings, UTCTime and GeneralizedTime included
-///        (X.690 §8.6.4, §8.7.3, §8.23.3; X.680 Table 1).
+///        (X.690 §8.6.4, §8.7.3, §8.23.3; X.680 Table 1). Part of
+///        \c segment_range.
+/// @param number  Universal tag number.
+/// @return True for a string type.
 inline bool segmentable_universal(uint32_t number) {
     switch (number) {
     case 3: case 4: case 7: case 12: case 18: case 19: case 20: case 21: case 22:
@@ -290,6 +304,8 @@ inline bool segmentable_universal(uint32_t number) {
 }
 
 /// @brief Append definite length octets for \p n, in the shortest form (X.690 §8.1.3.3).
+/// @param out  Buffer to append to.
+/// @param n    Contents length.
 inline void segment_write_length(std::vector<uint8_t>& out, std::size_t n) {
     if (n < 0x80) { out.push_back(static_cast<uint8_t>(n)); return; }
     uint8_t tmp[8]; int k = 0;
@@ -301,6 +317,10 @@ inline void segment_write_length(std::vector<uint8_t>& out, std::size_t n) {
 /// @brief Append a constructed TLV: identifier \p id (constructed bit set),
 ///        \p body as contents, definite or (when \p indefinite) closed by
 ///        end-of-contents octets (X.690 §8.1.3.6).
+/// @param out         Buffer to append to.
+/// @param id          Identifier octets; the constructed bit is set on the copy.
+/// @param body        Contents octets.
+/// @param indefinite  Indefinite length instead of definite.
 inline void segment_write_constructed(std::vector<uint8_t>& out, std::span<const uint8_t> id,
                                       const std::vector<uint8_t>& body, bool indefinite) {
     out.insert(out.end(), id.begin(), id.end());
@@ -316,6 +336,11 @@ inline void segment_write_constructed(std::vector<uint8_t>& out, std::span<const
 ///        BIT STRING segments (tag 3) for BIT STRING, whose unused-bits count
 ///        goes in the last one. Now and then a run of segments is wrapped in
 ///        a nested constructed segment.
+/// @param out    Buffer to append the segment TLVs to.
+/// @param v      The string's contents; for BIT STRING with its unused-bits octet first.
+/// @param bits   BIT STRING segments (tag 3) instead of OCTET STRING (tag 4).
+/// @param rng    Picks segment sizes, nesting and length forms.
+/// @param depth  Nesting level of this call; nesting stops at 3.
 inline void segment_contents(std::vector<uint8_t>& out, std::span<const uint8_t> v, bool bits,
                              std::mt19937& rng, int depth) {
     uint8_t unused = 0;
@@ -354,8 +379,16 @@ inline void segment_contents(std::vector<uint8_t>& out, std::span<const uint8_t>
 ///        primitive string into constructed form with probability \p percent,
 ///        and re-encoding the length of every definite constructed TLV around
 ///        it. Input it cannot parse, or an indefinite length, is copied as is.
+///        Part of \c corrupt_ber for \c CORRUPT_SEGMENT.
+/// @param in       TLVs to copy.
+/// @param out      Buffer to append the rewritten TLVs to.
+/// @param percent  Chance, in percent, that a string is rewritten.
+/// @param rng      Picks which strings and how.
+/// @param tagged  \c CORRUPT_SEGMENT_IMPLICIT: rewrite primitive TLVs of
+///                application, context and private class too, as OCTET
+///                STRING segments.
 inline void segment_range(std::span<const uint8_t> in, std::vector<uint8_t>& out,
-                          double percent, std::mt19937& rng) {
+                          double percent, std::mt19937& rng, bool tagged) {
     std::bernoulli_distribution roll(percent / 100.0);
     const std::vector<uint8_t> view(in.begin(), in.end());
     std::size_t off = 0;
@@ -374,13 +407,14 @@ inline void segment_range(std::span<const uint8_t> in, std::vector<uint8_t>& out
         const bool universal = (view[off] & 0xC0) == 0 && tag_bytes == 1;
         if (constructed) {
             std::vector<uint8_t> body;
-            segment_range(value, body, percent, rng);
+            segment_range(value, body, percent, rng, tagged);
             out.insert(out.end(), id.begin(), id.end());
             segment_write_length(out, body.size());
             out.insert(out.end(), body.begin(), body.end());
-        } else if (universal && segmentable_universal(view[off] & 0x1F) && roll(rng)) {
+        } else if (((universal && segmentable_universal(view[off] & 0x1F)) || (tagged && (view[off] & 0xC0) != 0))
+                   && roll(rng)) {
             std::vector<uint8_t> body;
-            segment_contents(body, value, (view[off] & 0x1F) == 3, rng, 0);
+            segment_contents(body, value, universal && (view[off] & 0x1F) == 3, rng, 0);
             segment_write_constructed(out, id, body, std::bernoulli_distribution{0.5}(rng));
         } else {
             out.insert(out.end(), view.begin() + static_cast<std::ptrdiff_t>(off),
@@ -412,12 +446,13 @@ inline void corrupt_ber(std::vector<uint8_t>& buf, double percent,
                         std::mt19937& rng,
                         CorruptMask mask = CORRUPT_ALL) {
     if (percent <= 0.0 || buf.empty() || mask == 0) return;
-    if (mask & CORRUPT_SEGMENT) {
+    constexpr CorruptMask segment_modes = CORRUPT_SEGMENT | CORRUPT_SEGMENT_IMPLICIT;
+    if (mask & segment_modes) {
         std::vector<uint8_t> out;
         out.reserve(buf.size() * 2);
-        detail::segment_range(buf, out, percent, rng);
+        detail::segment_range(buf, out, percent, rng, (mask & CORRUPT_SEGMENT_IMPLICIT) != 0);
         buf = std::move(out);
-        mask &= ~static_cast<CorruptMask>(CORRUPT_SEGMENT);
+        mask &= ~segment_modes;
         if (mask == 0) return;
     }
     detail::corrupt_ber_range(buf, 0, buf.size(), percent, mask, rng);
