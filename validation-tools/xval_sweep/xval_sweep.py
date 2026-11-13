@@ -2132,6 +2132,12 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             if err:
                 print(f"  asn1c b2x(CER) stderr: {err}")
             xer_cer_asn1c = dedent_xer(xer_cer_asn1c)
+            # converter-example stops at the first record it cannot encode
+            # in CER; the rows below then cover the records before it.
+            n_cer, n_all = len(split_xer_records(xer_cer_asn1c)), len(split_xer_records(xer_asn1c))
+            if n_cer < n_all:
+                print(f"  asn1c CER leg: asn1c encoded {n_cer} of {n_all} records in CER "
+                      f"({err_cer.splitlines()[0] if err_cer else 'no message'})")
             for leg, tool in (("cpp", cpp_tools["b2x"]), ("rust", rust_tools["b2x"])):
                 xer_cer, err = b2x_file(tool, pdu_type, cer_path)
                 if err:

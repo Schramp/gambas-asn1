@@ -1876,7 +1876,10 @@ type in `targets.txt`. It adds independent ground-truth legs when the tools are 
   change the form of a value: it sorts SET OF components by their CER encodings
   (§9.3) and drops trailing zero bits of a BIT STRING with named bits (§11.2.2).
   These rows gate. A type asn1c cannot encode in CER skips
-  them with asn1c's message (`asn1c CER leg: skipped (...)`).
+  them with asn1c's message (`asn1c CER leg: skipped (...)`). asn1c stops at
+  the first record it cannot encode in CER; the rows then cover the records
+  before it, and the sweep prints `asn1c CER leg: asn1c encoded N of M records
+  in CER (...)`.
 - **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
   it). The schema is compiled once with `-bber +der` and once with `-buper`, and
   `erl_harness.escript` adds these rows per target:
