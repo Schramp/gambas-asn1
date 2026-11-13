@@ -2242,7 +2242,7 @@ BER encode and decode are complete for all types present in ETSI LI PS-PDU:
 - ANY (stored and replayed as verbatim BER bytes)
 - DEFAULT value suppression on encode, fill on decode
 - Indefinite-length encoding (decode only; encode always uses definite)
-- Constructed-form strings (decode only, C++ and Rust runtimes; see below)
+- Constructed-form strings (decode only, C++, Rust and Java runtimes; see below)
 - Extension marker skip on decode
 
 **Constructed-form strings.** BER lets a sender split an OCTET STRING, BIT STRING
@@ -2250,13 +2250,13 @@ or character string (UTCTime and GeneralizedTime included) into segments: a
 constructed TLV, of definite or indefinite length, whose contents are the
 segments' own encodings (X.690 §8.6.4, §8.7.3, §8.23.6). CER does this for every
 string longer than 1000 octets (X.690 §9.2), so asn1c's `-ocer` output has it.
-The C++ and Rust decoders join the segments, in order, into one value, under the type's
+The C++, Rust and Java decoders join the segments, in order, into one value, under the type's
 own tag and under an IMPLICIT tag, also for an OCTET STRING CONTAINING another
 type, whose contained value is then decoded from the joined bytes. Segments may
 themselves be constructed. The value is rebuilt in memory, from the record that
 is already in memory: the joined contents are never larger than the encoding.
-Encode always writes the primitive form. The Java runtime and the lazy
-`BerProjection` reader do not join segments yet.
+Encode always writes the primitive form. The lazy `BerProjection` reader does
+not join segments yet.
 
 Segment errors fail the decode with one of:
 

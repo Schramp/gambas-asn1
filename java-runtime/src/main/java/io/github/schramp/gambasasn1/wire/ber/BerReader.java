@@ -356,6 +356,82 @@ public final class BerReader {
         }
     }
 
+    /**
+     * Joins the segments of a constructed BIT STRING, OCTET STRING or
+     * character string: {@code contents} (the constructed contents, for an
+     * indefinite length without the end-of-contents octets) holds primitive
+     * or nested constructed encodings with the universal tag
+     * {@code universal}, concatenated in order (X.690 §8.6.4, §8.7.3,
+     * §8.23.3). Mirrors C++ {@code join_segments} ({@code BerCodec.cpp}) and
+     * Rust {@code join_segments}, with the same errors.
+     *
+     * @param universal 3 for BIT STRING segments, 4 for OCTET STRING segments
+     *                  (which character strings use too)
+     * @return the joined contents; for BIT STRING with the last segment's
+     *         unused-bits octet in front, so it decodes as a primitive one
+     * @throws DecodeException for a wrong segment tag, unused bits before the
+     *         last BIT STRING segment, or nesting deeper than
+     *         {@link Nesting#MAX_DECODE_DEPTH} levels
+     */
+    public static byte[] joinSegments(ByteSource contents, int universal) throws DecodeException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(contents.remaining() + 1);
+        boolean bits = universal == UniversalTag.BIT_STRING;
+        if (bits) {
+            out.write(0);
+        }
+        int[] unused = {0};
+        joinInto(new BerReader(contents), universal, 1, out, unused);
+        byte[] joined = out.toByteArray();
+        if (bits) {
+            joined[0] = (byte) unused[0];
+        }
+        return joined;
+    }
+
+    /**
+     * Appends the segments read by {@code r} to {@code out}; part of {@link #joinSegments}.
+     *
+     * @param depth  nesting level, limited to {@link Nesting#MAX_DECODE_DEPTH}
+     * @param unused BIT STRING only: unused bits of the last segment so far
+     */
+    private static void joinInto(BerReader r, int universal, int depth, java.io.ByteArrayOutputStream out,
+            int[] unused) throws DecodeException {
+        if (depth > Nesting.MAX_DECODE_DEPTH) {
+            throw new DecodeException("constructed string segments nest deeper than " + Nesting.MAX_DECODE_DEPTH
+                    + " levels", r.position());
+        }
+        boolean bits = universal == UniversalTag.BIT_STRING;
+        while (!r.atEnd()) {
+            int at = r.position();
+            Tlv seg = r.readTlv();
+            if (seg.tag().tagClass() != TagClass.UNIVERSAL || seg.tag().number() != universal) {
+                throw new DecodeException(bits
+                        ? "segment of a constructed BIT STRING is not a BIT STRING"
+                        : "segment of a constructed string is not an OCTET STRING", at);
+            }
+            if (seg.tag().constructed()) {
+                joinInto(new BerReader(seg.value()), universal, depth + 1, out, unused);
+                continue;
+            }
+            ByteSource v = seg.value();
+            if (bits) {
+                if (unused[0] != 0) {
+                    throw new DecodeException("BIT STRING segment other than the last has unused bits", at);
+                }
+                if (v.atEnd()) {
+                    throw new DecodeException("BIT STRING segment is empty (need at least unused-bits byte)", at);
+                }
+                int u = v.read("BIT STRING");
+                if (u > 7 || (u != 0 && v.atEnd())) {
+                    throw new DecodeException("BIT STRING segment has " + u + " unused bits in " + v.remaining()
+                            + " octets", at);
+                }
+                unused[0] = u;
+            }
+            out.writeBytes(v.remainingBytes());
+        }
+    }
+
     /** Definite length, or -1 for the indefinite form. */
     private int readLength() throws DecodeException {
         int first = src.read("length");
