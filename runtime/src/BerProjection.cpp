@@ -216,9 +216,10 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
                     Slot& s = slots_[node.field_index];
                     s.value_off = static_cast<size_t>(c.value().data() - frame_base);
                     s.value_len = c.length();
+                    s.constructed = c.tag().constructed;
                     if (s.binding) {
                         auto ok = BerCodec::instance().decode_value(
-                            c.value(), *s.binding->desc, s.binding->value_ptr);
+                            c.value(), *s.binding->desc, s.binding->value_ptr, s.constructed);
                         s.binding->found = ok.has_value();
                     }
                     ++found;
@@ -242,6 +243,7 @@ void BerProjectionResult::apply(std::span<const uint8_t> frame)
     for (auto& s : slots_) {
         s.value_off = SIZE_MAX;
         s.value_len = 0;
+        s.constructed = false;
         if (s.binding) s.binding->found = false;
     }
 
@@ -261,6 +263,7 @@ void BerProjectionResult::apply(std::span<uint8_t> frame)
     for (auto& s : slots_) {
         s.value_off = SIZE_MAX;
         s.value_len = 0;
+        s.constructed = false;
         if (s.binding) s.binding->found = false;
     }
 
@@ -288,7 +291,7 @@ void BerProjectionResult::load_impl(FieldHandle          h,
     if (s.value_off == SIZE_MAX) return;  // field absent in last apply()
 
     auto val = std::span<const uint8_t>(frame_base_ + s.value_off, s.value_len);
-    auto ok  = BerCodec::instance().decode_value(val, *desc, target.value_ptr);
+    auto ok  = BerCodec::instance().decode_value(val, *desc, target.value_ptr, s.constructed);
     target.found = ok.has_value();
 }
 
@@ -300,6 +303,12 @@ bool BerProjectionResult::commit(FieldHandle h)
 
     const Slot& s = slots_[h.index];
     if (!s.binding || !s.binding->found || s.value_off == SIZE_MAX) return false;
+    // A string in constructed form holds segment TLVs, not its value octets
+    // (X.690 §8.7.3), so the re-encoded primitive contents cannot replace them.
+    // Other constructed leaves (an IMPLICIT-tagged SEQUENCE, say) re-encode to
+    // the same contents shape and commit normally.
+    const IBerTypeHandler* handler = s.binding->desc->ber_handler;
+    if (s.constructed && handler && handler->joins_segments()) return false;
 
     // Encode the current value into the scratch buffer (reused across commit() calls)
     encode_buf_.clear();

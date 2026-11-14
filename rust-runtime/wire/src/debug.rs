@@ -12,6 +12,7 @@ pub const DBG_PER: u32 = 1 << 3; // PER bit-level ops
 pub const DBG_BER_WRITE: u32 = 1 << 4; // BER encode: each member/alt written
 pub const DBG_NO_VALIDATE: u32 = 1 << 5; // Suppress validate() at runtime
 pub const DBG_VALIDATE_TRACE: u32 = 1 << 6; // Constraint validation failures
+pub const DBG_BER_SEGMENTS: u32 = 1 << 7; // BER decode: constructed-form string segments joined
 
 /// Read `ASN1CPP_DEBUG` once and cache it — same one-shot-read contract as
 /// `asn1::debug_flags()` (Debug.hpp): no rebuild/recompile needed to change

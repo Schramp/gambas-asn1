@@ -143,6 +143,35 @@ fn ber_read_tlv(
     decode_content(tlv.value)
 }
 
+/// Universal tag of the segments of a constructed BIT STRING (X.690 §8.6.4).
+const BIT_STRING_SEGMENT: u32 = crate::ber::tag::universal::BIT_STRING;
+/// Universal tag of the segments of a constructed OCTET STRING or character
+/// string (X.690 §8.7.3, §8.23.3).
+const OCTET_STRING_SEGMENT: u32 = crate::ber::tag::universal::OCTET_STRING;
+
+/// [`ber_read_tlv`] for a string type, which BER may also send in
+/// constructed form (X.690 §8.6.4, §8.7.3, §8.23.6): the tag matches in
+/// either form, and the segments of a constructed one are joined before
+/// `decode_content` sees them.
+/// @param universal  Universal tag of the segments: 3 for BIT STRING, 4 for
+///                   OCTET STRING and the character strings (X.690 §8.23.3).
+fn ber_read_string_tlv(
+    r: &mut BerReader,
+    tag: Tag,
+    universal: u32,
+    decode_content: impl FnOnce(&[u8]) -> Result<(), BerDecodeError>,
+) -> Result<(), BerDecodeError> {
+    let tlv = r.read_tlv()?;
+    if !tlv.tag.matches_identifier(&tag) {
+        return Err(BerDecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+    }
+    if !tlv.tag.constructed {
+        return decode_content(tlv.value);
+    }
+    let joined = crate::ber::reader::join_segments(tlv.value, universal)?;
+    decode_content(&joined)
+}
+
 /// This primitive's own natural BER tag (X.690 §8.1.2) — `ANY` has none
 /// of its own (its wire form is a full TLV of whatever type was actually
 /// present, replayed verbatim), so it panics here; the BER dispatch
@@ -282,25 +311,25 @@ fn ber_decode_tagged_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Result
         PrimitiveRefMut::ArbitraryInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_arbitrary_integer_content(content); Ok(()) }),
         PrimitiveRefMut::Real(x) => ber_read_tlv(r, tag, |content| { *x = crate::real::decode_real_value(content, 0)?; Ok(()) }),
         PrimitiveRefMut::Null(_) => ber_read_tlv(r, tag, |content| { crate::null::decode_null_content(content)?; Ok(()) }),
-        PrimitiveRefMut::OctetString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
-        PrimitiveRefMut::BitString(x) => ber_read_tlv(r, tag, |content| { *x = crate::bit_string::decode_bit_string_content(content)?; Ok(()) }),
+        PrimitiveRefMut::OctetString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::BitString(x) => ber_read_string_tlv(r, tag, BIT_STRING_SEGMENT, |content| { *x = crate::bit_string::decode_bit_string_content(content)?; Ok(()) }),
         PrimitiveRefMut::ObjectIdentifier(x) => ber_read_tlv(r, tag, |content| { *x = crate::oid::decode_object_identifier_content(content)?; Ok(()) }),
         PrimitiveRefMut::RelativeOid(x) => ber_read_tlv(r, tag, |content| { *x = crate::relative_oid::decode_relative_oid_content(content)?; Ok(()) }),
         PrimitiveRefMut::Any(_) => unreachable!("ANY has no content-only BER form — ber_decode_into is overridden directly, never reaches ber_decode_into_tagged"),
-        PrimitiveRefMut::Utf8String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "UTF8String")?; Ok(()) }),
-        PrimitiveRefMut::NumericString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "NumericString")?; Ok(()) }),
-        PrimitiveRefMut::PrintableString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "PrintableString")?; Ok(()) }),
-        PrimitiveRefMut::T61String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "T61String")?; Ok(()) }),
-        PrimitiveRefMut::Ia5String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "IA5String")?; Ok(()) }),
-        PrimitiveRefMut::VisibleString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "VisibleString")?; Ok(()) }),
-        PrimitiveRefMut::GeneralString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralString")?; Ok(()) }),
-        PrimitiveRefMut::GraphicString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GraphicString")?; Ok(()) }),
-        PrimitiveRefMut::UniversalString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
-        PrimitiveRefMut::BmpString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
-        PrimitiveRefMut::VideotexString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "VideotexString")?; Ok(()) }),
-        PrimitiveRefMut::ObjectDescriptor(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "ObjectDescriptor")?; Ok(()) }),
-        PrimitiveRefMut::UtcTime(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "UTCTime")?; Ok(()) }),
-        PrimitiveRefMut::GeneralizedTime(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralizedTime")?; Ok(()) }),
+        PrimitiveRefMut::Utf8String(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "UTF8String")?; Ok(()) }),
+        PrimitiveRefMut::NumericString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "NumericString")?; Ok(()) }),
+        PrimitiveRefMut::PrintableString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "PrintableString")?; Ok(()) }),
+        PrimitiveRefMut::T61String(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "T61String")?; Ok(()) }),
+        PrimitiveRefMut::Ia5String(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "IA5String")?; Ok(()) }),
+        PrimitiveRefMut::VisibleString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "VisibleString")?; Ok(()) }),
+        PrimitiveRefMut::GeneralString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralString")?; Ok(()) }),
+        PrimitiveRefMut::GraphicString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "GraphicString")?; Ok(()) }),
+        PrimitiveRefMut::UniversalString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::BmpString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::VideotexString(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "VideotexString")?; Ok(()) }),
+        PrimitiveRefMut::ObjectDescriptor(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "ObjectDescriptor")?; Ok(()) }),
+        PrimitiveRefMut::UtcTime(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "UTCTime")?; Ok(()) }),
+        PrimitiveRefMut::GeneralizedTime(x) => ber_read_string_tlv(r, tag, OCTET_STRING_SEGMENT, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralizedTime")?; Ok(()) }),
     }
 }
 

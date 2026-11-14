@@ -155,6 +155,7 @@ struct ErrorBerHandler final : IBerTypeHandler {
 };
 
 struct BooleanBerHandler final : IBerTypeHandler {
+    constexpr BooleanBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -185,6 +186,7 @@ struct BooleanBerHandler final : IBerTypeHandler {
 };
 
 struct IntegerBerHandler final : IBerTypeHandler {
+    constexpr IntegerBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         int64_t v = static_cast<const Integer*>(src)->value();
@@ -214,6 +216,7 @@ private:
 };
 
 struct UIntegerBerHandler final : IBerTypeHandler {
+    constexpr UIntegerBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -243,6 +246,7 @@ private:
 };
 
 struct NullBerHandler final : IBerTypeHandler {
+    constexpr NullBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object*) const override {
         w.write_primitive(def.tag, {});
@@ -262,6 +266,7 @@ struct NullBerHandler final : IBerTypeHandler {
 };
 
 struct RealBerHandler final : IBerTypeHandler {
+    constexpr RealBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -291,7 +296,151 @@ struct RealBerHandler final : IBerTypeHandler {
     }
 };
 
+/// @brief Deepest nesting of constructed string segments a decoder accepts,
+///        counting the constructed string itself as level 1. X.690 sets no
+///        limit; this is the limit of the reference decoder (asn1c,
+///        \c BER_EXPLICIT_TAG_DEPTH_LIMIT), and CER never nests segments.
+inline constexpr int kMaxSegmentDepth = 30;
+
+/// @brief Append the segments of a constructed BIT STRING, OCTET STRING or
+///        character string to \p out: each one a primitive or (nested)
+///        constructed encoding with the universal tag \p universal, joined
+///        in order. Reads each segment's identifier and length only, and
+///        walks a nested indefinite-length segment on the same reader up to
+///        its end-of-contents, so every octet is visited once whatever the
+///        nesting. Part of \c join_string_contents.
+/// @param r          Reader positioned at the first segment.
+/// @param universal  3 for BIT STRING segments, 4 for OCTET STRING segments
+///                   (which character strings use too, X.690 §8.23.6).
+/// @param depth      Nesting level of these segments, limited to \c kMaxSegmentDepth.
+/// @param until_eoc  True for the segments of an indefinite-length segment:
+///                   stop after its end-of-contents (X.690 §8.1.5). False:
+///                   stop at the end of \p r.
+/// @param out        Joined contents; for BIT STRING without the unused-bits octets.
+/// @param unused     BIT STRING only: unused bits of the last segment so far.
+/// @return An error for a wrong segment tag, an unused-bits count in a
+///         segment that is not the last, too deep nesting, or a malformed
+///         or truncated segment header.
+/// @see X.690 §8.6.4 (BIT STRING), §8.7.3 (OCTET STRING), §8.23.6 (character strings).
+static DecodeResult join_segments(BerReader& r, uint32_t universal, int depth, bool until_eoc,
+                                  std::vector<uint8_t>& out, uint8_t& unused) {
+    if (depth > kMaxSegmentDepth)
+        return decode_err(DecodeError("constructed string segments nest deeper than " +
+                                      std::to_string(kMaxSegmentDepth) + " levels", r.pos()));
+    const bool bits = universal == 3;
+    for (;;) {
+        if (until_eoc) {
+            auto eoc = r.peek(2);
+            if (eoc.size() == 2 && eoc[0] == 0 && eoc[1] == 0) {
+                (void)r.read_bytes(2);
+                return decode_ok();
+            }
+            if (r.at_end())
+                return decode_err(DecodeError("unterminated indefinite-length encoding", r.pos()));
+        } else if (r.at_end()) {
+            return decode_ok();
+        }
+        const std::size_t at = r.pos();
+        auto tag = r.read_tag();
+        if (!tag) return decode_err(tag.error());
+        if (tag->cls != TagClass::Universal || tag->number != universal)
+            return decode_err(DecodeError(std::string("segment of a constructed ") +
+                                          (bits ? "BIT STRING" : "string") + " is not a" +
+                                          (bits ? " BIT STRING" : "n OCTET STRING"), at));
+        auto len = r.read_length();
+        if (!len) return decode_err(len.error());
+        if (len->indefinite) {
+            if (!tag->constructed)
+                return decode_err(DecodeError("indefinite-length encoding on primitive type", r.pos() - 1));
+            auto ok = join_segments(r, universal, depth + 1, true, out, unused);
+            if (!ok) return ok;
+            continue;
+        }
+        auto value = r.read_bytes(len->len);
+        if (!value) return decode_err(value.error());
+        if (tag->constructed) {
+            BerReader sub = r.sub(*value);
+            auto ok = join_segments(sub, universal, depth + 1, false, out, unused);
+            if (!ok) return ok;
+            continue;
+        }
+        auto v = *value;
+        if (bits) {
+            if (unused != 0)
+                return decode_err(DecodeError("BIT STRING segment other than the last has unused bits", at));
+            if (v.empty())
+                return decode_err(DecodeError("BIT STRING segment is empty (need at least unused-bits byte)", at));
+            if (v[0] > 7 || (v[0] != 0 && v.size() == 1))
+                return decode_err(DecodeError(std::format("BIT STRING segment has {} unused bits in {} octets",
+                                                          v[0], v.size() - 1), at));
+            unused = v[0];
+            v = v.subspan(1);
+        }
+        out.insert(out.end(), v.begin(), v.end());
+    }
+}
+
+/// @brief Join the segments of a constructed string value into \p buf
+///        (X.690 §8.6.4, §8.7.3, §8.23.6; CER uses the constructed form
+///        above 1000 octets, §9.2). A joined BIT STRING gets its unused-bits
+///        octet back in front, so \p buf decodes as a primitive one. Kept
+///        out of line: the primitive form is the common one, and
+///        \c with_string_contents only calls this for the constructed form.
+/// @param value     Contents of the constructed TLV.
+/// @param universal 3 for BIT STRING, 4 for the others.
+/// @param parent    Reader the TLV came from (decode depth and options).
+/// @param buf       Receives the joined contents.
+/// @return The segment error from \c join_segments, if any.
+[[gnu::cold, gnu::noinline]] static DecodeResult
+join_string_contents(std::span<const uint8_t> value, uint32_t universal,
+                     const BerReader& parent, std::vector<uint8_t>& buf) {
+    buf.reserve(value.size());
+    if (universal == 3) buf.push_back(0);
+    uint8_t unused = 0;
+    BerReader segments = parent.sub(value);
+    auto ok = join_segments(segments, universal, 1, false, buf, unused);
+    if (!ok) return ok;
+    if (universal == 3) buf[0] = unused;
+    if (debug_flags() & DBG_BER_SEGMENTS)
+        std::fprintf(stderr, "[BER-SEGMENTS] universal %u: %zu contents octets joined into %zu\n",
+                     universal, value.size(), buf.size());
+    return decode_ok();
+}
+
+/// @brief Pass the contents octets of a string value to \p store, in
+///        primitive or constructed form (BER allows both, X.690 §8.6.1,
+///        §8.7.1, §8.23.6). A primitive value goes to \p store as is; the
+///        segments of a constructed one are joined first
+///        (\c join_string_contents). Used by the BIT STRING, OCTET STRING,
+///        character string and time handlers.
+/// @param parent       Reader the TLV came from (decode depth and options).
+/// @param value        Contents of the TLV.
+/// @param constructed  The TLV's constructed bit.
+/// @param universal    3 for BIT STRING, 4 for the others.
+/// @param store        Called with the contents; returns the decode result.
+/// @return What \p store returns, or the segment error.
+template <class Store>
+[[gnu::always_inline]] static inline DecodeResult
+with_string_contents(const BerReader& parent, std::span<const uint8_t> value,
+                     bool constructed, uint32_t universal, Store&& store) {
+    if (!constructed) [[likely]] return store(value);
+    std::vector<uint8_t> buf;
+    auto ok = join_string_contents(value, universal, parent, buf);
+    if (!ok) return ok;
+    return store(std::span<const uint8_t>(buf));
+}
+
+/// @brief True when \p tag is \p expected in either form: a string type
+///        may be encoded primitive or constructed (X.690 §8.6.1, §8.7.1, §8.23.6).
+/// @param tag       Tag read from the wire.
+/// @param expected  The type's tag (\c def.tag).
+/// @return Same class and number, whatever the constructed bit.
+static bool same_string_tag(const Tag& tag, const Tag& expected) {
+    return tag.cls == expected.cls && tag.number == expected.number;
+}
+
 struct BitStringBerHandler final : IBerTypeHandler {
+    constexpr BitStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -299,29 +448,47 @@ struct BitStringBerHandler final : IBerTypeHandler {
         BerTraits<BitString>::encode(w, *static_cast<const BitString*>(src), def.tag);
     }
     /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
-    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
+    ///        or the tag of a type assignment, X.680 §31.2), in primitive or
+    ///        constructed form, and decode its contents.
+    /// @see X.690 §8.6 — BIT STRING contents.
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        if (tlv->tag != def.tag)
+        if (!same_string_tag(tlv->tag, def.tag))
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
-        auto v = BerTraits<BitString>::decode_value(tlv->value);
-        if (!v) return decode_err(v.error());
-        *static_cast<BitString*>(dest) = std::move(*v);
-        return decode_ok();
+        return set(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        auto value = content.rest();
-        auto v = BerTraits<BitString>::decode_value(value);
-        if (!v) return decode_err(v.error());
-        *static_cast<BitString*>(dest) = std::move(*v);
-        return decode_ok();
+        return set(content, content.rest(), false, dest);
+    }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set(content, content.rest(), true, dest);
+    }
+    /// @brief Decode primitive or constructed BIT STRING contents into \p dest.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
+    static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
+                            bool constructed, Asn1Object* dest) {
+        return with_string_contents(r, value, constructed, 3, [dest](std::span<const uint8_t> contents) {
+            auto v = BerTraits<BitString>::decode_value(contents);
+            if (!v) return decode_err(v.error());
+            *static_cast<BitString*>(dest) = std::move(*v);
+            return decode_ok();
+        });
     }
 };
 
 struct OctetStringBerHandler final : IBerTypeHandler {
+    constexpr OctetStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -335,16 +502,34 @@ struct OctetStringBerHandler final : IBerTypeHandler {
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        if (tlv->tag != def.tag)
+        if (!same_string_tag(tlv->tag, def.tag))
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
-        static_cast<OctetString*>(dest)->set(tlv->value);
-        return decode_ok();
+        return set(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        auto value = content.rest();
-        static_cast<OctetString*>(dest)->set(value);
+        static_cast<OctetString*>(dest)->set(content.rest());
         return decode_ok();
+    }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set(content, content.rest(), true, dest);
+    }
+    /// @brief Store primitive or constructed OCTET STRING contents in \p dest.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
+    static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
+                            bool constructed, Asn1Object* dest) {
+        return with_string_contents(r, value, constructed, 4, [dest](std::span<const uint8_t> contents) {
+            static_cast<OctetString*>(dest)->set(contents);
+            return decode_ok();
+        });
     }
 };
 
@@ -354,6 +539,7 @@ struct OctetStringBerHandler final : IBerTypeHandler {
 ///        value once all its members are known (\c decode_contained_members).
 ///        A modified inner value is re-encoded on write.
 struct ContainedBerHandler final : IBerTypeHandler {
+    constexpr ContainedBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     /// @brief Write the contained bytes as a primitive TLV with \c def.tag:
     ///        the universal OCTET STRING tag, or the tag of a type assignment
     ///        (X.680 §31.2).
@@ -366,26 +552,47 @@ struct ContainedBerHandler final : IBerTypeHandler {
         if (!err.empty()) w.set_encode_failed(err.c_str());
         w.write_primitive(def.tag, bytes);
     }
-    /// @brief Read one TLV, check it carries \c def.tag, keep its value as
-    ///        the raw contained bytes.
+    /// @brief Read one TLV, check it carries \c def.tag, keep its contents
+    ///        (the segments joined, for the constructed form) as the raw
+    ///        contained bytes.
     /// @see X.690 §8.7 — OCTET STRING contents.
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        if (tlv->tag != def.tag)
+        if (!same_string_tag(tlv->tag, def.tag))
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value, ContainedEncoding::Ber);
-        return decode_ok();
+        return set(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
         static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest(), ContainedEncoding::Ber);
         return decode_ok();
     }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set(content, content.rest(), true, dest);
+    }
+    /// @brief Keep primitive or constructed OCTET STRING contents as the raw contained bytes.
+    /// @param r            Reader the contents came from: nesting depth and
+    ///                     error offsets for the segment join.
+    /// @param value        The TLV's contents octets.
+    /// @param constructed  The TLV's constructed bit: \p value holds segments
+    ///                     (X.690 §8.6.4, §8.7.3) to join first.
+    /// @param dest         Target object.
+    /// @return \c DecodeResult — a segment or contents error.
+    static DecodeResult set(const BerReader& r, std::span<const uint8_t> value,
+                            bool constructed, Asn1Object* dest) {
+        return with_string_contents(r, value, constructed, 4, [dest](std::span<const uint8_t> contents) {
+            static_cast<ContainedBase*>(dest)->set_raw_from_wire(contents, ContainedEncoding::Ber);
+            return decode_ok();
+        });
+    }
 };
 
 struct OidBerHandler final : IBerTypeHandler {
+    constexpr OidBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -416,6 +623,7 @@ struct OidBerHandler final : IBerTypeHandler {
 };
 
 struct RelOidBerHandler final : IBerTypeHandler {
+    constexpr RelOidBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     /// @brief Write the value as a primitive TLV with \c def.tag: the
     ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
@@ -445,55 +653,88 @@ struct RelOidBerHandler final : IBerTypeHandler {
     }
 };
 
+/// @brief Store primitive or constructed character-string contents in
+///        \p dest; the segments of the constructed form are OCTET STRING
+///        encodings (X.690 §8.23.6). Shared by the character string and
+///        time handlers.
+/// @param r            Reader the contents came from.
+/// @param value        The TLV's contents.
+/// @param constructed  The TLV's constructed bit.
+/// @param dest         An \c AsnStringBase.
+/// @return The segment error from \c join_segments, if any.
+static DecodeResult set_string_contents(const BerReader& r, std::span<const uint8_t> value,
+                                        bool constructed, Asn1Object* dest) {
+    return with_string_contents(r, value, constructed, 4, [dest](std::span<const uint8_t> contents) {
+        static_cast<AsnStringBase*>(dest)->str().assign(
+            reinterpret_cast<const char*>(contents.data()), contents.size());
+        return decode_ok();
+    });
+}
+
 struct UtcTimeBerHandler final : IBerTypeHandler {
+    constexpr UtcTimeBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), in primitive or
+    ///        constructed form, and take its contents (X.690 §8.25, §8.26:
+    ///        encoded as a VisibleString).
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
-        return decode_ok();
+        if (!same_string_tag(tlv->tag, def.tag))
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        return set_string_contents(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        auto value = content.rest();
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(value.data()), value.size());
-        return decode_ok();
+        return set_string_contents(content, content.rest(), false, dest);
+    }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set_string_contents(content, content.rest(), true, dest);
     }
 };
 
 struct GenTimeBerHandler final : IBerTypeHandler {
+    constexpr GenTimeBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), in primitive or
+    ///        constructed form, and take its contents (X.690 §8.25, §8.26:
+    ///        encoded as a VisibleString).
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
-        return decode_ok();
+        if (!same_string_tag(tlv->tag, def.tag))
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        return set_string_contents(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        auto value = content.rest();
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(value.data()), value.size());
-        return decode_ok();
+        return set_string_contents(content, content.rest(), false, dest);
+    }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set_string_contents(content, content.rest(), true, dest);
     }
 };
 
 struct AsnStringBerHandler final : IBerTypeHandler {
+    constexpr AsnStringBerHandler() : IBerTypeHandler(BerForm::Segmented) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
@@ -504,18 +745,18 @@ struct AsnStringBerHandler final : IBerTypeHandler {
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        if (tlv->tag != def.tag)
+        if (!same_string_tag(tlv->tag, def.tag))
             return decode_err(DecodeError(std::string("wrong tag for string type")));
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
-        return decode_ok();
+        return set_string_contents(r, tlv->value, tlv->tag.constructed, dest);
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        auto value = content.rest();
-        static_cast<AsnStringBase*>(dest)->str().assign(
-            reinterpret_cast<const char*>(value.data()), value.size());
-        return decode_ok();
+        return set_string_contents(content, content.rest(), false, dest);
+    }
+    /// @brief \c decode_value() for the contents of a constructed IMPLICIT tag.
+    DecodeResult decode_constructed_value(const BerCodec&, BerReader& content,
+                                          const TypeDescriptor&, Asn1Object* dest) const override {
+        return set_string_contents(content, content.rest(), true, dest);
     }
 };
 
@@ -600,6 +841,7 @@ struct AnyBerHandler final : IBerTypeHandler {
 };
 
 struct EnumeratedBerHandler final : IBerTypeHandler {
+    constexpr EnumeratedBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         long v = static_cast<const EnumValue*>(src)->value();
@@ -931,7 +1173,7 @@ private:
                     if (!ok) return ok;
                 } else {
                     BerReader content = inner.sub(outer->value);
-                    auto ok = codec.decode_value(content, mdef, mptr);
+                    auto ok = codec.decode_value(content, mdef, mptr, outer->tag.constructed);
                     if (!ok) return ok;
                 }
             } else {
@@ -1032,7 +1274,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                         ok = codec.decode(ms, mdef, mptr);
                     } else {
                         BerReader content = r.sub(outer->value);
-                        ok = codec.decode_value(content, mdef, mptr);
+                        ok = codec.decode_value(content, mdef, mptr, outer->tag.constructed);
                     }
                 } else {
                     BerDecodeStream ms{r};
@@ -1072,7 +1314,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                         ok = codec.decode(ms, mdef, mptr);
                     } else {
                         BerReader content = r.sub(outer->value);
-                        ok = codec.decode_value(content, mdef, mptr);
+                        ok = codec.decode_value(content, mdef, mptr, outer->tag.constructed);
                     }
                 } else {
                     BerDecodeStream ms{r};
@@ -1105,7 +1347,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 } else {
                     BerReader content = r.sub(outer->value);
-                    ok = codec.decode_value(content, mdef, mptr);
+                    ok = codec.decode_value(content, mdef, mptr, outer->tag.constructed);
                 }
             } else {
                 BerDecodeStream ms{r};
@@ -1325,17 +1567,37 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
-                                     Asn1Object* dest) const {
+                                     Asn1Object* dest,
+                                     bool constructed) const {
     BerReader content{value};
-    return decode_value(content, def, dest);
+    return decode_value(content, def, dest, constructed);
 }
 
 DecodeResult BerCodec::decode_value(BerReader& content,
                                      const TypeDescriptor& def,
-                                     Asn1Object* dest) const {
+                                     Asn1Object* dest,
+                                     bool constructed) const {
     DecodeDepthGuard depth_guard{content.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
-    auto res = ber_handler_of(def).decode_value(*this, content, def, dest);
+    if (def.is_explicit) {
+        // An IMPLICIT tag on a type whose own tag is EXPLICIT replaces that
+        // outer tag only (X.680 §31.2.7): the contents are the one TLV the
+        // EXPLICIT tag wraps, the type's encoding with its natural tag.
+        TypeDescriptor inner = def;
+        inner.tag = def.natural_tag;
+        inner.is_explicit = false;
+        auto res = ber_handler_of(inner).decode(*this, content, inner, dest);
+        if (res.has_value() && !content.at_end())
+            return decode_err(DecodeError(std::string("trailing data after the EXPLICIT-tagged value of ") +
+                                          def.name, content.pos()));
+        if (res.has_value()) validate_on_decode("BER", def, dest);
+        return res;
+    }
+    const auto& h = ber_handler_of(def);
+    if (constructed && h.form() == BerForm::Primitive)
+        return decode_err(DecodeError(std::string("constructed encoding of primitive type ") + def.name, content.pos()));
+    auto res = constructed && h.joins_segments() ? h.decode_constructed_value(*this, content, def, dest)
+                                                 : h.decode_value(*this, content, def, dest);
     if (res.has_value()) validate_on_decode("BER", def, dest);
     return res;
 }

@@ -1,0 +1,40 @@
+-- Constructed-form strings on BER decode (X.690 §8.6.4, §8.7.3, §8.23.6):
+-- a sender may split an OCTET STRING, BIT STRING or character string into
+-- segments. asn1c's CER encoder (X.690 §9.2) does so for values longer
+-- than 1000 octets. Tagged covers IMPLICIT tags over the segments, Plain the
+-- strings' own UNIVERSAL tags; Bits and Name carry the X.690 worked examples.
+-- Opt has OPTIONAL members, one of them an extension addition: their
+-- presence is decided on the tag, whichever form the value is in.
+-- Lab and LabChoice: an IMPLICIT tag on a type whose own tag is EXPLICIT
+-- replaces that outer tag only (X.680 §31.2.7), so the member stays
+-- constructed around the inner natural-tag TLV; it holds no segments.
+-- Wrapped holds an OCTET STRING CONTAINING a value (X.682 §11), whose
+-- segments join to the contained encoding.
+ConstructedStringsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+Tagged ::= SEQUENCE { o [0] OCTET STRING, b [1] BIT STRING, s [2] IA5String }
+Plain ::= SEQUENCE { o OCTET STRING, b BIT STRING, v VisibleString, u UTF8String }
+Bits ::= BIT STRING
+Name ::= VisibleString
+Wrapped ::= SEQUENCE { c [0] OCTET STRING (CONTAINING Name) }
+Opt ::= SEQUENCE { a [0] OCTET STRING OPTIONAL, b [1] IA5String OPTIONAL, ..., c [2] OCTET STRING OPTIONAL }
+OptSet ::= SET { a [0] OCTET STRING OPTIONAL, b [1] IA5String OPTIONAL }
+Label ::= [9] EXPLICIT UTF8String
+Stamp ::= [4] EXPLICIT UTCTime
+Octets ::= [5] EXPLICIT OCTET STRING
+Lab ::= SEQUENCE { c [8] IMPLICIT Label, t [3] IMPLICIT Stamp, o [6] IMPLICIT Octets }
+LabChoice ::= CHOICE { c [8] IMPLICIT Label, n [1] INTEGER }
+-- BerProjection leaves: an IMPLICIT-tagged SEQUENCE and an EXPLICIT-tagged string.
+Outer ::= SEQUENCE { p [0] Tagged, x [1] EXPLICIT IA5String }
+-- CHOICE alternatives in segments, through each of the decoder's alternative
+-- lookups: a context-tag index, a dispatch table (an untagged CHOICE
+-- alternative), and a linear scan (universal and context tags mixed).
+CtxChoice ::= CHOICE { a [0] OCTET STRING, b [1] IA5String }
+NestChoice ::= CHOICE { x CtxChoice, y [2] OCTET STRING }
+MixChoice ::= CHOICE { a [0] OCTET STRING, b IA5String }
+-- Form checks: INTEGER is primitive only (X.690 §8.3.1), a SEQUENCE
+-- constructed only (§8.9.1), and a UTCTime TLV must carry its own tag.
+Num ::= SEQUENCE { n [1] INTEGER }
+When ::= SEQUENCE { t UTCTime }
+Inner ::= SEQUENCE { a INTEGER }
+Holder ::= SEQUENCE { s Inner OPTIONAL, n INTEGER }
+END

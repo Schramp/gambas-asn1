@@ -1258,6 +1258,35 @@ add_test(NAME xer_vectors_119 COMMAND test_xer_vectors_119
     ${CMAKE_CURRENT_SOURCE_DIR}/vectors/per_strings_119.vectors)
 set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 
+# ---- Constructed-form strings (X.690 §8.6.4, §8.7.3, §8.23.6; CER §9.2) ------
+# Each row of vectors/constructed_strings_test.vectors: BER with constructed
+# strings (asn1c CER or an X.690 example) must decode to the value of asn1c's
+# DER and re-encode to that DER; see tests/vectors/make_constructed_vectors.py.
+set(CONSTRUCTED_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_constructed_strings)
+set(CONSTRUCTED_TYPES Tagged Plain Bits Name Wrapped Opt OptSet Label Stamp Octets Lab LabChoice Outer
+    CtxChoice NestChoice MixChoice Num When Inner Holder)
+set(_cs_outputs)
+set(_cs_sources)
+foreach(t IN LISTS CONSTRUCTED_TYPES)
+    list(APPEND _cs_outputs ${CONSTRUCTED_GEN_DIR}/${t}.hpp ${CONSTRUCTED_GEN_DIR}/${t}.cpp)
+    list(APPEND _cs_sources ${CONSTRUCTED_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_cs_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CONSTRUCTED_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+            -o ${CONSTRUCTED_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+    COMMENT "Generating C++ from constructed_strings_test.asn1"
+)
+add_executable(test_constructed_strings seq/test_constructed_strings.cpp ${_cs_sources})
+target_include_directories(test_constructed_strings PRIVATE ${CONSTRUCTED_GEN_DIR})
+target_link_libraries(test_constructed_strings PRIVATE asn1cpp_runtime)
+add_test(NAME constructed_strings COMMAND test_constructed_strings
+    ${CMAKE_CURRENT_SOURCE_DIR}/vectors/constructed_strings_test.vectors)
+set_tests_properties(constructed_strings PROPERTIES TIMEOUT 30)
+
 # ---- asn1c PER vector suite: data-126 (126-per-extensions-OK.asn1) ----------
 # Mirrors asn1c check-126.-gen-UPER.c: XER decode → UPER encode → binary compare
 # → UPER decode → XER re-encode compare.
@@ -2222,10 +2251,12 @@ set(java_leg_promoted_name_clash_PDUS
     Rec Pick RecParties PickList)
 set(java_leg_zero_width_items_PDUS
     Nulls Fives Flags Rows)
+set(java_leg_constructed_strings_PDUS
+    Tagged Plain Bits Name Wrapped Opt OptSet CtxChoice NestChoice MixChoice Num When Inner Holder)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent
-        per_nkm_size size_lower_bound promoted_name_clash zero_width_items)
+        per_nkm_size size_lower_bound promoted_name_clash zero_width_items constructed_strings)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
@@ -2489,6 +2520,31 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_xer_vectors_70 PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
+endif()
+
+# Rust leg of the constructed_strings test above: the same vectors
+# (vectors/constructed_strings_test.vectors) and the same accepted and
+# refused segment structures; see tests/rust/constructed_strings/src/main.rs.
+set(RUST_CS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_constructed_strings)
+add_custom_command(
+    OUTPUT  ${RUST_CS_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+                                   -o ${RUST_CS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/constructed_strings_test.asn1
+    COMMENT "Generating Rust from constructed_strings_test.asn1"
+)
+add_custom_target(gen_rust_constructed_strings ALL DEPENDS ${RUST_CS_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_constructed_strings
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/constructed_strings/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/vectors/constructed_strings_test.vectors)
+    set_tests_properties(rust_constructed_strings PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CS_GEN_DIR=${RUST_CS_GEN_DIR}")
 endif()
 
 # Rust leg of the real asn1c data-119 XER/UPER-vector fixture

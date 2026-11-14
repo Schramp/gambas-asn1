@@ -80,6 +80,21 @@ public final class BerPrimitive {
         }
     }
 
+    /**
+     * The universal tag of the segments a string type may be split into in
+     * BER's constructed form (X.690 §8.6.4, §8.7.3, §8.23.3): 3 for BIT
+     * STRING, 4 for OCTET STRING and the character strings (time types
+     * included), -1 for a type without a constructed form.
+     */
+    private static int segmentTag(Asn1Primitive p) {
+        return switch (p) {
+            case Asn1BitString b -> BIT_STRING_TAG.number();
+            case Asn1OctetString o -> OCTET_STRING_TAG.number();
+            case Asn1CharString c -> OCTET_STRING_TAG.number();
+            default -> -1;
+        };
+    }
+
     /** The builtin's own universal tag (X.680 §8, Table 1). */
     public static Tag naturalTag(Asn1Primitive p) {
         return switch (p) {
@@ -120,13 +135,17 @@ public final class BerPrimitive {
     private static void decodeTagged(Asn1Primitive p, Tag tag, BerReader r) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
-        if (!tlv.tag().equals(tag)) {
+        int segments = segmentTag(p);
+        if (segments < 0 ? !tlv.tag().equals(tag) : !tlv.tag().matchesIdentifier(tag)) {
             throw new DecodeException("expected tag " + tag + ", got " + tlv.tag(), start);
         }
         ByteSource v = tlv.value();
-        // A primitive TLV ends with its contents (X.690 §8.1.1).
-        int to = r.position();
-        int from = to - v.remaining();
+        int from = v.position();
+        int to = from + v.remaining();
+        boolean joined = segments >= 0 && tlv.tag().constructed();
+        if (joined) {
+            v = new ByteSource(BerReader.joinSegments(v, segments, r.options().relaxed()));
+        }
         switch (p) {
             // X.690 §8.2.2: any non-zero contents octet is TRUE.
             case Asn1Boolean b -> {
@@ -167,7 +186,9 @@ public final class BerPrimitive {
             }
             default -> throw new DecodeException("no BER form for " + p.xerElementName(), start);
         }
-        if (r.positions() != null) {
+        // A joined value's octets are spread over its segments, so it has no
+        // contents or value span in the input.
+        if (r.positions() != null && !joined) {
             r.markContents(p, from, to);
             if (p instanceof Asn1BitString b && to > from) {
                 // The value leaves out the unused-bits octet and the unused bits (X.690 §8.6.2).

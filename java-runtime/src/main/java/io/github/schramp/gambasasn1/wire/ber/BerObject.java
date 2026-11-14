@@ -401,9 +401,10 @@ public final class BerObject {
                 Asn1OctetString raw = new Asn1OctetString();
                 BerPrimitive.decode(raw, framing, r);
                 f.setRawFromWire(raw.get(), ContainedEncoding.BER);
-                if (r.positions() != null) {
-                    // A primitive TLV ends with its contents (X.690 §8.1.1).
-                    r.markContents(f, r.position() - raw.get().length, r.position());
+                if (r.positions() != null && r.positions().contentsBit(raw) >= 0) {
+                    // The field's contents are those of its OCTET STRING; a joined
+                    // one has none, so its inner value gets no placement either.
+                    r.positions().recordContents(f, r.positions().contentsBit(raw), r.positions().contentsEndBit(raw));
                 }
             }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());

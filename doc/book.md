@@ -1392,6 +1392,25 @@ and fails only on a crash (signal, abort, Rust panic, hang); the xval Rust
 tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
 `rust_fuzz_smoke` (Rust) as fixed-seed smoke tests.
 
+BerCorruptor's `--corrupt-mode` names (`randgen --corrupt-mode SPEC`, joined
+with `+` or `,`): `flip-pc`, `rotate-class`, `tag-bump`, `tag-jump`,
+`len-bit-flip`, `len-indef`, `len-overstate`, `len-understate` mutate TLV
+headers in place; `all` is these eight together. `segment` is different: it
+keeps the value and rewrites universally tagged BIT STRING, OCTET STRING and
+character strings into BER's constructed form (random segment sizes, definite
+or indefinite length, sometimes nested segments), re-encoding the enclosing
+lengths, so a conforming decoder must give the same value; inside an ANY or
+open type, whose octets a decoder keeps as they are, the octets change.
+IMPLICIT-tagged strings are left alone (without the schema their type is
+unknown). `segment-implicit` also rewrites every primitive TLV of application,
+context or private class: an IMPLICIT-tagged string keeps its value, any other
+type gets a form X.690 forbids, which a decoder must reject. It is for crash
+fuzzing of the IMPLICIT-tag segment paths, not value-preserving. Neither is
+part of `all`, so header-mutation runs reproduce with the same seeds;
+`segment+all` combines them. A numeric mask (`0x21`) selects header modes
+only; the segment modes go by name. `fuzz_ber` checks that every `segment`
+record decodes to its original value.
+
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed
 record #N ...`) and exit 1; a panic, abort or signal is always a bug.
@@ -1735,6 +1754,7 @@ Set before running any binary linked against `libasn1cpp_runtime`:
 | `0x08` | `DBG_PER` | PER bit-level ops — every `put_bits`/`get_bits` with offset and value |
 | `0x10` | `DBG_BER_WRITE` | BER encode — member name, tag, EXPLICIT/IMPLICIT, byte count |
 | `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations — type name, delta, codec (all encodings) |
+| `0x80` | `DBG_BER_SEGMENTS` | BER decode of a constructed-form string — universal tag of the segments, octets read, octets joined (C++, Rust) |
 
 ```bash
 # Trace BER encoding:
@@ -1853,6 +1873,19 @@ type in `targets.txt`. It adds independent ground-truth legs when the tools are 
 
 - **asn1c**, when `asn1c` is on `PATH`, in `ASN1C_BIN_DIR` or in `/usr/local/bin`
   (`--asn1c-dir DIR` to point elsewhere, `--no-asn1c` to skip it).
+  Besides asn1c's XER of the records (`asn1c.B2X vs cpp.B2X` and the Rust and
+  Java rows), asn1c re-encodes that XER in CER (X.690 §9: indefinite lengths
+  everywhere, strings above 1000 octets split into segments) and each runtime
+  must decode the CER file to the XER asn1c decodes from it
+  (`asn1c.B2X(asn1c.CER) vs cpp.B2X(asn1c.CER)`, and the same for `rust` and
+  `java`). The reference is asn1c's decode of the CER file, because CER can
+  change the form of a value: it sorts SET OF components by their CER encodings
+  (§9.3) and drops trailing zero bits of a BIT STRING with named bits (§11.2.2).
+  These rows gate. A type asn1c cannot encode in CER skips
+  them with asn1c's message (`asn1c CER leg: skipped (...)`). asn1c stops at
+  the first record it cannot encode in CER; the rows then cover the records
+  before it, and the sweep prints `asn1c CER leg: asn1c encoded N of M records
+  in CER (...)`.
 - **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
   it). The schema is compiled once with `-bber +der` and once with `-buper`, and
   `erl_harness.escript` adds these rows per target:
@@ -1913,7 +1946,8 @@ were considered:
   code into two families for a niche gain.
 - **Projection / cursor (available today)** — `BerProjection` and `BerCursor` sidestep the
   issue by never building owning objects: they hand back `std::span`s into the frame on demand,
-  zero-copy and zero-allocation. The trade-off is navigation by path/tag instead of typed field
+  zero-copy and zero-allocation (except a string leaf sent in segments, which is
+  joined into a buffer). The trade-off is navigation by path/tag instead of typed field
   access. This is the supported zero-copy route for hot scan/extract paths.
 - **Hybrid owning-or-view leaves (the plausible future option)** — give only the relevant leaf
   types (OCTET STRING, the large string types, `ANY`) an internal "owned `std::string` *or*
@@ -2241,7 +2275,60 @@ BER encode and decode are complete for all types present in ETSI LI PS-PDU:
 - ANY (stored and replayed as verbatim BER bytes)
 - DEFAULT value suppression on encode, fill on decode
 - Indefinite-length encoding (decode only; encode always uses definite)
+- Constructed-form strings (decode only, C++, Rust and Java runtimes; see below)
 - Extension marker skip on decode
+
+**Constructed-form strings.** BER lets a sender split an OCTET STRING, BIT STRING
+or character string (UTCTime and GeneralizedTime included) into segments: a
+constructed TLV, of definite or indefinite length, whose contents are the
+segments' own encodings (X.690 §8.6.4, §8.7.3, §8.23.6). CER does this for every
+string longer than 1000 octets (X.690 §9.2), so asn1c's `-ocer` output has it.
+The C++, Rust and Java decoders join the segments, in order, into one value, under the type's
+own tag and under an IMPLICIT tag, also for an OCTET STRING CONTAINING another
+type, whose contained value is then decoded from the joined bytes. Segments may
+themselves be constructed. The value is rebuilt in memory, from the record that
+is already in memory: the joined contents are never larger than the encoding.
+Encode always writes the primitive form. The lazy `BerProjection` reader joins
+segments too, in definite-length frames; see its section. The joining covers
+the codec entry points, which decode through the type tables: C++ `BerCodec`,
+Rust `decode_pdu` and the `ber::object` functions, Java `BerObject`. The
+single-type helpers below them read one primitive TLV and reject the
+constructed form: C++ `BerTraits<T>::decode` and `asn1::decode<BER, T>` on a
+builtin type, and the Rust `read_*_tagged` functions (`read_octet_string_tagged`,
+`read_bit_string_tagged`, ...).
+
+Segment errors fail the decode with one of:
+
+```
+segment of a constructed string is not an OCTET STRING
+segment of a constructed BIT STRING is not a BIT STRING
+BIT STRING segment other than the last has unused bits
+BIT STRING segment is empty (need at least unused-bits byte)
+BIT STRING segment has 3 unused bits in 0 octets
+constructed string segments nest deeper than 30 levels
+```
+
+The segments of a character string are OCTET STRINGs (X.690 §8.23.6), not the
+string type itself; end-of-contents octets inside a definite length are a
+wrong segment tag. Segments nest at most 30 levels deep, counting the string
+itself: the limit of asn1c (X.690 sets none; CER never nests segments). The
+join reads each segment's header once, so its cost is linear in the size of
+the value at any nesting.
+
+Only strings take the constructed form. BOOLEAN, INTEGER, ENUMERATED, REAL,
+NULL, OBJECT IDENTIFIER and RELATIVE-OID are primitive only (X.690 §8.2.1,
+§8.3.1, §8.4, §8.5.1, §8.8.1, §8.19.1, §8.20.1), and SEQUENCE, SET,
+SEQUENCE OF and SET OF constructed only (§8.9.1–§8.12.1). A value in the
+other form fails the decode. Under an IMPLICIT tag C++ reports, for example:
+
+```
+constructed encoding of primitive type INTEGER
+```
+
+Rust and Java report the tag they expected (`expected tag ..., got ...`).
+Test vectors: `tests/vectors/constructed_strings_test.vectors`
+(asn1c's CER and DER, and the X.690 §8.6.4.2 and §8.23.6 examples). Random
+records in constructed form: `randgen --corrupt-percent P --corrupt-mode segment`.
 
 Cross-validation: **440/440** records across seeds {1, 7, 42, 99}, 10 records per seed,
 all 11 checks passing. Wire-fuzz (8 corruption modes, 180k ETSI + 45k PKIX records):
@@ -2364,6 +2451,9 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **Indefinite-length encode** | Decoder accepts indefinite-length BER. Encoder always uses definite-length encoding. |
 | **RandomFiller coverage** | ENUMERATED fill, UInteger, Real, Null, OID, UTCTime, and GeneralizedTime fill paths have zero test coverage. |
+| **Constructed strings: single-type helpers** | Segments of a constructed string (X.690 §8.6.4, §8.7.3, §8.23.6) are joined by the codec entry points only: C++ `BerCodec`, Rust `decode_pdu` and the `ber::object` functions, Java `BerObject`. C++ `BerTraits<T>::decode`, `asn1::decode<BER, T>` on a builtin type and the Rust `read_*_tagged` functions read one primitive TLV and reject the constructed form. See Constructed-form strings. |
+| **Constructed strings: Java positions** | A string sent in constructed form has no contents or value span in `Positions` (-1): its octets are spread over the segment TLVs. It keeps its encoding span (`bitOffset`, `sizeBits`). The inner value of a contained field in constructed form gets no positions. See Source positions. |
+| **BerProjection: EXPLICIT leaves, segmented strings** | The projection models IMPLICIT tagging only: an EXPLICIT-tagged leaf may be reported not found by `apply()` / `load()`, and `commit()` returns `false` for it. A string leaf sent in segments is joined on `apply()` / `load()`, into a buffer (the one allocation on that path), but `commit()` returns `false` for it. A frame with indefinite lengths ends the walk. See BerProjection vs full decode/encode. |
 
 ---
 
@@ -2397,7 +2487,16 @@ compiled into a trie of tag offsets against a `TypeDescriptor`), then applied
 per-record: `apply()` walks the trie against one frame's bytes and hands back
 `Asn1Optional<T>` views bound to each path; `commit()` re-encodes a modified
 field and patches it back into the frame in place (same-size replacement, no
-buffer growth for BER's TLV length fields). This is the same mechanism behind
+buffer growth for BER's TLV length fields). A string field sent in constructed
+form (segments, X.690 §8.7.3) is joined by `apply()` and `load()`, but
+`commit()` returns `false` for it and leaves the frame unchanged: the frame
+holds segment TLVs, not the value octets. Other constructed fields (an
+IMPLICIT-tagged SEQUENCE such as `pSHeader/microSecondTimeStamp`) commit
+normally. Projection models IMPLICIT tagging only: an EXPLICIT-tagged field is
+not supported, so `apply()` and `load()` may report it not found and `commit()`
+returns `false` for it. The walk only follows definite lengths: a frame or member with an indefinite length
+(as CER writes every constructed value) ends it, and the fields inside are not
+found. This is the same mechanism behind
 `etsi-pcap`'s and `pseudonimiser`'s ability to touch a handful of fields across
 millions of records without paying for a full object graph each time.
 
@@ -2744,7 +2843,12 @@ where the decoded value itself lies, without any encoding rule to apply:
 | CHOICE | its chosen alternative's value span |
 | PER OCTET STRING, BIT STRING, contained field | the octets or bits after the length determinant, unless the length is 16K or more (fragmented, X.691 §11.9.3.8) |
 
-Every other node reports -1.
+Every other node reports -1. A BER string sent in constructed form (segments,
+X.690 §8.7.3, as CER writes strings above 1000 octets) is joined from octets
+spread over its segment TLVs, so it has no contents or value span: it keeps
+its encoding span (`bitOffset`, `sizeBits`) and reports -1 for the others. The
+inner value of a contained field in constructed form then has no positions
+either, as its bytes are not one range of the input.
 `decodeWithPositions(v, BerReader)` reads one record from a reader and leaves
 it after that record; its offsets are from the record's own first octet, and
 `positions().withBase(bits)` shifts them to a file offset. A plain `decode`
@@ -2818,7 +2922,8 @@ DecodeOptions opts = DecodeOptions.DEFAULT
   - BER: a BOOLEAN with more than one contents octet is TRUE when any of
     them is non-zero.
   - BER: a NULL with contents is accepted.
-  - BER: a BIT STRING with unused bits but no octets is empty.
+  - BER: a BIT STRING with unused bits but no octets is empty, also as a
+    segment of a constructed one.
   - PER and JER: data after the value is ignored.
   - XER: asn1c's text forms are accepted, the same as `decodeLenient`.
 - **Trace** (null by default) receives one line per member, alternative
