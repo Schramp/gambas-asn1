@@ -1,5 +1,6 @@
 #include <asn1cpp/codec/BerInspect.hpp>
 #include <asn1cpp/codec/BerCursor.hpp>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <cctype>
 #include <string>
 #include <vector>
@@ -84,13 +85,30 @@ static bool tag_matches_desc(Tag t, Tag desc_tag)
     return t.cls == desc_tag.cls && t.number == desc_tag.number;
 }
 
+/// @brief Whether a constructed TLV with children at the end of \p path
+///        sits at the nesting cap, so its children are not walked; writes
+///        a marker line for it to \p out when non-null.
+static bool at_depth_cap(BerCursor c, const std::vector<std::string>& path, std::ostream* out)
+{
+    if (path.size() < static_cast<std::size_t>(kMaxDecodeDepth) || !BerCursor(c.value()).valid())
+        return false;
+    if (out)
+        *out << join_path(path) << "/... (nested deeper than " << kMaxDecodeDepth << " levels, not shown)\n";
+    return true;
+}
+
 // ── Schema-free walk ──────────────────────────────────────────────────────────
 
-static void walk_free(BerCursor            c,
+/// @brief Schema-free path dump of one sibling run, recursing into
+///        constructed TLVs up to \c kMaxDecodeDepth levels (the codec decode
+///        limit) so untrusted nesting cannot overflow the stack.
+/// @return False when some TLV sat at the nesting cap with children.
+static bool walk_free(BerCursor            c,
                       std::vector<std::string>& path,
                       std::ostream&        out,
                       bool                 leaves_only)
 {
+    bool complete = true;
     while (c.valid()) {
         path.push_back(tag_to_str(c.tag()));
 
@@ -98,24 +116,35 @@ static void walk_free(BerCursor            c,
         if (!leaves_only || is_leaf)
             emit_path(path, out);
 
-        if (c.tag().constructed && !c.value().empty())
-            walk_free(BerCursor(c.value()), path, out, leaves_only);
+        if (c.tag().constructed && !c.value().empty()) {
+            if (at_depth_cap(c, path, &out))
+                complete = false;
+            else
+                complete = walk_free(BerCursor(c.value()), path, out, leaves_only) && complete;
+        }
 
         path.pop_back();
         c.next();
     }
+    return complete;
 }
 
 // ── Schema-aware walk ─────────────────────────────────────────────────────────
 
-// Writes paths to `out` when non-null; appends to `collected` when non-null.
-static void walk_schema(BerCursor                 c,
+/// @brief Schema-aware path walk of one sibling run: names each TLV after
+///        the SEQUENCE member or CHOICE alternative its tag selects in
+///        \p desc (numeric tag otherwise), writes paths to \p out and/or
+///        appends them to \p collected, and recurses up to
+///        \c kMaxDecodeDepth levels like walk_free.
+/// @return False when some TLV sat at the nesting cap with children.
+static bool walk_schema(BerCursor                 c,
                         const TypeDescriptor*     desc,
                         std::vector<std::string>& path,
                         std::ostream*             out,
                         std::vector<std::string>* collected,
                         bool                      leaves_only)
 {
+    bool complete = true;
     while (c.valid()) {
         // Reverse-lookup: find member/alternative name for this tag.
         std::string              name       = tag_to_str(c.tag());  // fallback
@@ -149,33 +178,39 @@ static void walk_schema(BerCursor                 c,
             if (collected) collected->push_back(join_path(path));
         }
 
-        if (c.tag().constructed && !c.value().empty())
-            walk_schema(BerCursor(c.value()), child_desc, path, out, collected, leaves_only);
+        if (c.tag().constructed && !c.value().empty()) {
+            if (at_depth_cap(c, path, out))
+                complete = false;
+            else
+                complete = walk_schema(BerCursor(c.value()), child_desc, path, out, collected, leaves_only)
+                           && complete;
+        }
 
         path.pop_back();
         c.next();
     }
+    return complete;
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
-void ber_dump_paths(std::span<const uint8_t> buf,
+bool ber_dump_paths(std::span<const uint8_t> buf,
                     std::ostream&            out,
                     bool                     leaves_only)
 {
     BerCursor root(buf);
-    if (!root.valid()) return;
+    if (!root.valid()) return true;
     std::vector<std::string> path;
-    walk_free(root, path, out, leaves_only);
+    return walk_free(root, path, out, leaves_only);
 }
 
-void ber_dump_paths_impl(std::span<const uint8_t> buf,
+bool ber_dump_paths_impl(std::span<const uint8_t> buf,
                          const TypeDescriptor*    root_desc,
                          std::ostream&            out,
                          bool                     leaves_only)
 {
     BerCursor root(buf);
-    if (!root.valid()) return;
+    if (!root.valid()) return true;
 
     std::vector<std::string> path;
     // Enter the root TLV and name it after the root descriptor.
@@ -186,7 +221,8 @@ void ber_dump_paths_impl(std::span<const uint8_t> buf,
         emit_path(path, out);
 
     if (root.tag().constructed && !root.value().empty())
-        walk_schema(BerCursor(root.value()), root_desc, path, &out, nullptr, leaves_only);
+        return walk_schema(BerCursor(root.value()), root_desc, path, &out, nullptr, leaves_only);
+    return true;
 }
 
 std::vector<std::string> ber_find_paths_impl(std::span<const uint8_t> buf,

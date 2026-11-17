@@ -47,7 +47,8 @@ namespace asn1 {
 // ── Internal (non-template) entry points ─────────────────────────────────────
 
 /// @brief Schema-aware dump — internal entry point used by the template below.
-void ber_dump_paths_impl(std::span<const uint8_t> buf,
+/// @return False when the input nests deeper than \c kMaxDecodeDepth levels.
+bool ber_dump_paths_impl(std::span<const uint8_t> buf,
                          const TypeDescriptor*    root_desc,
                          std::ostream&            out,
                          bool                     leaves_only);
@@ -62,10 +63,16 @@ std::vector<std::string> ber_find_paths_impl(std::span<const uint8_t> buf,
 /// @brief Schema-free dump: emit one path per TLV (or primitive-only when
 ///        \p leaves_only is true), using numeric tag notation.
 ///
+/// Nesting is capped at \c kMaxDecodeDepth levels, the codec decode limit:
+/// a constructed TLV at the cap with children gets one marker line,
+/// `<path>/... (nested deeper than 256 levels, not shown)`, and its children
+/// are skipped.
+///
 /// @param buf         Full BER buffer (outer TLV included).
 /// @param out         Destination stream.
 /// @param leaves_only Emit only primitive (non-constructed) TLVs (default true).
-void ber_dump_paths(std::span<const uint8_t> buf,
+/// @return False when the input nests past the cap.
+bool ber_dump_paths(std::span<const uint8_t> buf,
                     std::ostream&            out,
                     bool                     leaves_only = true);
 
@@ -74,13 +81,16 @@ void ber_dump_paths(std::span<const uint8_t> buf,
 /// Unrecognised tags (not present in the descriptor) fall back to numeric
 /// notation so that the output is always complete.
 ///
+/// Nesting is capped like the schema-free dump.
+///
 /// @tparam RootT  Generated ASN.1 type that carries a static \c asn_DEF member.
+/// @return False when the input nests past \c kMaxDecodeDepth levels.
 template<typename RootT>
-void ber_dump_paths(std::span<const uint8_t> buf,
+bool ber_dump_paths(std::span<const uint8_t> buf,
                     std::ostream&            out,
                     bool                     leaves_only = true)
 {
-    ber_dump_paths_impl(buf, &RootT::asn_DEF, out, leaves_only);
+    return ber_dump_paths_impl(buf, &RootT::asn_DEF, out, leaves_only);
 }
 
 /// @brief Return all paths in \p buf (schema-aware) that match \p glob.
@@ -89,6 +99,8 @@ void ber_dump_paths(std::span<const uint8_t> buf,
 /// - `*` matches any sequence of characters (including `/` — full-path match).
 /// - Matching is case-insensitive.
 /// - `**` is not a distinct operator; two consecutive `*` behave as one.
+///
+/// Paths nested deeper than \c kMaxDecodeDepth levels are not searched.
 ///
 /// @tparam RootT  Generated ASN.1 type.
 /// @param buf   Full BER buffer (outer TLV included).
