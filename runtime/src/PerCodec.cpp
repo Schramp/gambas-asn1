@@ -1088,7 +1088,8 @@ public:
         return elems;
     }
     /// @brief Decodes a SEQUENCE OF/SET OF: its SIZE length, fragmented
-    ///        from 16K items on, then each element. A list counting more
+    ///        from 16K items on, then each element, the list growing with
+    ///        the elements actually decoded. A list counting more
     ///        than \c kMaxZeroWidthItems items fails when its first element
     ///        is encoded in zero bits (checked once per length fragment).
     /// @param codec  The codec decoding the elements.
@@ -1110,8 +1111,11 @@ public:
         IDecodeStream& ds = stream;
         auto count_r = decode_ext_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
             if (m == 0) return decode_ok();
+            // The list grows one element at a time as each decodes, never to
+            // the count the length announces: that count costs one octet on
+            // the wire, while the elements behind it may not be there.
             std::size_t start = seq.count();
-            seq.resize(start + m);
+            seq.resize(start + 1);
             // Only a type with a single value encodes in zero bits, so the
             // first element tells for all of them.
             int before = PerCodec::stream_bit_pos(stream);
@@ -1120,6 +1124,7 @@ public:
                 return decode_err(DecodeError(std::string(def.name) + ": more than "
                     + std::to_string(kMaxZeroWidthItems) + " items encoded in zero bits"));
             for (std::size_t i = start + 1; i < start + m; ++i) {
+                seq.resize(i + 1);
                 auto r = codec.decode(ds, edef, seq.get_mut(i));
                 if (!r) return r;
             }
