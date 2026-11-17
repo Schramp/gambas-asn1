@@ -2528,7 +2528,12 @@ normally. Projection models IMPLICIT tagging only: an EXPLICIT-tagged field is
 not supported, so `apply()` and `load()` may report it not found and `commit()`
 returns `false` for it. The walk only follows definite lengths: a frame or member with an indefinite length
 (as CER writes every constructed value) ends it, and the fields inside are not
-found. This is the same mechanism behind
+found. `apply()` returns `false` when the root TLV cannot be read or a field's
+TLV repeats in the frame (each SEQUENCE/SET component occurs once, X.680 §25,
+§27; the full decoder rejects such a frame). A repeated field keeps its first
+occurrence and the fields after it are still found. The walk stops once every
+registered field is found, so a repeat after the last of them is not noticed.
+This is the same mechanism behind
 `etsi-pcap`'s and `pseudonimiser`'s ability to touch a handful of fields across
 millions of records without paying for a full object graph each time.
 

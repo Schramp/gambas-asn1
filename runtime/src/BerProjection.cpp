@@ -194,7 +194,7 @@ void BerProjectionResult::bind_impl(FieldHandle          h,
     s.binding = &target;
 }
 
-void BerProjectionResult::walk(std::span<const uint8_t> buf,
+bool BerProjectionResult::walk(std::span<const uint8_t> buf,
                                 size_t                   trie_first,
                                 const uint8_t*           frame_base,
                                 size_t&                  found)
@@ -204,6 +204,7 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
 
     // Use leaf_count() (not bound_count_) as the exit threshold so that unbound
     // slots still get their value_off/value_len recorded — load() needs them.
+    bool well_formed = true;
     BerCursor c(buf);
     while (c.valid() && found < total) {
         // Scan trie siblings for a tag matching this TLV
@@ -211,7 +212,12 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
         while (ni != SIZE_MAX) {
             const TrieNode& node = nodes[ni];
             if (tag_matches(node.tag, c.tag())) {
-                if (node.field_index != SIZE_MAX) {
+                if (node.field_index != SIZE_MAX && slots_[node.field_index].value_off != SIZE_MAX) {
+                    // A repeat of a leaf already found: each component occurs
+                    // once, so the frame is malformed. Keep the first, and do
+                    // not count it again (the early exit counts leaves).
+                    well_formed = false;
+                } else if (node.field_index != SIZE_MAX) {
                     // Leaf: record location and optionally decode into binding
                     Slot& s = slots_[node.field_index];
                     s.value_off = static_cast<size_t>(c.value().data() - frame_base);
@@ -225,7 +231,7 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
                     ++found;
                 } else {
                     // Interior: recurse into children
-                    walk(c.value(), node.first_child, frame_base, found);
+                    well_formed = walk(c.value(), node.first_child, frame_base, found) && well_formed;
                 }
                 break;  // this TLV consumed by one trie node
             }
@@ -233,13 +239,11 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
         }
         c.next();
     }
+    return well_formed;
 }
 
-void BerProjectionResult::apply(std::span<const uint8_t> frame)
+bool BerProjectionResult::apply_impl(std::span<const uint8_t> frame)
 {
-    frame_base_ = frame.data();
-    mut_frame_  = nullptr;
-
     for (auto& s : slots_) {
         s.value_off = SIZE_MAX;
         s.value_len = 0;
@@ -249,29 +253,24 @@ void BerProjectionResult::apply(std::span<const uint8_t> frame)
 
     // Enter the root TLV to reach the root type's members
     BerCursor root_c(frame);
-    if (!root_c.valid()) return;
+    if (!root_c.valid()) return false;
 
     size_t found = 0;
-    walk(root_c.value(), proj_->root_first_child(), frame.data(), found);
+    return walk(root_c.value(), proj_->root_first_child(), frame.data(), found);
 }
 
-void BerProjectionResult::apply(std::span<uint8_t> frame)
+bool BerProjectionResult::apply(std::span<const uint8_t> frame)
+{
+    frame_base_ = frame.data();
+    mut_frame_  = nullptr;
+    return apply_impl(frame);
+}
+
+bool BerProjectionResult::apply(std::span<uint8_t> frame)
 {
     frame_base_ = frame.data();
     mut_frame_  = frame.data();
-
-    for (auto& s : slots_) {
-        s.value_off = SIZE_MAX;
-        s.value_len = 0;
-        s.constructed = false;
-        if (s.binding) s.binding->found = false;
-    }
-
-    BerCursor root_c(frame);
-    if (!root_c.valid()) return;
-
-    size_t found = 0;
-    walk(root_c.value(), proj_->root_first_child(), frame.data(), found);
+    return apply_impl(std::span<const uint8_t>(frame.data(), frame.size()));
 }
 
 void BerProjectionResult::load_impl(FieldHandle          h,
