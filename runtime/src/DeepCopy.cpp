@@ -46,8 +46,7 @@ void deep_copy(const TypeDescriptor& def, Asn1Object* dst, const Asn1Object* src
         // that are themselves SEQUENCE-with-optionals or CHOICE. Routed through
         // emplace_alt (not alt_def.lifecycle directly) so a boxed self-referential
         // alternative (MemberDescriptor::boxed_lifecycle) constructs correctly too.
-        dst_ch->emplace_alt(alt);
-        dst_ch->_present = idx;
+        dst_ch->emplace_alt(alt, idx);
 
         Asn1Object*       dst_val = alt.get_mut_fn(dst);
         const Asn1Object* src_val = alt.get_const_fn(const_cast<Asn1Object*>(src));

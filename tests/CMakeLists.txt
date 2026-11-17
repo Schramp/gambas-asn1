@@ -920,6 +920,26 @@ target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
 add_dependencies(test_choice gen_choice_test)
 add_test(NAME choice COMMAND test_choice)
 
+# ---- CHOICE selection state after a failed alternative decode ---------------
+set(CHOICE_STATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_state_test)
+add_custom_command(
+    OUTPUT  ${CHOICE_STATE_GEN_DIR}/Pick.hpp ${CHOICE_STATE_GEN_DIR}/Pick.cpp
+            ${CHOICE_STATE_GEN_DIR}/Root.hpp ${CHOICE_STATE_GEN_DIR}/Root.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CHOICE_STATE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_state_test.asn1
+                                   -o ${CHOICE_STATE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_state_test.asn1
+    COMMENT "Generating C++ from choice_state_test.asn1"
+)
+add_executable(test_choice_state
+    seq/test_choice_state.cpp
+    ${CHOICE_STATE_GEN_DIR}/Pick.cpp
+    ${CHOICE_STATE_GEN_DIR}/Root.cpp
+)
+target_include_directories(test_choice_state PRIVATE ${CHOICE_STATE_GEN_DIR})
+target_link_libraries(test_choice_state PRIVATE asn1cpp_runtime)
+add_test(NAME choice_state COMMAND test_choice_state)
+
 # ---- Deep-copy (SEQUENCE-with-optionals + CHOICE) ---------------------------
 add_executable(test_deep_copy
     seq/test_deep_copy.cpp
