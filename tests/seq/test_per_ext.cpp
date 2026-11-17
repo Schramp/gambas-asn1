@@ -251,6 +251,17 @@ static void test_enum_ext_ordinals() {
     }
 }
 
+// X.691 §11.6: an extension index is a normally small non-negative whole
+// number with no upper bound. Index 0x7FFFFFFF overflows root count + index
+// unless the decoder compares before adding; both handlers must fail cleanly.
+static void test_ext_index_beyond_int() {
+    const std::vector<uint8_t> uper = {0xC1, 0x1F, 0xFF, 0xFF, 0xFF, 0xC0};
+    BigExtEnum e{};
+    check("enum ext ordinal 0x7FFFFFFF rejected", !per_dec(uper, BigExtEnum::asn_DEF, &e));
+    ChoiceWithExt c{};
+    check("choice ext index 0x7FFFFFFF rejected", !per_dec(uper, ChoiceWithExt::asn_DEF, &c));
+}
+
 int main() {
     printf("\n── PER extension members (issue #13) ─────────────────────────────────\n");
 
@@ -263,6 +274,7 @@ int main() {
     test_roundtrip_idempotent();
     test_enum_ext_ordinals();
     test_wide_ext_bitmap();
+    test_ext_index_beyond_int();
 
     printf("\n  %d failure(s).\n", failures);
     if (failures) return 1;

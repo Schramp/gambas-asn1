@@ -977,6 +977,9 @@ public:
             put_nsnn(stream, ext_ordinal);
         }
     }
+    /// @brief Decode an ENUMERATED (X.691 §14): root index in the minimum
+    ///        bits, or an extension ordinal as a normally small number
+    ///        (§11.6); an index past the known items is an error.
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const EnumSpec& spec = *def.enum_spec;
@@ -999,10 +1002,11 @@ public:
         } else {
             auto ord = get_nsnn(stream);
             if (!ord) return decode_err(ord.error());
-            int ext_entry = rcount + *ord;
-            if (ext_entry >= spec.count)
+            // Compare before adding: the ordinal is any value up to INT_MAX
+            // (X.691 §11.6 sets no limit), so root count + ordinal can overflow.
+            if (*ord >= spec.count - rcount)
                 return decode_err(DecodeError("PER: ENUM extension index out of range"));
-            static_cast<EnumValue*>(dest)->set(spec.entries[ext_entry].value);
+            static_cast<EnumValue*>(dest)->set(spec.entries[rcount + *ord].value);
             return decode_ok();
         }
     }
@@ -1486,8 +1490,11 @@ public:
             // Generator emits extension alternatives in canonical tag order — index IS canonical.
             auto ext_idx_r = get_nsnn(stream);
             if (!ext_idx_r) return decode_err(ext_idx_r.error());
-            int def_idx = root_count + *ext_idx_r;
-            if (def_idx < spec.count) {
+            // Compare before adding: the index is any value up to INT_MAX
+            // (X.691 §11.6 sets no limit), so root count + index can overflow.
+            // An index past the known additions is an unknown extension.
+            if (*ext_idx_r < spec.count - root_count) {
+                int def_idx = root_count + *ext_idx_r;
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {
                     if (ch->_present != def_idx + 1) {

@@ -268,10 +268,11 @@ public final class PerPrimitive {
     static void decodeEnumerated(EnumSlot slot, EnumSpec spec, PerReader r) throws DecodeException {
         long index;
         if (spec.extensible() && r.getBits(1) == 1) {
-            index = spec.rootCount() + PerLength.getNormallySmall(r);
-            if (index >= spec.entries().size()) {
+            long ext = PerLength.getNormallySmall(r);
+            if (ext >= spec.entries().size() - spec.rootCount()) {
                 throw r.error("PER: unknown extension item of " + spec.name());
             }
+            index = spec.rootCount() + ext;
         } else {
             index = r.getBits(spec.rootBits());
             if (index >= spec.rootCount()) {
