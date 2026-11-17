@@ -86,7 +86,7 @@ pub fn decode(c: &Constraints, r: &mut Reader) -> Result<BitString, DecodeError>
     }
     r.expect_char(b'{')?;
     let mut hex = String::new();
-    let mut length: usize = 0;
+    let mut length: Option<u64> = None;
     loop {
         match r.peek_char() {
             b'}' => {
@@ -105,18 +105,31 @@ pub fn decode(c: &Constraints, r: &mut Reader) -> Result<BitString, DecodeError>
                     "value" => hex = r.read_json_string()?,
                     "length" => {
                         let tok = r.read_json_token()?;
-                        length = tok.parse().unwrap_or(0);
+                        match tok.parse::<u64>() {
+                            Ok(n) => length = Some(n),
+                            Err(_) => return Err(DecodeError::new(format!("JER: invalid BIT STRING length: {tok}"), r.pos())),
+                        }
                     }
                     _ => r.skip_json_value()?,
                 }
             }
         }
     }
-    let bytes = parse_hex_str(&hex);
-    // `length` is the bit count; `unused_bits` is the padding in the last
-    // byte (0 when the bit count is already byte-aligned), matching
-    // `BitString`'s own field convention (`bit_string.rs`).
+    let Some(length) = length else {
+        return Err(DecodeError::new("JER: BIT STRING object without \"length\"".to_string(), r.pos()));
+    };
+    let mut bytes = parse_hex_str(&hex);
+    // X.697 §24.3: "value" carries the bits padded to whole octets
+    // (§24.2.1), so "length" fixes the octet count.
+    if bytes.len() as u64 != length.div_ceil(8) {
+        return Err(DecodeError::new(format!("JER: BIT STRING length {length} needs {} hex octets", length.div_ceil(8)), r.pos()));
+    }
+    // `unused_bits` is the padding in the last byte (0 when the bit count is
+    // already byte-aligned), matching `BitString`'s own field convention.
     let unused_bits = if length % 8 == 0 { 0 } else { (8 - (length % 8)) as u8 };
+    if let Some(last) = bytes.last_mut() {
+        *last &= 0xFFu8 << unused_bits;
+    }
     Ok(BitString { bytes, unused_bits })
 }
 
@@ -163,6 +176,17 @@ mod tests {
         let short = BitString { bytes: vec![0xF0].into(), unused_bits: 4 };
         assert_eq!(enc(&short, &FIXED20), "{\"value\":\"F0\",\"length\":4}");
         assert_eq!(decode(&FIXED20, &mut Reader::new("{\"value\":\"2EFE20\",\"length\":20}")).unwrap(), bits20());
+    }
+
+    #[test]
+    fn object_length_must_match_the_hex_octets() {
+        let huge = r#"{"value":"","length":800000000000}"#;
+        assert!(decode(&UNCONSTRAINED, &mut Reader::new(huge)).is_err());
+        assert!(decode(&UNCONSTRAINED, &mut Reader::new(r#"{"value":"2EFE","length":20}"#)).is_err());
+        assert!(decode(&UNCONSTRAINED, &mut Reader::new(r#"{"value":"2EFE20","length":"x"}"#)).is_err());
+        assert!(decode(&UNCONSTRAINED, &mut Reader::new(r#"{"value":"2EFE20","x":1}"#)).is_err());
+        let masked = decode(&UNCONSTRAINED, &mut Reader::new(r#"{"value":"2EFE2F","length":20}"#)).unwrap();
+        assert_eq!(masked, bits20());
     }
 
     #[test]

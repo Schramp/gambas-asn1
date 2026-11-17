@@ -1072,6 +1072,25 @@ the type. Every other BIT STRING is an object, `{"value":"2EFE20","length":20}`.
 A value whose length breaks its fixed SIZE keeps the object form, so the
 length is not lost.
 
+In the object form `"value"` holds the bits padded to whole octets (X.697
+§24.3), so `"length"` fixes how many hex octets it carries. The decoder
+rejects an object whose hex octets do not match `"length"`, whose `"length"`
+is not a non-negative integer, or that has no `"length"`; the buffer is never
+sized from `"length"` alone. Inputs `{"value":"","length":800000000000}`,
+`{"value":"2EFE20","length":"x"}` and `{"value":"2EFE20","x":1}`:
+
+```
+C++:  JER: BIT STRING BIT_STRING: expected 100000000000 hex octets
+      JER: BIT STRING BIT_STRING: invalid "length" "x"
+      JER: BIT STRING BIT_STRING: missing "length"
+Rust: JER: BIT STRING length 800000000000 needs 100000000000 hex octets (at byte 34)
+      JER: invalid BIT STRING length: "x" (at byte 30)
+      JER: BIT STRING object without "length" (at byte 24)
+Java: JER: BIT STRING length 800000000000 needs 100000000000 hex octets at byte 0
+      JER: invalid BIT STRING length: "x" at byte 0
+      JER: BIT STRING object without "length" at byte 0
+```
+
 The decoder accepts every JSON string escape (RFC 8259 §7) in every JER string,
 member and alternative names included (X.697 §23.4 NOTE): `\"`, `\\`, `\/`,
 `\b`, `\f`, `\n`, `\r`, `\t` and `\uXXXX`. A `\u` escape is a UTF-16 code unit;
