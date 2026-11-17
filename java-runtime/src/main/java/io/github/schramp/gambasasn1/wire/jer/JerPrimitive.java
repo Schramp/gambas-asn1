@@ -27,7 +27,6 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.regex.Pattern;
 
 /**
@@ -363,7 +362,7 @@ public final class JerPrimitive {
         }
         r.expect('{');
         byte[] hex = new byte[0];
-        long bits = 0;
+        long bits = -1;
         for (int k = 0; k < 2; k++) {
             String key = r.readStringText();
             r.expect(':');
@@ -376,18 +375,26 @@ public final class JerPrimitive {
                     } catch (NumberFormatException e) {
                         throw new DecodeException("JER: invalid BIT STRING length: " + t, at);
                     }
+                    if (bits < 0) {
+                        throw new DecodeException("JER: invalid BIT STRING length: " + t, at);
+                    }
                 }
                 default -> r.skipValue();
             }
             r.consumeIf(',');
         }
         r.expect('}');
-        if (bits < 0 || bits > 8L * Integer.MAX_VALUE - 7) {
-            throw new DecodeException("JER: invalid BIT STRING length: " + bits, at);
+        if (bits < 0) {
+            throw new DecodeException("JER: BIT STRING object without \"length\"", at);
         }
-        int byteCount = (int) ((bits + 7) / 8);
+        // X.697 §24.3: "value" carries the bits padded to whole octets
+        // (§24.2.1), so "length" fixes the octet count.
+        long byteCount = bits / 8 + (bits % 8 != 0 ? 1 : 0);
+        if (hex.length != byteCount) {
+            throw new DecodeException("JER: BIT STRING length " + bits + " needs " + byteCount + " hex octets", at);
+        }
         int unused = (int) (byteCount * 8L - bits);
-        b.set(masked(Arrays.copyOf(hex, byteCount), unused), unused);
+        b.set(masked(hex, unused), unused);
     }
 
     private static byte[] masked(byte[] bytes, int unused) {

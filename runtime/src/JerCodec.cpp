@@ -683,6 +683,9 @@ struct BitStringJerHandler final : IJerTypeHandler {
         else
             os << "{\"value\":\"" << hex << "\",\"length\":" << bits << '}';
     }
+    /// @brief Decode a BIT STRING (X.697 §24): the bare hex string of a
+    ///        fixed size (§24.2), or the {"value","length"} object (§24.3)
+    ///        whose hex must carry exactly the octets "length" needs.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
@@ -720,6 +723,7 @@ struct BitStringJerHandler final : IJerTypeHandler {
         if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
         std::string hex_str;
         uint64_t bit_count = 0;
+        bool have_length = false;
         // Parse two keys in either order
         for (int k = 0; k < 2; ++k) {
             std::string key;
@@ -730,7 +734,10 @@ struct BitStringJerHandler final : IJerTypeHandler {
             } else if (key == "length") {
                 std::string tok;
                 if (auto r = jer_detail::read_json_token(s, tok); !r) return r;
-                std::from_chars(tok.data(), tok.data() + tok.size(), bit_count);
+                auto [end, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), bit_count);
+                if (ec != std::errc{} || end != tok.data() + tok.size())
+                    return decode_err(DecodeError(std::string("JER: BIT STRING ") + def.name + ": invalid \"length\" " + tok));
+                have_length = true;
             } else {
                 // Unknown key — consume value
                 std::string tok;
@@ -740,9 +747,15 @@ struct BitStringJerHandler final : IJerTypeHandler {
             if (!s.at_end() && s.data()[0] == ',') s.advance(1);
         }
         if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
+        if (!have_length)
+            return decode_err(DecodeError(std::string("JER: BIT STRING ") + def.name + ": missing \"length\""));
+        // X.697 §24.3: "value" carries the bits padded to whole octets
+        // (§24.2.1), so "length" fixes the octet count. Checking it against
+        // the hex keeps an untrusted "length" from sizing the buffer.
         std::string raw = jer_detail::parse_hex_str(hex_str);
-        std::size_t byte_count = (bit_count + 7) / 8;
-        raw.resize(byte_count, '\0');
+        std::size_t byte_count = static_cast<std::size_t>(bit_count / 8 + (bit_count % 8 != 0));
+        if (raw.size() != byte_count)
+            return decode_err(DecodeError(std::string("JER: BIT STRING ") + def.name + ": expected " + std::to_string(byte_count) + " hex octets"));
         uint8_t unused = (uint8_t)(byte_count * 8 - bit_count);
         std::vector<uint8_t> bytes(raw.begin(), raw.end());
         // Clear unused low bits in last byte

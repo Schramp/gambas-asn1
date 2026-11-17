@@ -124,5 +124,12 @@ class JerPrimitiveTest {
         assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), fixed12, "\"A5\""));
         assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), NONE, "\"A5F0\""));
         assertEquals(b, decode(new Asn1BitString(), NONE, "{ \"length\" : 12 , \"value\" : \"a5ff\" }"));
+        // X.697 §24.3: "length" fixes the octet count of "value"; a "length"
+        // the hex does not carry must fail, not size a buffer.
+        assertThrows(DecodeException.class,
+                () -> decode(new Asn1BitString(), NONE, "{\"value\":\"\",\"length\":800000000000}"));
+        assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), NONE, "{\"value\":\"A5\",\"length\":12}"));
+        assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), NONE, "{\"value\":\"A5F0\",\"length\":-4}"));
+        assertThrows(DecodeException.class, () -> decode(new Asn1BitString(), NONE, "{\"value\":\"A5F0\",\"x\":1}"));
     }
 }

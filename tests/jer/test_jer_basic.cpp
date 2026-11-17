@@ -268,6 +268,14 @@ int main() {
         BitString out{};
         check("BIT STRING bare hex needs a fixed size", !jer_decode(asn_DEF_BitString, "\"2EFE20\"", out));
         check("BIT STRING bare hex needs the right length", !jer_decode(fixed20, "\"2EFE\"", out));
+        // X.697 §24.3: "length" fixes the octet count of "value"; a "length"
+        // the hex does not carry must fail, not size a buffer.
+        check("BIT STRING huge length rejected", !jer_decode(asn_DEF_BitString, "{\"value\":\"\",\"length\":800000000000}", out));
+        check("BIT STRING length past the hex rejected", !jer_decode(asn_DEF_BitString, "{\"value\":\"2EFE\",\"length\":20}", out));
+        check("BIT STRING length short of the hex rejected", !jer_decode(asn_DEF_BitString, "{\"value\":\"2EFE20\",\"length\":12}", out));
+        check("BIT STRING non-numeric length rejected", !jer_decode(asn_DEF_BitString, "{\"value\":\"2EFE20\",\"length\":\"x\"}", out));
+        check("BIT STRING missing length rejected", !jer_decode(asn_DEF_BitString, "{\"value\":\"2EFE20\",\"x\":1}", out));
+        check("BIT STRING unused bits masked", decodes_to(asn_DEF_BitString, "{\"value\":\"2EFE2F\",\"length\":20}", bits20));
     }
 
     // =========================================================================
