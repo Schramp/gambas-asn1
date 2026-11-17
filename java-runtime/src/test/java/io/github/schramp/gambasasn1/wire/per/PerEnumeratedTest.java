@@ -90,6 +90,15 @@ class PerEnumeratedTest {
         assertThrows(DecodeException.class, () -> PerObject.decode(new Big(0), hex("C05180")));
     }
 
+    /**
+     * X.691 §11.6 puts no bound on the extension ordinal: Long.MAX_VALUE must
+     * fail as an unknown item, not wrap when added to the root count.
+     */
+    @Test
+    void extensionOrdinalAtLongMaxFails() {
+        assertThrows(DecodeException.class, () -> PerObject.decode(new Big(0), hex("C21FFFFFFFFFFFFFFFC0")));
+    }
+
     /** X.691 §14.2: a root index beyond the root items has no value. */
     @Test
     void rootIndexBeyondTheRootFails() throws DecodeException {
