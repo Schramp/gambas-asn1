@@ -1277,8 +1277,7 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
             "    if (p == PR::NOTHING) return;\n"
             "    int idx = static_cast<int>(p) - 1;\n"
             "    if (idx >= 0 && idx < s_alternative_count)\n"
-            "        emplace_alt(s_alternatives[idx]);\n"
-            "    _present = static_cast<int>(p);\n"
+            "        emplace_alt(s_alternatives[idx], static_cast<int>(p));\n"
             "}}\n\n", cname);
 
         // Copy constructor: initialise as NOTHING (val_ = val_storage_), then deep-copy.

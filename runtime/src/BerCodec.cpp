@@ -1235,6 +1235,12 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             codec.encode(ms, mdef, mptr);
         }
     }
+    /// @brief Decode a CHOICE (X.690 §8.13): match the next tag to an
+    ///        alternative (tag index, dispatch table, or linear scan), select
+    ///        it with emplace_alt and decode into it. A failing alternative
+    ///        stays selected with a partial value, so _present always names
+    ///        the storage's type; an unknown tag on an extensible CHOICE is kept
+    ///        as an unknown extension.
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ok = decode_alternative(codec, r, def, dest);
@@ -1259,7 +1265,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
                 if (ch->_present != matched + 1) {
-                    ch->emplace_alt(alt);
+                    ch->emplace_alt(alt, matched + 1);
                 }
                 Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
@@ -1281,7 +1287,6 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                ch->_present = matched + 1;
                 return decode_ok();
             }
             goto no_match;
@@ -1299,7 +1304,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
                 if (ch->_present != matched + 1) {
-                    ch->emplace_alt(alt);
+                    ch->emplace_alt(alt, matched + 1);
                 }
                 Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
@@ -1321,7 +1326,6 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                ch->_present = matched + 1;
                 return decode_ok();
             }
             goto no_match;
@@ -1332,7 +1336,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
             if (ch->_present != i + 1) {
-                ch->emplace_alt(alt);
+                ch->emplace_alt(alt, i + 1);
             }
             Asn1Object* mptr = alt.get_mut_fn(ch);
             const auto& mdef = *alt.type_descriptor;
@@ -1354,7 +1358,6 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 ok = codec.decode(ms, mdef, mptr);
             }
             if (!ok) return ok;
-            ch->_present = i + 1;
             return decode_ok();
         }
 

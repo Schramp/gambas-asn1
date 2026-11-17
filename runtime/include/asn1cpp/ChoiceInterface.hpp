@@ -20,19 +20,29 @@ public:
     const TypeLifecycleOps*  active_lifecycle = &k_noop_lifecycle; // ptr into TypeDescriptor::lifecycle
 
     int  choice_present() const      { return _present; }
-    void choice_set_present(int idx) { _present = idx; }
 
-    // Generic emplace: destroy current occupant then placement-new the new alternative.
-    // Single pointer assignment replaces old separate destroy_fn_ / move_fn_ writes.
-    // alt.type_descriptor->lifecycle must be fully populated (guaranteed for all
-    // TypeDescriptors referenced from ChoiceSpec::alternatives) — except when
-    // alt.boxed_lifecycle overrides it for a self-referential (unique_ptr-boxed)
-    // alternative, whose storage isn't a plain T (see MemberDescriptor's doc).
-    void emplace_alt(const MemberDescriptor& alt) noexcept {
+    /// @brief Select a CHOICE alternative: destroy the current occupant,
+    ///        placement-new a default \p alt in the shared storage, and record
+    ///        it as \c _present in the same step.
+    ///
+    /// \c _present, \c active_lifecycle and the storage always name the same
+    /// alternative: encode, deep_copy, the accessors and a later decode that
+    /// skips re-emplacing all read the storage as the type \c _present names.
+    /// A decoder that fails inside the alternative leaves it selected with a
+    /// partial value, never the previous index over the new storage.
+    /// \p alt's lifecycle comes from its TypeDescriptor, or from
+    /// \c alt.boxed_lifecycle for a self-referential (unique_ptr-boxed)
+    /// alternative, whose storage isn't a plain T (see MemberDescriptor's doc).
+    /// @param alt      The alternative's member descriptor (ChoiceSpec::alternatives).
+    /// @param present  Its 1-based index, stored as \c _present.
+    void emplace_alt(const MemberDescriptor& alt, int present) noexcept {
         const TypeLifecycleOps& ops = alt.boxed_lifecycle ? *alt.boxed_lifecycle : alt.type_descriptor->lifecycle;
         active_lifecycle->destroy(val_);
+        active_lifecycle = &k_noop_lifecycle;
+        _present = 0;
         ops.construct(val_);
         active_lifecycle = &ops;
+        _present = present;
     }
 };
 

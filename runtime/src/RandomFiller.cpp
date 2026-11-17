@@ -536,8 +536,7 @@ bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int dept
         if (!leaves.empty()) alt_idx = leaves[rand_int(0, (int)leaves.size() - 1)];
     }
     const auto& alt = spec.alternatives[alt_idx];
-    ch->emplace_alt(alt);
-    ch->_present = alt_idx + 1;
+    ch->emplace_alt(alt, alt_idx + 1);
     Asn1Object* aptr = alt.get_mut_fn(ch);
 
     return fill(aptr, *alt.type_descriptor, depth + 1, true);

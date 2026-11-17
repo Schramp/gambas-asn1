@@ -1478,9 +1478,8 @@ public:
             if (!alt.type_descriptor)
                 return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
             if (ch->_present != def_idx + 1) {
-                ch->emplace_alt(alt);
+                ch->emplace_alt(alt, def_idx + 1);
             }
-            ch->_present = def_idx + 1;
             Asn1Object* mptr = alt.get_mut_fn(ch);
             IDecodeStream& ds = stream;
             auto r = codec.decode(ds, *alt.type_descriptor, mptr);
@@ -1498,9 +1497,8 @@ public:
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {
                     if (ch->_present != def_idx + 1) {
-                        ch->emplace_alt(alt);
+                        ch->emplace_alt(alt, def_idx + 1);
                     }
-                    ch->_present = def_idx + 1;
                     Asn1Object* mptr = alt.get_mut_fn(ch);
                     auto r = decode_open_type(codec, stream, *alt.type_descriptor, mptr);
                     if (!r) return r;

@@ -1,0 +1,4 @@
+ChoiceStateTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+    Pick ::= CHOICE { a [0] INTEGER, b [1] OCTET STRING }
+    Root ::= SEQUENCE { id [0] INTEGER, pick [1] Pick }
+END

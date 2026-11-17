@@ -1338,6 +1338,13 @@ for (byte[] record : records) {
 }
 ```
 
+After a failed decode into a caller-owned object (C++, Java) the object holds a partial value, still safe to
+encode, copy, destroy or decode into again. A CHOICE whose alternative
+failed keeps that alternative selected (`present()` names it) with the
+part decoded so far. Decoding the next record into the same object, as a
+record loop or a bound `BerProjectionResult` target does, is safe; reset it
+first (assign a fresh value) if the partial content must not show through.
+
 **Encode** reports a failure the caller must check:
 
 | Runtime | How encode failure is reported |

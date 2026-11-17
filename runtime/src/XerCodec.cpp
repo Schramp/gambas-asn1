@@ -1035,6 +1035,9 @@ struct ChoiceXerHandler final : IXerTypeHandler {
             codec.encode(as, adef, mptr);
         }
     }
+    /// @brief Decode a CHOICE (BASIC-XER, X.680 XMLChoiceValue): the element name picks the
+    ///        alternative, selected with emplace_alt before its content is
+    ///        decoded; a failing content leaves it selected with a partial value.
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ti = xer_detail::peek_tag(s);
@@ -1049,7 +1052,7 @@ struct ChoiceXerHandler final : IXerTypeHandler {
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
             if (ch->_present != i + 1) {
-                ch->emplace_alt(alt);
+                ch->emplace_alt(alt, i + 1);
             }
             Asn1Object* mptr = alt.get_mut_fn(ch);
             if (def.has_contained && adef.contained) {
@@ -1063,7 +1066,6 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                 auto r = codec.decode(s, adef, mptr);
                 if (!r) return r;
             }
-            ch->_present = i + 1;
             if (!def.has_contained) return decode_ok();
             std::string err;
             if (!decode_contained_alternative(def, dest, ContainedEncoding::Ber, s.depth(), s.contained(), err))

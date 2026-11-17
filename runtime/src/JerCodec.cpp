@@ -1231,6 +1231,9 @@ struct ChoiceJerHandler final : IJerTypeHandler {
         else                                     codec.encode(as, adef, mptr);
         os << '}';
     }
+    /// @brief Decode a CHOICE (X.697 §31): a one-member object whose key names
+    ///        the alternative, selected with emplace_alt before its value is
+    ///        decoded; a failing value leaves it selected with a partial value.
     DecodeResult decode(const JerCodec& codec, JerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
@@ -1250,12 +1253,11 @@ struct ChoiceJerHandler final : IJerTypeHandler {
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
             if (ch->_present != i + 1)
-                ch->emplace_alt(alt);
+                ch->emplace_alt(alt, i + 1);
             Asn1Object* mptr = alt.get_mut_fn(ch);
             auto r = def.has_contained && adef.contained ? ContainedJer::decode(codec, s, adef, mptr)
                                                          : codec.decode(s, adef, mptr);
             if (!r) return r;
-            ch->_present = i + 1;
             if (auto r2 = jer_detail::expect_char(s, '}'); !r2) return r2;
             if (!def.has_contained) return decode_ok();
             std::string err;
