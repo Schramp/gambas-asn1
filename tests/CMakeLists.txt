@@ -942,6 +942,25 @@ target_include_directories(test_enum_unknown PRIVATE ${ENUM_UNKNOWN_GEN_DIR})
 target_link_libraries(test_enum_unknown PRIVATE asn1cpp_runtime)
 add_test(NAME enum_unknown COMMAND test_enum_unknown)
 
+# ---- CHOICE alternatives of a newer schema version (X.680 §52.1) ------------
+set(CHOICE_UNKNOWN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_test)
+add_custom_command(
+    OUTPUT  ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.cpp
+            ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.cpp
+            ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CHOICE_UNKNOWN_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+                                   -o ${CHOICE_UNKNOWN_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+    COMMENT "Generating C++ from choice_unknown_test.asn1"
+)
+add_executable(test_choice_unknown seq/test_choice_unknown.cpp
+    ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.cpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.cpp
+    ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.cpp)
+target_include_directories(test_choice_unknown PRIVATE ${CHOICE_UNKNOWN_GEN_DIR})
+target_link_libraries(test_choice_unknown PRIVATE asn1cpp_runtime)
+add_test(NAME choice_unknown COMMAND test_choice_unknown)
+
 # ---- CHOICE selection state after a failed alternative decode ---------------
 set(CHOICE_STATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_state_test)
 add_custom_command(

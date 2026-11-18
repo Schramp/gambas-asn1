@@ -1220,6 +1220,17 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int idx = ch->_present;
+        if (idx <= 0 && ch->unknown_ext_) {
+            // An alternative of a newer schema version goes back as the TLV
+            // it arrived in (X.680 §52.1 relaying).
+            const auto& ext = *ch->unknown_ext_;
+            if (ext.origin != ChoiceUnknownExtension::Origin::Ber) {
+                w.set_encode_failed(choice_unknown_encode_error(def.name, ext, "BER").c_str());
+                return;
+            }
+            w.write_primitive(ext.tag, std::span<const uint8_t>(ext.bytes));
+            return;
+        }
         if (idx <= 0 || idx > spec.count) {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
@@ -1383,10 +1394,15 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         if (spec.ext_at >= 0) {
             if (debug_flags() & DBG_BER_CHOICE)
                 std::fprintf(stderr,
-                    "[CHOICE-EXT-SKIP] %s: unknown extension cls=%d num=%u — skipping\n",
+                    "[CHOICE-EXT-KEEP] %s: unknown extension cls=%d num=%u — kept\n",
                     def.name, (int)peek.cls, peek.number);
-            auto skipped = r.read_tlv();
-            if (!skipped) return decode_err(skipped.error());
+            auto unknown = r.read_tlv();
+            if (!unknown) return decode_err(unknown.error());
+            ChoiceUnknownExtension ext;
+            ext.origin = ChoiceUnknownExtension::Origin::Ber;
+            ext.tag    = unknown->tag;
+            ext.bytes.assign(unknown->value.begin(), unknown->value.end());
+            ch->set_unknown_extension(std::move(ext));
             return decode_ok();
         }
         if (debug_flags() & DBG_BER_CHOICE) {
