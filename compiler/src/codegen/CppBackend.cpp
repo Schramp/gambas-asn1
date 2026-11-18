@@ -263,19 +263,21 @@ void CppBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::os
     os << "    enum Enm : long {\n";
     for (const auto& v : spec.values) {
         os << std::format("        {} = {},\n",
-            escape(type_name(v.asn1_name), {"present", "value_", "value", "set", "Enm"}),
+            escape(type_name(v.asn1_name), {"present", "value_", "value", "set", "Enm", "unknown_", "Unknown", "is_unknown",
+                                       "unknown_kind", "set_unknown_value", "set_unknown_ordinal",
+                                       "set_unknown_identifier"}),
             cpp_int64_literal(v.value));
     }
     if (spec.extensible)
         os << "        /* extensible */\n";
     os << "    };\n";
     os << std::format("    {}() = default;\n", cname);
-    os << std::format("    {}(Enm v) {{ value_ = static_cast<long>(v); }}\n", cname);
-    os << std::format("    {}& operator=(Enm v) {{ value_ = static_cast<long>(v); return *this; }}\n", cname);
+    os << std::format("    {}(Enm v) {{ set(static_cast<long>(v)); }}\n", cname);
+    os << std::format("    {}& operator=(Enm v) {{ set(static_cast<long>(v)); return *this; }}\n", cname);
     os << std::format("    Enm present() const {{ return static_cast<Enm>(value_); }}\n");
     // Only operator== is emitted: C++20 rewrites != and the reversed operand
     // order from it. Value-to-value comparison is EnumValue's hidden friend.
-    os << std::format("    bool operator==(Enm v) const {{ return value_ == static_cast<long>(v); }}\n");
+    os << std::format("    bool operator==(Enm v) const {{ return !is_unknown() && value_ == static_cast<long>(v); }}\n");
     os << std::format("    static const asn1::EnumEntry    asn_MAP_value2enum[{}];\n",
                        static_cast<int>(spec.values.size()));
     os << "    static const asn1::EnumSpec     asn_SPC;\n";

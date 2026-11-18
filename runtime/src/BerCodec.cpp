@@ -840,11 +840,29 @@ struct AnyBerHandler final : IBerTypeHandler {
     }
 };
 
+/// @brief Store a decoded ENUMERATED number: an extensible type keeps a
+///        number outside its items as an unknown item (X.680 §52.1).
+static void set_ber_enum(const TypeDescriptor& def, EnumValue& ev, long v) {
+    if (def.enum_spec->extensible && def.enum_spec->validate(v) != 0)
+        ev.set_unknown_value(v);
+    else
+        ev.set(v);
+}
+
 struct EnumeratedBerHandler final : IBerTypeHandler {
     constexpr EnumeratedBerHandler() : IBerTypeHandler(BerForm::Primitive) {}
+    /// @brief Encode an ENUMERATED as its number (X.690 §8.4). An unknown
+    ///        item read from BER writes its number back; one read from PER,
+    ///        XER or JER has no number and fails the encode.
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        long v = static_cast<const EnumValue*>(src)->value();
+        const auto& ev = *static_cast<const EnumValue*>(src);
+        auto kind = ev.unknown_kind();
+        if (kind == EnumValue::Unknown::Ordinal || kind == EnumValue::Unknown::Identifier) {
+            w.set_encode_failed(enum_unknown_encode_error(def.name, ev, "BER").c_str());
+            return;
+        }
+        long v = ev.value();
         auto bytes = detail::encode_integer_bytes(v);
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
@@ -856,15 +874,15 @@ struct EnumeratedBerHandler final : IBerTypeHandler {
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         auto v = BerTraits<Integer>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
-        static_cast<EnumValue*>(dest)->set(static_cast<long>(v->value()));
+        set_ber_enum(def, *static_cast<EnumValue*>(dest), static_cast<long>(v->value()));
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
-                              const TypeDescriptor&, Asn1Object* dest) const override {
+                              const TypeDescriptor& def, Asn1Object* dest) const override {
         auto value = content.rest();
         auto v = BerTraits<Integer>::decode_value(value);
         if (!v) return decode_err(v.error());
-        static_cast<EnumValue*>(dest)->set(static_cast<long>(v->value()));
+        set_ber_enum(def, *static_cast<EnumValue*>(dest), static_cast<long>(v->value()));
         return decode_ok();
     }
 };
