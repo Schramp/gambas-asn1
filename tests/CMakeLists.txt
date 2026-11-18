@@ -920,6 +920,28 @@ target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
 add_dependencies(test_choice gen_choice_test)
 add_test(NAME choice COMMAND test_choice)
 
+# ---- ENUMERATED items of a newer schema version (X.680 §52.1) ---------------
+set(ENUM_UNKNOWN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_enum_unknown_test)
+set(ENUM_UNKNOWN_TYPES ColorV1 FixedColor PaletteV1 ColorV2)
+set(_eu_outputs)
+set(_eu_cpps)
+foreach(t IN LISTS ENUM_UNKNOWN_TYPES)
+    list(APPEND _eu_outputs ${ENUM_UNKNOWN_GEN_DIR}/${t}.hpp ${ENUM_UNKNOWN_GEN_DIR}/${t}.cpp)
+    list(APPEND _eu_cpps ${ENUM_UNKNOWN_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_eu_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ENUM_UNKNOWN_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                                   -o ${ENUM_UNKNOWN_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+    COMMENT "Generating C++ from enum_unknown_test.asn1"
+)
+add_executable(test_enum_unknown seq/test_enum_unknown.cpp ${_eu_cpps})
+target_include_directories(test_enum_unknown PRIVATE ${ENUM_UNKNOWN_GEN_DIR})
+target_link_libraries(test_enum_unknown PRIVATE asn1cpp_runtime)
+add_test(NAME enum_unknown COMMAND test_enum_unknown)
+
 # ---- CHOICE selection state after a failed alternative decode ---------------
 set(CHOICE_STATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_state_test)
 add_custom_command(

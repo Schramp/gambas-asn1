@@ -1,0 +1,12 @@
+-- Two versions of one extensible ENUMERATED: values a version-2 sender
+-- encodes reach a version-1 decoder, which must accept the items it does
+-- not know (X.680 §52.1; X.693 §8.6.4 for BASIC-XER).
+EnumUnknownV1 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    ColorV1    ::= ENUMERATED { red, green, ..., cyan }
+    FixedColor ::= ENUMERATED { red, green }
+    PaletteV1  ::= SEQUENCE OF ColorV1
+END
+
+EnumUnknownV2 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    ColorV2    ::= ENUMERATED { red, green, ..., cyan, magenta(10), yellow }
+END

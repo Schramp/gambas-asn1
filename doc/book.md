@@ -338,6 +338,42 @@ value compares with an item in either operand order (`v == E::item`,
 per shape and `!=` and the reversed order are rewritten from it, so clang's
 `-Wambiguous-reversed-operator` stays silent.
 
+#### Items of a newer schema version
+
+An extensible ENUMERATED (`{ a, b, ... }`) may receive an item that a sender
+with a newer schema version added. X.680 §52.1 says such additions "shall not
+be treated as an error during the decoding process", and X.693 §8.6.1/§8.6.4
+require a BASIC-XER decoder to accept them. Each codec carries a different
+part of the item, and the C++ value records which (`unknown_kind()`):
+
+| Codec | Carries | Kept as | `value()` |
+|---|---|---|---|
+| BER | the number | `Unknown::Value` | the number |
+| PER | the extension ordinal (X.691 §14) | `Unknown::Ordinal` | the ordinal |
+| XER, JER | the identifier | `Unknown::Identifier` | 0 (the name is not kept) |
+
+`is_unknown()` is true for all three, and `v == E::item` is false for every
+item, so test `is_unknown()` before treating `value()` as an item. Assigning
+an item (`v = E::item`, `set()`) clears the state. Validation does not count
+an unknown item as a violation.
+
+The unknown item re-encodes unchanged in the codec it came from: the number in
+BER, the ordinal in PER. JER also writes an unknown BER number back as a bare
+JSON number and reads one back, as it does for any value outside the items.
+Any other codec fails the encode (`encode_failed()`), with a reason
+traced under `ASN1CPP_DEBUG` (`0x08` PER, `0x10` BER, `0x04` XER/JER):
+
+```
+ENUMERATED ColorV1: value 10 of a newer schema version has no PER encoding
+ENUMERATED ColorV1: extension item #2 of a newer schema version has no BER encoding
+ENUMERATED ColorV1: an unknown identifier of a newer schema version has no XER encoding
+```
+
+A non-extensible ENUMERATED is unchanged: BER and JER store a number outside
+the items as it is (validation counts it), and XER and JER reject an unknown
+identifier. A PER encode of a value that is no item now fails with
+`ENUMERATED <name>: value <n> is not one of its items`.
+
 ### REAL values
 
 REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and

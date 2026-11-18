@@ -41,8 +41,11 @@ namespace asn1 {
 ///         Negative delta: value/size above upper bound (caller sees magnitude as excess).
 /// @see X.680 §47 — SubtypeConstraint; X.690 §8 — BER encoding rules for constrained types.
 inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
-    if (def.enum_spec)
-        return def.enum_spec->validate(static_cast<const EnumValue*>(obj)->value());
+    if (def.enum_spec) {
+        // X.680 §52.1: an item of a newer schema version is no violation.
+        const auto* ev = static_cast<const EnumValue*>(obj);
+        return ev->is_unknown() ? 0 : def.enum_spec->validate(ev->value());
+    }
     if (def.seq_of_spec)
         return def.seq_of_spec->validate(*static_cast<const SeqOfBase*>(obj));
 

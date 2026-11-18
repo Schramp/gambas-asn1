@@ -253,11 +253,16 @@ static void test_enum_ext_ordinals() {
 
 // X.691 §11.6: an extension index is a normally small non-negative whole
 // number with no upper bound. Index 0x7FFFFFFF overflows root count + index
-// unless the decoder compares before adding; both handlers must fail cleanly.
+// unless the decoder compares before adding. The ENUMERATED keeps it as an
+// unknown item (X.680 §52.1) and writes the same bits back; the CHOICE input
+// is truncated after the index and fails cleanly.
 static void test_ext_index_beyond_int() {
     const std::vector<uint8_t> uper = {0xC1, 0x1F, 0xFF, 0xFF, 0xFF, 0xC0};
     BigExtEnum e{};
-    check("enum ext ordinal 0x7FFFFFFF rejected", !per_dec(uper, BigExtEnum::asn_DEF, &e));
+    check("enum ext ordinal 0x7FFFFFFF kept as unknown",
+          per_dec(uper, BigExtEnum::asn_DEF, &e) && e.unknown_kind() == EnumValue::Unknown::Ordinal
+          && e.value() == 0x7FFFFFFF);
+    check("  ...re-encodes to the same bits", per_enc(BigExtEnum::asn_DEF, &e) == uper);
     ChoiceWithExt c{};
     check("choice ext index 0x7FFFFFFF rejected", !per_dec(uper, ChoiceWithExt::asn_DEF, &c));
 }
