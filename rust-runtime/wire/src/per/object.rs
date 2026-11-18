@@ -531,7 +531,8 @@ fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, opts: Option<&cr
 }
 
 /// @brief Decodes a SEQUENCE OF/SET OF: its SIZE length, fragmented from
-///        16K items on, then each element. A list counting more than
+///        16K items on, then each element, the list growing with the
+///        elements actually decoded. A list counting more than
 ///        [`MAX_ZERO_WIDTH_ITEMS`](crate::nesting::MAX_ZERO_WIDTH_ITEMS)
 ///        items fails when its first element is encoded in zero bits
 ///        (checked once per length fragment).
@@ -546,7 +547,9 @@ pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &
         if m == 0 {
             return Ok(());
         }
-        obj.reserve(m);
+        // No `reserve(m)`: the count costs one octet on the wire while the
+        // elements behind it may not be there, so the list grows with the
+        // elements actually decoded.
         // Only a type with a single value encodes in zero bits, so the first
         // element tells for all of them.
         let before = r.bit_pos();

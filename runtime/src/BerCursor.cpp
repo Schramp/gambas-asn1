@@ -1,4 +1,5 @@
 #include <asn1cpp/codec/BerCursor.hpp>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/BerReader.hpp>
 #include <cstring>
 
@@ -202,19 +203,32 @@ BerCursor ber_path(std::span<const uint8_t> buf,
     return result;
 }
 
-static void ber_walk_impl(std::span<const uint8_t> buf, BerVisitor& visitor,
+/// @brief Pre-order walk of one sibling run at \p depth, recursing into
+///        constructed TLVs up to \p max_depth; the recursion behind
+///        \c ber_walk.
+/// @return False when a constructed TLV at the \c kMaxDecodeDepth cap
+///         holds children that were not walked.
+static bool ber_walk_impl(std::span<const uint8_t> buf, BerVisitor& visitor,
                           int max_depth, int depth) {
+    bool complete = true;
     BerCursor c{buf};
     while (c.valid()) {
         visitor(c, depth);
-        if (c.tag().constructed && (max_depth < 0 || depth < max_depth))
-            ber_walk_impl(c.value(), visitor, max_depth, depth + 1);
+        if (c.tag().constructed && depth < max_depth) {
+            complete = ber_walk_impl(c.value(), visitor, max_depth, depth + 1) && complete;
+        } else if (c.tag().constructed && depth + 1 >= kMaxDecodeDepth && BerCursor{c.value()}.valid()) {
+            complete = false;
+        }
         c.next();
     }
+    return complete;
 }
 
-void ber_walk(std::span<const uint8_t> buf, BerVisitor visitor, int max_depth) {
-    ber_walk_impl(buf, visitor, max_depth, 0);
+bool ber_walk(std::span<const uint8_t> buf, BerVisitor visitor, int max_depth) {
+    // The walk recurses once per nesting level, so input nesting is capped
+    // like every codec decode (DecodeDepthGuard), whatever the caller asks.
+    int cap = kMaxDecodeDepth - 1;
+    return ber_walk_impl(buf, visitor, (max_depth < 0 || max_depth > cap) ? cap : max_depth, 0);
 }
 
 

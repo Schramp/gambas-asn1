@@ -1412,7 +1412,16 @@ Causes of a per-record error:
   (C++ `kMaxDecodeDepth`, `codec/DecodeDepth.hpp`; Rust
   `nesting::MAX_DECODE_DEPTH`; Java `io.Nesting.MAX_DECODE_DEPTH`). Levels are counted, not recursion
   cycles. The count lives in the decoder's own reader, so concurrent
-  decodes never share it.
+  decodes never share it. The C++ raw-frame walkers apply the same cap:
+  `ber_walk` visits depths 0 to 255 and returns `false` when the input nests
+  deeper; `ber_dump_paths` writes one marker line for a TLV whose children
+  sit past the cap and returns `false`:
+
+  ```
+  U[16]/U[16]/…/U[16]/... (nested deeper than 256 levels, not shown)
+  ```
+
+  `ber_find_paths` does not search below the cap.
 - **A PER list of more than 200 items encoded in zero bits** — NULL or
   single-value elements cost no input, so the PER decoders refuse such a
   list with `more than 200 items encoded in zero bits` rather than
@@ -2576,7 +2585,12 @@ normally. Projection models IMPLICIT tagging only: an EXPLICIT-tagged field is
 not supported, so `apply()` and `load()` may report it not found and `commit()`
 returns `false` for it. The walk only follows definite lengths: a frame or member with an indefinite length
 (as CER writes every constructed value) ends it, and the fields inside are not
-found. This is the same mechanism behind
+found. `apply()` returns `false` when the root TLV cannot be read or a field's
+TLV repeats in the frame (each SEQUENCE/SET component occurs once, X.680 §25,
+§27; the full decoder rejects such a frame). A repeated field keeps its first
+occurrence and the fields after it are still found. The walk stops once every
+registered field is found, so a repeat after the last of them is not noticed.
+This is the same mechanism behind
 `etsi-pcap`'s and `pseudonimiser`'s ability to touch a handful of fields across
 millions of records without paying for a full object graph each time.
 
