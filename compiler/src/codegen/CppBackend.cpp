@@ -1186,6 +1186,7 @@ void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& o
         "    {0}({0}&& o) noexcept {{"
         " val_ = val_storage_;"
         " _present = o._present; o._present = 0;"
+        " unknown_ext_ = std::move(o.unknown_ext_);"
         " active_lifecycle = o.active_lifecycle;"
         " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
         " active_lifecycle->move(val_, o.val_); }}\n", cname);
@@ -1194,6 +1195,7 @@ void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& o
         " if (this != &o) {{"
         " active_lifecycle->destroy(val_);"
         " _present = o._present; o._present = 0;"
+        " unknown_ext_ = std::move(o.unknown_ext_);"
         " active_lifecycle = o.active_lifecycle;"
         " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
         " active_lifecycle->move(val_, o.val_);"
@@ -1276,6 +1278,7 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
             "    active_lifecycle->destroy(val_);\n"
             "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
             "    _present = 0;\n"
+            "    unknown_ext_.reset();\n"
             "    if (p == PR::NOTHING) return;\n"
             "    int idx = static_cast<int>(p) - 1;\n"
             "    if (idx >= 0 && idx < s_alternative_count)\n"

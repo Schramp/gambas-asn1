@@ -1,0 +1,10 @@
+-- Two versions of one extensible CHOICE: an alternative a version-2 sender
+-- encodes reaches a version-1 decoder, which keeps it so it can be relayed
+-- (X.680 §52.1).
+ChoiceUnknownV1 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    MsgV1 ::= CHOICE { a INTEGER, b BOOLEAN, ... }
+END
+
+ChoiceUnknownV2 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    MsgV2 ::= CHOICE { a INTEGER, b BOOLEAN, ..., c IA5String, d SEQUENCE { x INTEGER, y BOOLEAN } }
+END

@@ -163,7 +163,9 @@ public:
         return static_cast<std::size_t>(byte_pos_) + (bit_pos_ ? 1u : 0u);
     }
 
-    /// @brief Number of extension alternatives skipped since the last \c reset_skipped_extensions().
+    /// @brief Number of extensions this schema version does not know, skipped
+    ///        or kept as an unknown CHOICE alternative, since the last
+    ///        \c reset_skipped_extensions().
     /// Non-zero indicates a version skew between encoder and decoder schemas.
     int  skipped_extensions() const { return skipped_ext_count_; }
     /// @brief Reset the skipped-extension counter to zero.
@@ -428,6 +430,14 @@ public:
     static int           stream_bit_pos(const PerDecodeStream& s) { return s.bit_pos(); }
     static int           stream_total_bits(const PerDecodeStream& s) { return s.total_bits(); }
     static DecodeResult  skip_ext(PerDecodeStream& s) { return s.skip_open_type(); }
+    /// @brief Read the open-type octets of an extension this schema version
+    ///        does not know, counted like a skipped one.
+    /// @return The octets (X.691 §11.2), or the read error.
+    static Expected<std::vector<uint8_t>, DecodeError> take_ext(PerDecodeStream& s) {
+        auto bytes = per_detail::get_octets(s);
+        if (bytes) s.increment_skipped_extensions();
+        return bytes;
+    }
 };
 
 } // namespace asn1

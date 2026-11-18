@@ -1,7 +1,8 @@
 // CHOICE extension alternative unknown to the receiver (X.691 §23.8;
 // per_choice_unknown_ext_test.asn1): MsgV2 is a later version of MsgV1.
-//   - A MsgV2 extension alternative decodes as MsgV1: the open type is
-//     skipped (counted in skipped_extensions()), no alternative selected.
+//   - A MsgV2 extension alternative decodes as MsgV1: no alternative is
+//     selected, the open type is kept as an unknown extension and counted
+//     in skipped_extensions().
 //   - A root alternative encodes identically in both versions and decodes.
 //   - A known extension alternative whose open type holds octets after its
 //     value is a decode error (X.691 §11.2), as in asn1c.
@@ -42,7 +43,8 @@ int main() {
         IDecodeStream& ds = s;
         bool ok = PerCodec::instance().decode(ds, MsgV1::asn_DEF, &v1).has_value();
         check("MsgV2 extension alternative decodes as MsgV1", ok);
-        check("the unknown alternative is skipped and counted", s.skipped_extensions() == 1);
+        check("the unknown alternative is kept and counted",
+              s.skipped_extensions() == 1 && v1._present == 0 && v1.unknown_extension());
         check("no MsgV1 alternative is selected", v1.present() == MsgV1::PR::NOTHING);
     }
 

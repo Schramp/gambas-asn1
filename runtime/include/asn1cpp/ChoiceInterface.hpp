@@ -1,9 +1,28 @@
 #pragma once
 #include "Asn1Object.hpp"
 #include "TypeDescriptor.hpp"
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace asn1 {
+
+/// @brief An alternative of an extensible CHOICE that this schema version
+///        does not define, kept as the codec carried it so it can be
+///        relayed (X.680 §52.1: extension additions are not a decoding
+///        error).
+///
+/// BER carries the alternative's TLV: \c tag (constructed bit included) and
+/// \c bytes, its contents octets. PER carries the extension index past the
+/// known alternatives (X.691 §23) and the open-type octets (§11.2).
+struct ChoiceUnknownExtension {
+    enum class Origin : uint8_t { Ber, Per };
+    Origin               origin = Origin::Ber;  ///< Codec it was read from.
+    Tag                  tag{};                  ///< BER: the TLV's tag.
+    long                 index = 0;              ///< PER: extension index past the known ones.
+    std::vector<uint8_t> bytes;                  ///< BER contents octets / PER open-type octets.
+};
 
 // Non-virtual base for all generated CHOICE types.
 // Holds the active-alternative pointer, destroy/move fn-ptrs, and _present index.
@@ -19,7 +38,23 @@ public:
     char*                    val_             = nullptr;           // set to val_storage_ in derived ctor
     const TypeLifecycleOps*  active_lifecycle = &k_noop_lifecycle; // ptr into TypeDescriptor::lifecycle
 
+    /// Unknown extension alternative, set only while \c _present is 0.
+    std::unique_ptr<ChoiceUnknownExtension> unknown_ext_;
+
     int  choice_present() const      { return _present; }
+
+    /// @brief The unknown extension alternative held, or nullptr.
+    const ChoiceUnknownExtension* unknown_extension() const { return unknown_ext_.get(); }
+
+    /// @brief Select nothing and keep \p ext, an alternative of a newer
+    ///        schema version read by a decoder (X.680 §52.1).
+    /// @param ext  The alternative as its codec carried it.
+    void set_unknown_extension(ChoiceUnknownExtension ext) {
+        active_lifecycle->destroy(val_);
+        active_lifecycle = &k_noop_lifecycle;
+        _present = 0;
+        unknown_ext_ = std::make_unique<ChoiceUnknownExtension>(std::move(ext));
+    }
 
     /// @brief Select a CHOICE alternative: destroy the current occupant,
     ///        placement-new a default \p alt in the shared storage, and record
@@ -40,11 +75,22 @@ public:
         active_lifecycle->destroy(val_);
         active_lifecycle = &k_noop_lifecycle;
         _present = 0;
+        unknown_ext_.reset();
         ops.construct(val_);
         active_lifecycle = &ops;
         _present = present;
     }
 };
+
+/// @brief Encode error for an unknown CHOICE extension alternative that
+///        \p codec cannot write back, e.g. "CHOICE Msg: extension
+///        alternative of a newer schema version, read from PER, has no BER
+///        encoding".
+inline std::string choice_unknown_encode_error(const char* type_name, const ChoiceUnknownExtension& ext,
+                                               const char* codec) {
+    return std::string("CHOICE ") + type_name + ": extension alternative of a newer schema version, read from " +
+           (ext.origin == ChoiceUnknownExtension::Origin::Ber ? "BER" : "PER") + ", has no " + codec + " encoding";
+}
 
 // Single-type-param accessor template: replaces per-alternative _get_mut_T_alt /
 // _get_const_T_alt named free functions.  Instantiated in generated .cpp files

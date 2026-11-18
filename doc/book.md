@@ -865,8 +865,10 @@ When a decoder encounters an extension member whose index exceeds the number of 
 alternatives in its schema (schema version skew), it skips the open-type payload by
 reading and discarding its length-prefixed bytes. This preserves forward compatibility:
 an older receiver can always decode a newer sender's message as long as the root members
-are unchanged. After decoding, `PerDecodeStream::skipped_extensions()` returns the number
-of open-type fields that were skipped; a nonzero value indicates the stream contained a
+are unchanged. An unknown CHOICE alternative is kept instead, so it can be encoded again
+(see "A CHOICE with no alternative to encode"). After decoding,
+`PerDecodeStream::skipped_extensions()` returns the number of open-type fields that were
+skipped or kept; a nonzero value indicates the stream contained a
 newer schema version than the decoder's descriptor tables.
 
 A `BIT STRING` defined with named bits (`BIT STRING { a(0), b(1), c(2) }`) gives its
@@ -1430,10 +1432,17 @@ Causes of a per-record error:
 - **A type with no codec** — a descriptor whose kind lands on a codec's
   fallback dispatch slot (or has no direct handler): C++ encode sets
   `encode_failed()`, decode returns `<Codec>: unsupported: <type>`.
-- **A CHOICE with no alternative to encode** — in C++ a CHOICE whose
-  `_present` is 0 (default-constructed, or an unknown extension skipped on
-  decode) fails BER/XER/JER/PER encode with `CHOICE <name>: no alternative
-  selected`. A Rust extensible CHOICE
+- **A CHOICE with no alternative to encode** — in C++ a default-constructed
+  CHOICE (`_present` is 0) fails BER/XER/JER/PER encode with `CHOICE <name>:
+  no alternative selected`. An extensible C++ CHOICE that decoded an
+  alternative of a newer schema version selects nothing and keeps it
+  (`unknown_extension()`, X.680 §52.1): BER keeps the TLV (tag and contents
+  octets), PER the extension index and open-type octets (X.691 §23). It
+  re-encodes unchanged in the codec it came from, so a relay passes it on;
+  copies and moves carry it, and selecting an alternative drops it. Any
+  other codec fails the encode, e.g.
+  `CHOICE MsgV1: extension alternative of a newer schema version, read from PER, has no BER encoding`.
+  A Rust extensible CHOICE
   holding an alternative the schema does not define (`UnknownExtension`,
   kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
   replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
