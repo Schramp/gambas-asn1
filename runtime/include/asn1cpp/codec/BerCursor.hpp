@@ -289,10 +289,19 @@ using BerVisitor = std::function<void(BerCursor cursor, int depth)>;
 /// Children of a constructed TLV are visited after the parent (pre-order).
 /// Primitive TLVs are not recursed into.
 ///
+/// Nesting is capped at \c kMaxDecodeDepth levels (depth 0 to
+/// kMaxDecodeDepth - 1), the limit every codec decode applies: the walk
+/// recurses once per level, and untrusted input could otherwise nest deep
+/// enough to overflow the stack.
+///
 /// @param buf        Raw BER byte span.
 /// @param visitor    Callable invoked at each TLV.
-/// @param max_depth  Maximum recursion depth; negative = unlimited.
-void ber_walk(std::span<const uint8_t> buf,
+/// @param max_depth  Deepest level to recurse into (0 = top-level siblings
+///                   only); negative or larger than the cap = the cap.
+/// @return False when the input nests past the cap: the TLVs below it are
+///         not visited. True otherwise, also when \p max_depth stopped the
+///         walk earlier.
+bool ber_walk(std::span<const uint8_t> buf,
               BerVisitor               visitor,
               int                      max_depth = -1);
 

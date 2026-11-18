@@ -1,4 +1,5 @@
 // Tests for BerCursor / BerLayer / BerMutableCursor / ber_path / ber_walk
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -241,6 +242,20 @@ static void test_ber_path() {
     check("ber_path_miss",       !miss.valid());
 }
 
+// `levels` nested SEQUENCEs, innermost empty: 30 L (30 L (... 30 00)).
+static std::vector<uint8_t> nested_seqs(int levels) {
+    std::vector<uint8_t> v = {0x30, 0x00};
+    for (int i = 1; i < levels; ++i) {
+        std::size_t n = v.size();
+        std::vector<uint8_t> h = {0x30};
+        if (n < 0x80) h.push_back(static_cast<uint8_t>(n));
+        else if (n <= 0xFFFF) { h.push_back(0x82); h.push_back(n >> 8); h.push_back(n & 0xFF); }
+        else { h.push_back(0x83); h.push_back(n >> 16); h.push_back((n >> 8) & 0xFF); h.push_back(n & 0xFF); }
+        v.insert(v.begin(), h.begin(), h.end());
+    }
+    return v;
+}
+
 // ── Tests: ber_walk ───────────────────────────────────────────────────────────
 
 static void test_ber_walk() {
@@ -266,6 +281,22 @@ static void test_ber_walk() {
     visit_count = 0;
     ber_walk(sp(seq), [&](BerCursor, int) { ++visit_count; }, 0);
     check("walk_depth0",    visit_count == 1);
+
+    // Nesting is capped at kMaxDecodeDepth (256) levels, depths 0..255:
+    // the walk recurses per level, so untrusted nesting must not reach the
+    // stack limit (60000 levels, 283 KB, overflowed an 8 MiB stack).
+    auto at_cap = nested_seqs(256);
+    int deepest = -1;
+    bool ok = ber_walk(sp(at_cap), [&](BerCursor, int d) { deepest = std::max(deepest, d); });
+    check("walk_256_levels_complete", ok && deepest == 255);
+    auto past = nested_seqs(257);
+    deepest = -1;
+    ok = ber_walk(sp(past), [&](BerCursor, int d) { deepest = std::max(deepest, d); });
+    check("walk_257_levels_reports_cap", !ok && deepest == 255);
+    auto bomb = nested_seqs(60000);
+    visit_count = 0;
+    ok = ber_walk(sp(bomb), [&](BerCursor, int) { ++visit_count; });
+    check("walk_60000_levels_capped", !ok && visit_count == 256);
 }
 
 int main() {

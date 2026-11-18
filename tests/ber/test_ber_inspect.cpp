@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <asn1cpp/codec/BerInspect.hpp>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/types/Strings.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -222,6 +223,40 @@ static void test_empty_buf() {
     check("empty_buf_no_output", oss.str().empty());
 }
 
+// `levels` nested SEQUENCEs, innermost empty: 30 L (30 L (... 30 00)).
+static std::vector<uint8_t> nested_seqs(int levels) {
+    std::vector<uint8_t> v = {0x30, 0x00};
+    for (int i = 1; i < levels; ++i) {
+        std::size_t n = v.size();
+        std::vector<uint8_t> h = {0x30};
+        if (n < 0x80) h.push_back(static_cast<uint8_t>(n));
+        else if (n <= 0xFFFF) { h.push_back(0x82); h.push_back(n >> 8); h.push_back(n & 0xFF); }
+        else { h.push_back(0x83); h.push_back(n >> 16); h.push_back((n >> 8) & 0xFF); h.push_back(n & 0xFF); }
+        v.insert(v.begin(), h.begin(), h.end());
+    }
+    return v;
+}
+
+// Nesting past kMaxDecodeDepth is not walked: one marker line, false back.
+// 6000 levels printed every path in full (108 MB); 60000 overflowed the stack.
+static void test_depth_cap() {
+    auto ok_frame = nested_seqs(asn1::kMaxDecodeDepth);
+    std::ostringstream o1;
+    check("256 levels: complete", ber_dump_paths(std::span<const uint8_t>(ok_frame), o1, false)
+                                  && o1.str().find("not shown") == std::string::npos);
+    auto bomb = nested_seqs(60000);
+    std::ostringstream o2;
+    bool ok = ber_dump_paths(std::span<const uint8_t>(bomb), o2, false);
+    check("60000 levels: free dump reports the cap", !ok);
+    check("  ...one marker line", o2.str().find("/... (nested deeper than 256 levels, not shown)\n") != std::string::npos);
+    check("  ...output bounded", o2.str().size() < 1u << 20);
+    std::ostringstream o3;
+    check("60000 levels: schema dump reports the cap",
+          !ber_dump_paths_impl(std::span<const uint8_t>(bomb), nullptr, o3, false));
+    auto found = ber_find_paths_impl(std::span<const uint8_t>(bomb), nullptr, "*");
+    check("60000 levels: find returns", found.empty());
+}
+
 int main() {
     printf("=== Schema-free dump (leaves only) ===\n");
     test_dump_free_leaves_only();
@@ -252,6 +287,9 @@ int main() {
 
     printf("=== ber_find_paths<Root> template ===\n");
     test_find_paths_template();
+
+    printf("=== nesting cap ===\n");
+    test_depth_cap();
 
     printf("=== ber_dump_paths<Root> template ===\n");
     test_dump_template();
