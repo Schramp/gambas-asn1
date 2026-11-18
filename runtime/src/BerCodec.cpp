@@ -1220,15 +1220,14 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int idx = ch->_present;
-        if (idx <= 0 && ch->unknown_ext_) {
+        if (auto ext = ch->unknown_extension(); idx <= 0 && ext) {
             // An alternative of a newer schema version goes back as the TLV
             // it arrived in (X.680 §52.1 relaying).
-            const auto& ext = *ch->unknown_ext_;
-            if (ext.origin != ChoiceUnknownExtension::Origin::Ber) {
-                w.set_encode_failed(choice_unknown_encode_error(def.name, ext, "BER").c_str());
+            if (ext->origin != ChoiceUnknownExtension::Origin::Ber) {
+                w.set_encode_failed(choice_unknown_encode_error(def.name, *ext, "BER").c_str());
                 return;
             }
-            w.write_primitive(ext.tag, std::span<const uint8_t>(ext.bytes));
+            w.write_primitive(ext->tag, ext->bytes);
             return;
         }
         if (idx <= 0 || idx > spec.count) {
@@ -1398,11 +1397,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     def.name, (int)peek.cls, peek.number);
             auto unknown = r.read_tlv();
             if (!unknown) return decode_err(unknown.error());
-            ChoiceUnknownExtension ext;
-            ext.origin = ChoiceUnknownExtension::Origin::Ber;
-            ext.tag    = unknown->tag;
-            ext.bytes.assign(unknown->value.begin(), unknown->value.end());
-            ch->set_unknown_extension(std::move(ext));
+            ch->set_unknown_ber(unknown->tag, unknown->value);
             return decode_ok();
         }
         if (debug_flags() & DBG_BER_CHOICE) {
