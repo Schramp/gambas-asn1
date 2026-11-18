@@ -86,10 +86,34 @@ static void test_jer_duplicate_key() {
     check("  ...partial value encodes", o.str().find("<a>") != std::string::npos);
 }
 
+// X.680 §25: each SEQUENCE component occurs once. A repeated leaf TLV used
+// to count toward the projection's early exit, so the leaves after it were
+// never looked at (pick reported absent although present).
+static void test_projection_duplicate_leaf() {
+    printf("\n── BerProjection: repeated leaf TLV ──────────────────────────────\n");
+    BerProjection proj{Root::asn_DEF};
+    auto hid = proj.add_path("id");
+    auto hpick = proj.add_path("pick");
+    proj.finalize();
+    BerProjectionResult res{proj};
+    Asn1Optional<Integer> id;
+    Asn1Optional<Pick> pick;
+    res.bind(hid, id);
+    res.bind(hpick, pick);
+    const std::vector<uint8_t> ok = {0x30, 0x08, 0x80, 0x01, 0x01, 0xA1, 0x03, 0x80, 0x01, 0x05};
+    check("well-formed frame applies", res.apply(std::span<const uint8_t>(ok)));
+    const std::vector<uint8_t> dup = {0x30, 0x0B, 0x80, 0x01, 0x01, 0x80, 0x01, 0x02,
+                                      0xA1, 0x03, 0x80, 0x01, 0x05};
+    check("repeated id reported malformed", !res.apply(std::span<const uint8_t>(dup)));
+    check("  ...first id kept", id.found && static_cast<int64_t>(id) == 1);
+    check("  ...pick after it still found", pick.found && pick.present() == Pick::PR::a);
+}
+
 int main() {
     test_ber_reuse();
     test_projection_reuse();
     test_jer_duplicate_key();
+    test_projection_duplicate_leaf();
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
     printf("  All tests passed.\n");

@@ -236,8 +236,15 @@ public:
     ///
     /// Zero per-call heap allocation.
     ///
+    /// Each leaf counts once. A leaf whose TLV repeats in the frame keeps its
+    /// first occurrence and makes \c apply() return false: the full decoder
+    /// rejects such a frame, since a SEQUENCE/SET component occurs once
+    /// (X.680 §25, §27). The walk ends as soon as every leaf is found, so a
+    /// repeat that comes after the last leaf goes unnoticed.
+    ///
     /// @param frame  Complete BER-encoded outer TLV of the root type.
-    void apply(std::span<const uint8_t> frame);
+    /// @return False when the root TLV cannot be read or a leaf repeats.
+    bool apply(std::span<const uint8_t> frame);
 
     /// @brief Apply the projection to a mutable frame, enabling \c commit().
     ///
@@ -245,7 +252,8 @@ public:
     /// frame pointer so that \c commit() may write back encoded values.
     ///
     /// @param frame  Mutable BER buffer; must outlive any subsequent \c commit() call.
-    void apply(std::span<uint8_t> frame);
+    /// @return False when the root TLV cannot be read or a leaf repeats.
+    bool apply(std::span<uint8_t> frame);
 
     /// @brief Decode one field on demand without a prior \c bind().
     ///
@@ -284,8 +292,15 @@ private:
     void load_impl(FieldHandle h, Asn1OptionalBase& target, const TypeDescriptor* desc);
 
     /// @brief Trie-driven walk: scan \p buf for trie children of \p trie_first.
-    void walk(std::span<const uint8_t> buf, size_t trie_first,
+    /// @return False when a leaf's TLV appears more than once (X.680: each
+    ///         SEQUENCE/SET component and the chosen CHOICE alternative occur
+    ///         once); the first occurrence is kept.
+    bool walk(std::span<const uint8_t> buf, size_t trie_first,
               const uint8_t* frame_base, size_t& found);
+
+    /// @brief Clear every slot and bound optional, then walk \p frame's root;
+    ///        shared by both \c apply() overloads.
+    bool apply_impl(std::span<const uint8_t> frame);
 
     /// @brief One result slot — one per registered path in the trie.
     struct Slot {
