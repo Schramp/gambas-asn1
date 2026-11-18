@@ -1031,8 +1031,9 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) {
-            std::string reason = ch->unknown_ext_
-                ? choice_unknown_encode_error(def.name, *ch->unknown_ext_, "XER")
+            auto ext = ch->unknown_extension();
+            std::string reason = ext
+                ? choice_unknown_encode_error(def.name, *ext, "XER")
                 : std::string("CHOICE ") + def.name + ": no alternative selected";
             s.set_encode_failed(reason.c_str());
             return;

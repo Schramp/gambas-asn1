@@ -1428,17 +1428,16 @@ public:
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
-        if (pr <= 0 && ch->unknown_ext_) {
+        if (auto ext = ch->unknown_extension(); pr <= 0 && ext) {
             // An alternative of a newer schema version goes back as its
             // extension index and open-type octets (X.691 §23.8).
-            const auto& ext = *ch->unknown_ext_;
-            if (ext.origin != ChoiceUnknownExtension::Origin::Per) {
-                stream.set_encode_failed(choice_unknown_encode_error(def.name, ext, "PER").c_str());
+            if (ext->origin != ChoiceUnknownExtension::Origin::Per) {
+                stream.set_encode_failed(choice_unknown_encode_error(def.name, *ext, "PER").c_str());
                 return;
             }
             stream.put_bits(1, 1, "CHO.ext");
-            put_nsnn(stream, static_cast<int>(ext.index));
-            per_detail::put_octets(stream, ext.bytes.data(), ext.bytes.size());
+            put_nsnn(stream, static_cast<int>(ext->index));
+            per_detail::put_octets(stream, ext->bytes.data(), ext->bytes.size());
             return;
         }
         if (pr <= 0 || pr > spec.count) {
@@ -1545,11 +1544,7 @@ public:
             // open-type octets so it can be relayed (X.680 §52.1, X.691 §23.8).
             auto bytes = PerCodec::take_ext(stream);
             if (!bytes) return decode_err(bytes.error());
-            ChoiceUnknownExtension ext;
-            ext.origin = ChoiceUnknownExtension::Origin::Per;
-            ext.index  = *ext_idx_r;
-            ext.bytes.assign(bytes->begin(), bytes->end());
-            ch->set_unknown_extension(std::move(ext));
+            ch->set_unknown_per(*ext_idx_r, *bytes);
             return decode_ok();
         }
     }

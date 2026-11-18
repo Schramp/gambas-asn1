@@ -1439,7 +1439,10 @@ Causes of a per-record error:
   (`unknown_extension()`, X.680 §52.1): BER keeps the TLV (tag and contents
   octets), PER the extension index and open-type octets (X.691 §23). It
   re-encodes unchanged in the codec it came from, so a relay passes it on;
-  copies and moves carry it, and selecting an alternative drops it. Any
+  copies and moves carry it, and selecting an alternative drops it. It is
+  held in the CHOICE's own alternative storage as a `std::string`, so an
+  extensible CHOICE's storage is at least `sizeof(std::string)`; an
+  alternative of up to 15 octets needs no allocation. Any
   other codec fails the encode, e.g.
   `CHOICE MsgV1: extension alternative of a newer schema version, read from PER, has no BER encoding`.
   A Rust extensible CHOICE

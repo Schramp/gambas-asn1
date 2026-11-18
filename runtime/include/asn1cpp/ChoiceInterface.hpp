@@ -2,26 +2,28 @@
 #include "Asn1Object.hpp"
 #include "TypeDescriptor.hpp"
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
-#include <vector>
 
 namespace asn1 {
 
-/// @brief An alternative of an extensible CHOICE that this schema version
-///        does not define, kept as the codec carried it so it can be
-///        relayed (X.680 §52.1: extension additions are not a decoding
-///        error).
+/// @brief View of an alternative of an extensible CHOICE that this schema
+///        version does not define, kept as the codec carried it so it can
+///        be relayed (X.680 §52.1: extension additions are not a decoding
+///        error). Valid until the CHOICE changes.
 ///
 /// BER carries the alternative's TLV: \c tag (constructed bit included) and
 /// \c bytes, its contents octets. PER carries the extension index past the
 /// known alternatives (X.691 §23) and the open-type octets (§11.2).
 struct ChoiceUnknownExtension {
     enum class Origin : uint8_t { Ber, Per };
-    Origin               origin = Origin::Ber;  ///< Codec it was read from.
-    Tag                  tag{};                  ///< BER: the TLV's tag.
-    long                 index = 0;              ///< PER: extension index past the known ones.
-    std::vector<uint8_t> bytes;                  ///< BER contents octets / PER open-type octets.
+    Origin                   origin = Origin::Ber;  ///< Codec it was read from.
+    Tag                      tag{};                  ///< BER: the TLV's tag.
+    long                     index = 0;              ///< PER: extension index past the known ones.
+    std::span<const uint8_t> bytes;                  ///< BER contents octets / PER open-type octets.
 };
 
 // Non-virtual base for all generated CHOICE types.
@@ -33,27 +35,63 @@ public:
     // Noop lifecycle used for the NOTHING state: destroy/move are no-ops so
     // destructors and move operations never need a null check on active_lifecycle.
     static const TypeLifecycleOps k_noop_lifecycle;
+    /// Lifecycles of an unknown extension alternative held in the storage as
+    /// a \c std::string; which one is active records the codec it came from.
+    static const TypeLifecycleOps k_unknown_ber_lifecycle;
+    static const TypeLifecycleOps k_unknown_per_lifecycle;
 
     int                      _present         = 0;
     char*                    val_             = nullptr;           // set to val_storage_ in derived ctor
     const TypeLifecycleOps*  active_lifecycle = &k_noop_lifecycle; // ptr into TypeDescriptor::lifecycle
 
-    /// Unknown extension alternative, set only while \c _present is 0.
-    std::unique_ptr<ChoiceUnknownExtension> unknown_ext_;
-
     int  choice_present() const      { return _present; }
 
-    /// @brief The unknown extension alternative held, or nullptr.
-    const ChoiceUnknownExtension* unknown_extension() const { return unknown_ext_.get(); }
+    /// @brief The unknown extension alternative held (\c _present is 0), or
+    ///        nothing. The view points into this CHOICE's storage.
+    std::optional<ChoiceUnknownExtension> unknown_extension() const {
+        const bool ber = active_lifecycle == &k_unknown_ber_lifecycle;
+        if (!ber && active_lifecycle != &k_unknown_per_lifecycle) return std::nullopt;
+        const std::string& s = *std::launder(reinterpret_cast<const std::string*>(val_));
+        const auto* p = reinterpret_cast<const uint8_t*>(s.data());
+        ChoiceUnknownExtension ext;
+        if (ber) {
+            ext.origin = ChoiceUnknownExtension::Origin::Ber;
+            ext.tag.cls = static_cast<TagClass>(p[0]);
+            ext.tag.constructed = p[1] != 0;
+            std::memcpy(&ext.tag.number, p + 2, sizeof ext.tag.number);
+            ext.bytes = {p + kBerHeader, s.size() - kBerHeader};
+        } else {
+            ext.origin = ChoiceUnknownExtension::Origin::Per;
+            std::memcpy(&ext.index, p, sizeof ext.index);
+            ext.bytes = {p + kPerHeader, s.size() - kPerHeader};
+        }
+        return ext;
+    }
 
-    /// @brief Select nothing and keep \p ext, an alternative of a newer
-    ///        schema version read by a decoder (X.680 §52.1).
-    /// @param ext  The alternative as its codec carried it.
-    void set_unknown_extension(ChoiceUnknownExtension ext) {
-        active_lifecycle->destroy(val_);
-        active_lifecycle = &k_noop_lifecycle;
-        _present = 0;
-        unknown_ext_ = std::make_unique<ChoiceUnknownExtension>(std::move(ext));
+    /// @brief Select nothing and keep a BER alternative of a newer schema
+    ///        version: its tag and contents octets (X.680 §52.1, X.690 §8.1).
+    ///        Only an extensible CHOICE's storage is sized for it.
+    /// @param tag       The TLV's tag.
+    /// @param contents  The TLV's contents octets.
+    void set_unknown_ber(Tag tag, std::span<const uint8_t> contents) {
+        std::string& s = hold_unknown(k_unknown_ber_lifecycle);
+        s.resize(kBerHeader + contents.size());
+        s[0] = static_cast<char>(tag.cls);
+        s[1] = tag.constructed ? 1 : 0;
+        std::memcpy(s.data() + 2, &tag.number, sizeof tag.number);
+        if (!contents.empty()) std::memcpy(s.data() + kBerHeader, contents.data(), contents.size());
+    }
+
+    /// @brief Select nothing and keep a PER alternative of a newer schema
+    ///        version: its extension index and open-type octets (X.691 §23.8).
+    ///        Only an extensible CHOICE's storage is sized for it.
+    /// @param index   Extension index past the known alternatives.
+    /// @param octets  The open-type field's octets (§11.2).
+    void set_unknown_per(long index, std::span<const uint8_t> octets) {
+        std::string& s = hold_unknown(k_unknown_per_lifecycle);
+        s.resize(kPerHeader + octets.size());
+        std::memcpy(s.data(), &index, sizeof index);
+        if (!octets.empty()) std::memcpy(s.data() + kPerHeader, octets.data(), octets.size());
     }
 
     /// @brief Select a CHOICE alternative: destroy the current occupant,
@@ -75,10 +113,24 @@ public:
         active_lifecycle->destroy(val_);
         active_lifecycle = &k_noop_lifecycle;
         _present = 0;
-        unknown_ext_.reset();
         ops.construct(val_);
         active_lifecycle = &ops;
         _present = present;
+    }
+
+private:
+    static constexpr std::size_t kBerHeader = 2 + sizeof(uint32_t);  // class, constructed, number
+    static constexpr std::size_t kPerHeader = sizeof(long);           // extension index
+
+    /// @brief Replace the current occupant with an empty \c std::string
+    ///        under \p ops, with nothing selected.
+    std::string& hold_unknown(const TypeLifecycleOps& ops) {
+        active_lifecycle->destroy(val_);
+        active_lifecycle = &k_noop_lifecycle;
+        _present = 0;
+        ops.construct(val_);
+        active_lifecycle = &ops;
+        return *std::launder(reinterpret_cast<std::string*>(val_));
     }
 };
 
