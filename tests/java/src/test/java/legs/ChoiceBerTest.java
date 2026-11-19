@@ -160,14 +160,14 @@ class ChoiceBerTest {
     @Test
     void anUnselectedValueIsAnEncodeError() {
         ExtRoot r = new ExtRoot();
-        r.setUnknownExtension(new Asn1Choice.UnknownExtension(Tag.universal(1, false), hex("FF")));
+        r.setUnknownExtension(Asn1Choice.UnknownExtension.ber(Tag.universal(1, false), hex("FF")));
         r.select(0);
         assertEquals(0, r.activeIndex());
         assertNull(r.unknownExtension());
         assertThrows(IllegalStateException.class,
-                () -> new Plain().setUnknownExtension(new Asn1Choice.UnknownExtension(Tag.universal(1, false), hex("FF"))));
+                () -> new Plain().setUnknownExtension(Asn1Choice.UnknownExtension.ber(Tag.universal(1, false), hex("FF"))));
         Ext e = new Ext();
-        e.setUnknownExtension(new Asn1Choice.UnknownExtension(Tag.universal(1, false), hex("FF")));
+        e.setUnknownExtension(Asn1Choice.UnknownExtension.ber(Tag.universal(1, false), hex("FF")));
         e.a(new Asn1Integer(1));
         assertArrayEquals(hex("020101"), BerObject.encode(e));
         assertThrows(EncodeException.class, () -> BerObject.encode(new Unselected()));

@@ -385,6 +385,15 @@ its number with `EnumSlot::enum_get()`. A `match` on it needs an `Unknown(_)`
 arm. A non-extensible enum is unchanged and rejects a number or identifier it
 does not define in every codec.
 
+**Java.** A generated extensible ENUMERATED class holds such an item as an
+`io.github.schramp.gambasasn1.wire.spec.EnumUnknown` record (`kind()` is
+`VALUE`, `ORDINAL` or `IDENTIFIER`; `value()` the number, ordinal or 0),
+read with `unknown()`. While it holds one, `get()` returns null; `set(item)`
+clears it. The codecs keep and re-encode it as C++ does and throw
+`EncodeException` with the same messages. An extensible CHOICE keeps an
+unknown alternative as `Asn1Choice.UnknownExtension` (`origin()`, `tag()`,
+`index()`, `bytes()`) and writes it back in the codec it came from.
+
 ### REAL values
 
 REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and
@@ -3359,7 +3368,9 @@ value from 2^63 up outside the root takes nine octets (§11.8.3).
 ENUMERATED is its item's index in the value-sorted table (X.691 §14): the root
 index in the table's `rootBits`, and with an extension marker a bit first and
 an extension item's index as a normally small number. A value that is no item
-fails the encode, an unknown index the decode.
+fails the encode, and a root index past the root items the decode; an
+extension index past the known items is kept as an unknown item (see "Items
+of a newer schema version").
 OCTET STRING and BIT STRING are a length determinant under their SIZE, with
 the extension bit of an extensible SIZE, then the octets or bits (X.691 §16,
 §17). A NamedBitList BIT STRING drops its trailing 0 bits down to the SIZE's
@@ -3393,8 +3404,8 @@ alternative's index in the table's `rangeBits` and its value, or an extension
 alternative's index as a normally small number and its value as an open-type
 field (X.691 §23); the table lists the alternatives in the canonical order of
 their tags (§23.3). An extension alternative the table does not know is kept
-as an unknown extension (its open-type contents under a context tag numbered
-by its extension index), which PER cannot encode again.
+as an unknown extension (`UnknownExtension.per`: its extension index and
+open-type contents) and PER writes it back unchanged (X.680 §52.1).
 A SEQUENCE OF or SET OF is its count under the SIZE, with the extension bit
 of an extensible SIZE, then its elements, each under the element's
 constraints: an inline element constraint or the referenced type's own

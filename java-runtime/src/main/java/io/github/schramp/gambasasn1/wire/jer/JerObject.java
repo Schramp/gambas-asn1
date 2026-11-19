@@ -301,7 +301,7 @@ public final class JerObject {
     private static void encodeChoice(Asn1Choice ch, JerWriter w) {
         int i = ch.activeIndex();
         if (i < 0) {
-            throw new EncodeException("CHOICE " + ch.spec().name() + ": no alternative selected");
+            throw new EncodeException(Asn1Choice.noAlternativeError(ch, "JER"));
         }
         AltMeta alt = ch.spec().alternatives().get(i);
         w.ascii("{").string(alt.name()).ascii(":");

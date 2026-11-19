@@ -328,10 +328,17 @@ class BuiltinAliasBerTest {
         assertEquals(8L, Printable.CONSTRAINTS.sizeUpper());
     }
 
+    /**
+     * A number that is no item: an error for a non-extensible ENUMERATED,
+     * an item of a newer schema version for an extensible one (X.680 §52.1).
+     */
     @Test
-    void unknownEnumeratedValueIsRejected() {
+    void unknownEnumeratedValue() throws DecodeException {
         assertThrows(DecodeException.class, () -> BerObject.decode(new Color(), new byte[] {0x0A, 0x01, 0x02}));
-        assertThrows(DecodeException.class, () -> BerObject.decode(new ExtColor(), new byte[] {0x0A, 0x01, 0x05}));
+        ExtColor ext = new ExtColor();
+        BerObject.decode(ext, new byte[] {0x0A, 0x01, 0x05});
+        assertEquals(io.github.schramp.gambasasn1.wire.spec.EnumUnknown.ofValue(5), ext.unknown());
+        assertArrayEquals(new byte[] {0x0A, 0x01, 0x05}, BerObject.encode(ext));
     }
 
     @Test

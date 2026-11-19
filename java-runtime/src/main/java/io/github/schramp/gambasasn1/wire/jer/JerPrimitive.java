@@ -1,10 +1,12 @@
 package io.github.schramp.gambasasn1.wire.jer;
 
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
+import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
@@ -102,8 +104,16 @@ public final class JerPrimitive {
         }
     }
 
-    /** An ENUMERATED value as its identifier; a value without one as its number (X.697 §22). */
+    /**
+     * An ENUMERATED value as its identifier; a value without one, an unknown
+     * BER number among them, as its number (X.697 §22). An unknown ordinal or
+     * identifier has no JER form.
+     */
     public static void encodeEnumerated(EnumSlot slot, EnumSpec spec, JerWriter w) {
+        EnumUnknown u = slot.enumUnknown();
+        if (u != null && u.kind() != EnumUnknown.Kind.VALUE) {
+            throw new EncodeException(u.encodeError(spec, "JER"));
+        }
         long v = slot.enumGet();
         for (EnumEntry e : spec.entries()) {
             if (e.value() == v) {
@@ -114,14 +124,23 @@ public final class JerPrimitive {
         w.ascii(Long.toString(v));
     }
 
-    /** Decode counterpart of {@link #encodeEnumerated}: an identifier, or a bare number. */
+    /**
+     * Decode counterpart of {@link #encodeEnumerated}: an identifier, or a
+     * bare number. An extensible type keeps one it does not define as an
+     * unknown item (X.680 §52.1).
+     */
     public static void decodeEnumerated(EnumSlot slot, EnumSpec spec, JerReader r) throws DecodeException {
         int at = r.position();
         long v;
         if (r.peek() == '"') {
             String name = r.readStringText();
-            EnumEntry found = spec.entries().stream().filter(e -> e.name().equals(name)).findFirst()
-                    .orElseThrow(() -> new DecodeException("JER: unknown enum value: " + name, at));
+            EnumEntry found = spec.entries().stream().filter(e -> e.name().equals(name)).findFirst().orElse(null);
+            if (found == null) {
+                if (spec.extensible() && slot.enumSetUnknown(EnumUnknown.ofIdentifier())) {
+                    return;
+                }
+                throw new DecodeException("JER: unknown enum value: " + name, at);
+            }
             v = found.value();
         } else {
             String t = r.readToken();
@@ -131,7 +150,7 @@ public final class JerPrimitive {
                 throw new DecodeException("JER: invalid ENUMERATED: " + t, at);
             }
         }
-        if (!slot.enumSet(v)) {
+        if (!EnumUnknown.setNumber(slot, spec, v)) {
             throw new DecodeException("JER: value " + v + " is not an item of " + spec.name(), at);
         }
     }
