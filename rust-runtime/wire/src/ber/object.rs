@@ -70,7 +70,13 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
                 BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
             }
         }
-        MemberRef::Enumerated(slot, _spec) => {
+        MemberRef::Enumerated(slot, spec) => {
+            // An unknown item encodes only as the number BER carried.
+            if let Some(u) = slot.enum_unknown() {
+                if !matches!(u, crate::spec::enumerated::EnumUnknown::Value(_)) {
+                    return Err(crate::spec::enumerated::unknown_encode_error(spec, u, "BER"));
+                }
+            }
             let v = slot.enum_get();
             match framing {
                 BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_enumerated_tagged(out, ENUMERATED_TAG, v)),
@@ -155,17 +161,17 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                 BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
             }
         }
-        MemberRefMut::Enumerated(slot, _spec) => match framing {
+        MemberRefMut::Enumerated(slot, spec) => match framing {
             BerTagging::Explicit(tag) => {
                 let tlv = r.read_tlv()?;
                 if !tlv.tag.constructed || tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
                 let mut inner_r = r.sub(tlv.value);
-                read_enumerated_tagged_into(slot, &mut inner_r, ENUMERATED_TAG)
+                read_enumerated_tagged_into(slot, spec, &mut inner_r, ENUMERATED_TAG)
             }
-            BerTagging::Implicit(tag) => read_enumerated_tagged_into(slot, r, tag),
-            BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => read_enumerated_tagged_into(slot, r, ENUMERATED_TAG),
+            BerTagging::Implicit(tag) => read_enumerated_tagged_into(slot, spec, r, tag),
+            BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => read_enumerated_tagged_into(slot, spec, r, ENUMERATED_TAG),
             BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
         },
     }
@@ -389,11 +395,15 @@ fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>, opts: Option<
         crate::validate::check_value(obj.get_active(), alt.constraints, alt.name, "encode");
         return Ok(());
     }
-    if let Some((tag, bytes)) = obj.extract_unknown_extension() {
-        write_primitive(out, tag, bytes);
-        return Ok(());
+    // An alternative of a newer schema version goes back as the TLV it
+    // arrived in (X.680 §52.1 relaying).
+    if let Some(ext) = obj.extract_unknown_extension() {
+        if ext.origin == crate::spec::choice::UnknownOrigin::Ber {
+            write_primitive(out, ext.tag, &ext.bytes);
+            return Ok(());
+        }
     }
-    Err(crate::spec::object::no_alternative_selected(obj.spec()))
+    Err(crate::spec::object::no_alternative_selected(obj, "BER"))
 }
 
 /// Appends a CHOICE's encoding to an existing buffer.
@@ -463,7 +473,7 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
             .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
     }
     let tlv = r.read_tlv()?;
-    obj.construct_unknown_extension(tlv.tag, tlv.value.to_vec());
+    obj.construct_unknown_extension(crate::spec::choice::UnknownExtension::ber(tlv.tag, tlv.value.to_vec()));
     if obj.extract_unknown_extension().is_some() {
         return Ok(());
     }
@@ -938,8 +948,8 @@ mod tests {
                 _ => unreachable!(),
             }
         }
-        fn construct_unknown_extension(&mut self, _tag: Tag, _bytes: Vec<u8>) {}
-        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+        fn construct_unknown_extension(&mut self, _ext: crate::spec::choice::UnknownExtension) {}
+        fn extract_unknown_extension(&self) -> Option<&crate::spec::choice::UnknownExtension> {
             None
         }
     }
@@ -1052,7 +1062,7 @@ mod tests {
     #[derive(Debug)]
     enum Ext {
         Num(Integer),
-        UnknownExtension(Tag, Vec<u8>),
+        UnknownExtension(crate::spec::choice::UnknownExtension),
     }
 
     static EXT_ALTS: [crate::spec::object::AltMeta; 1] =
@@ -1089,12 +1099,12 @@ mod tests {
                 Ext::UnknownExtension(..) => unreachable!(),
             }
         }
-        fn construct_unknown_extension(&mut self, tag: Tag, bytes: Vec<u8>) {
-            *self = Ext::UnknownExtension(tag, bytes);
+        fn construct_unknown_extension(&mut self, ext: crate::spec::choice::UnknownExtension) {
+            *self = Ext::UnknownExtension(ext);
         }
-        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+        fn extract_unknown_extension(&self) -> Option<&crate::spec::choice::UnknownExtension> {
             match self {
-                Ext::UnknownExtension(t, b) => Some((*t, b.as_slice())),
+                Ext::UnknownExtension(e) => Some(e),
                 Ext::Num(_) => None,
             }
         }
@@ -1102,15 +1112,23 @@ mod tests {
 
     #[test]
     fn choice_without_known_alternative_fails_encode_without_panicking() {
-        let v = Ext::UnknownExtension(Tag::context(5, false), vec![0x01]);
+        let v = Ext::UnknownExtension(crate::spec::choice::UnknownExtension::ber(Tag::context(5, false), vec![0x01]));
         // BER replays the captured TLV (X.690 §8.1).
         assert_eq!(encode_choice(&v).unwrap(), vec![0x85, 0x01, 0x01]);
-        let msg = "CHOICE Ext: no alternative selected";
-        assert_eq!(crate::xer::object::encode_choice(&v).unwrap_err().message, msg);
+        let msg = |codec: &str| format!("CHOICE Ext: extension alternative of a newer schema version, read from BER, has no {codec} encoding");
+        assert_eq!(crate::xer::object::encode_choice(&v).unwrap_err().message, msg("XER"));
         let mut json = String::new();
-        assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json, None).unwrap_err().message, msg);
+        assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json, None).unwrap_err().message, msg("JER"));
         let mut w = crate::per::writer::Writer::new();
-        assert_eq!(crate::per::object::encode_choice_content(&v, &mut w, None).unwrap_err().message, msg);
+        assert_eq!(crate::per::object::encode_choice_content(&v, &mut w, None).unwrap_err().message, msg("PER"));
+        // A PER alternative goes back as extension bit, index, open type
+        // (X.691 §23.8) and has no BER form.
+        let p = Ext::UnknownExtension(crate::spec::choice::UnknownExtension::per(2, vec![0xAB]));
+        let mut w = crate::per::writer::Writer::new();
+        crate::per::object::encode_choice_content(&p, &mut w, None).unwrap();
+        assert_eq!(w.into_bytes(), vec![0x82, 0x01, 0xAB]);
+        assert_eq!(encode_choice(&p).unwrap_err().message,
+                   "CHOICE Ext: extension alternative of a newer schema version, read from PER, has no BER encoding");
     }
 
     /// `Rec ::= CHOICE { a [0] INTEGER, c [2] Rec }` — self-referential
@@ -1164,8 +1182,8 @@ mod tests {
                 Rec::C(v) => MemberRefMut::Choice(&mut **v),
             }
         }
-        fn construct_unknown_extension(&mut self, _tag: Tag, _bytes: Vec<u8>) {}
-        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+        fn construct_unknown_extension(&mut self, _ext: crate::spec::choice::UnknownExtension) {}
+        fn extract_unknown_extension(&self) -> Option<&crate::spec::choice::UnknownExtension> {
             None
         }
     }

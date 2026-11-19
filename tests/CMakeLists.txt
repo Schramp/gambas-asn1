@@ -922,7 +922,7 @@ add_test(NAME choice COMMAND test_choice)
 
 # ---- ENUMERATED items of a newer schema version (X.680 §52.1) ---------------
 set(ENUM_UNKNOWN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_enum_unknown_test)
-set(ENUM_UNKNOWN_TYPES ColorV1 FixedColor PaletteV1 ColorV2)
+set(ENUM_UNKNOWN_TYPES ColorV1 FixedColor PaletteV1 FixedPalette ColorV2 PaletteV2)
 set(_eu_outputs)
 set(_eu_cpps)
 foreach(t IN LISTS ENUM_UNKNOWN_TYPES)
@@ -2715,6 +2715,32 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_choice_unknown_ext PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
+endif()
+
+# Rust leg of the items of a newer schema version (X.680 §52.1) — see
+# tests/rust/unknown_items/src/main.rs (C++ legs: test_enum_unknown,
+# test_choice_unknown).
+set(RUST_UNK_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_unknown_items)
+add_custom_command(
+    OUTPUT  ${RUST_UNK_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_UNK_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+                                   -o ${RUST_UNK_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                    ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+    COMMENT "Generating Rust from enum_unknown_test.asn1 + choice_unknown_test.asn1"
+)
+add_custom_target(gen_rust_unknown_items ALL DEPENDS ${RUST_UNK_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_unknown_items
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/unknown_items/Cargo.toml)
+    set_tests_properties(rust_unknown_items PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_UNK_GEN_DIR=${RUST_UNK_GEN_DIR}")
 endif()
 
 # Rust leg of the decode nesting limit test — see

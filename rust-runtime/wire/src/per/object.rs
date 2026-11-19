@@ -5,7 +5,6 @@
 //! `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf` accessors rather than a
 //! generated per-type `*Spec<T>` table.
 
-use crate::ber::tag::Tag;
 use crate::constraints::Constraints;
 use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
 use crate::per::reader::{DecodeError, Reader};
@@ -43,10 +42,15 @@ fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer, opts: Option<&crat
         MemberRef::Composite(inner) => encode_seq_content(inner, w, opts),
         MemberRef::Choice(inner) => encode_choice_content(inner, w, opts),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w, opts),
-        MemberRef::Enumerated(slot, spec) => {
-            crate::per::enumerated::encode_enum(w, spec, slot.enum_get());
-            Ok(())
-        }
+        MemberRef::Enumerated(slot, spec) => match slot.enum_unknown() {
+            // An unknown item encodes only as the ordinal PER carried.
+            Some(crate::spec::enumerated::EnumUnknown::Ordinal(o)) => {
+                crate::per::enumerated::encode_unknown_ordinal(w, o);
+                Ok(())
+            }
+            Some(u) => Err(crate::spec::enumerated::unknown_encode_error(spec, u, "PER")),
+            None => crate::per::enumerated::encode_enum(w, spec, slot.enum_get()),
+        },
     }
 }
 
@@ -79,11 +83,16 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, c, r),
         MemberRefMut::Enumerated(slot, spec) => {
-            let v = crate::per::enumerated::decode_enum(r, spec)?;
-            if slot.enum_set(v) {
+            use crate::per::enumerated::DecodedEnum;
+            let ok = match crate::per::enumerated::decode_enum(r, spec)? {
+                DecodedEnum::Item(v) => slot.enum_set(v),
+                DecodedEnum::UnknownOrdinal(o) =>
+                    slot.enum_set_unknown(crate::spec::enumerated::EnumUnknown::Ordinal(o)),
+            };
+            if ok {
                 Ok(())
             } else {
-                Err(DecodeError::new(format!("PER: invalid ENUMERATED value: {v}"), r.bit_pos()))
+                Err(DecodeError::new(format!("PER: ENUMERATED {}: extension item not accepted", spec.name), r.bit_pos()))
             }
         }
     }
@@ -391,7 +400,17 @@ fn choice_root_count(obj: &dyn Asn1Choice) -> usize {
 /// @see X.691 §23.
 pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(def_idx) = obj.active_index() else {
-        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
+        // An alternative of a newer schema version goes back as its
+        // extension index and open-type octets (X.691 §23.8).
+        if let Some(ext) = obj.extract_unknown_extension() {
+            if ext.origin == crate::spec::choice::UnknownOrigin::Per {
+                w.put_bits(1, 1);
+                put_nsnn(w, ext.index);
+                put_octets(w, &ext.bytes);
+                return Ok(());
+            }
+        }
+        return Err(crate::spec::object::no_alternative_selected(obj, "PER"));
     };
     let alt = &obj.spec().alternatives[def_idx];
     let root_count = choice_root_count(obj);
@@ -450,10 +469,9 @@ fn decode_choice_alternative(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result
         if def_idx >= obj.spec().alternatives.len() {
             // X.691 §23.8: an extension alternative this schema version
             // doesn't define still arrives as a complete open type. Keep its
-            // contents (under a context tag carrying the extension index)
-            // instead of failing, as the C++ ChoicePerHandler skips it.
+            // index and contents so it can be relayed (X.680 §52.1).
             let bytes = get_octets(r)?;
-            obj.construct_unknown_extension(Tag::context(ext_idx as u32, false), bytes);
+            obj.construct_unknown_extension(crate::spec::choice::UnknownExtension::per(ext_idx as i64, bytes));
             return Ok(());
         }
         let bytes = get_octets(r)?;

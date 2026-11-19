@@ -1,8 +1,9 @@
 // Rust leg of the unknown CHOICE extension alternative test
 // (per_choice_unknown_ext_test.asn1, X.691 §23.8); mirrors
 // tests/seq/test_choice_unknown_ext.cpp. A MsgV2 extension alternative
-// decodes as MsgV1 into its UnknownExtension variant (open-type contents
-// kept); a root alternative encodes identically in both versions.
+// decodes as MsgV1 into its UnknownExtension variant (extension index and
+// open-type contents kept); a root alternative encodes identically in both
+// versions.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -29,15 +30,15 @@ fn main() {
         check("the unknown alternative is kept as UnknownExtension",
               matches!(v, V1::UnknownExtension(..)) && v.extract_unknown_extension().is_some(),
               &mut failures);
-        // XER/JER/PER have no form for an alternative the schema does not
-        // define: encoding it fails the record instead of panicking or
-        // writing nothing.
+        // PER writes the kept alternative back as it came (X.680 §52.1);
+        // XER/JER have no form for it, so encoding it fails the record
+        // instead of panicking or writing nothing.
+        check("PER re-encodes the unknown alternative unchanged",
+              asn1cpp_wire::per::object::encode_pdu(v).ok() == Some(ext_bytes.clone()), &mut failures);
         check("XER encode of the unknown alternative is an error",
               asn1cpp_wire::xer::object::encode_pdu(v).is_err(), &mut failures);
         check("JER encode of the unknown alternative is an error",
               asn1cpp_wire::jer::object::encode_pdu(v).is_err(), &mut failures);
-        check("PER encode of the unknown alternative is an error",
-              asn1cpp_wire::per::object::encode_pdu(v).is_err(), &mut failures);
     }
 
     let root2 = asn1cpp_wire::per::object::encode_pdu(&V2::a(asn1cpp_wire::integer::Integer(5))).unwrap();

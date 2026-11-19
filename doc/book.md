@@ -374,6 +374,17 @@ the items as it is (validation counts it), and XER and JER reject an unknown
 identifier. A PER encode of a value that is no item now fails with
 `ENUMERATED <name>: value <n> is not one of its items`.
 
+**Rust.** A generated extensible enum has one more variant,
+`Unknown(asn1cpp_wire::spec::enumerated::EnumUnknown)`, with `EnumUnknown`
+being `Value(i64)`, `Ordinal(i64)` or `Identifier`. The codecs keep and
+re-encode it as C++ does and fail other encodes with the same messages
+(`Err(EncodeError)`). No item can be named `Unknown`: ASN.1 identifiers begin
+with a lowercase letter (X.680 §12.3). Because of that tuple variant, an
+extensible enum has no `#[repr(i64)]` and cannot be cast with `as i64`; read
+its number with `EnumSlot::enum_get()`. A `match` on it needs an `Unknown(_)`
+arm. A non-extensible enum is unchanged and rejects a number or identifier it
+does not define in every codec.
+
 ### REAL values
 
 REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and
@@ -1454,11 +1465,10 @@ Causes of a per-record error:
   alternative of up to 15 octets needs no allocation. Any
   other codec fails the encode, e.g.
   `CHOICE MsgV1: extension alternative of a newer schema version, read from PER, has no BER encoding`.
-  A Rust extensible CHOICE
-  holding an alternative the schema does not define (`UnknownExtension`,
-  kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
-  replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
-  alternative selected`.
+  A Rust extensible CHOICE keeps such an alternative the same way, in its
+  `UnknownExtension(asn1cpp_wire::spec::choice::UnknownExtension)` variant
+  (`origin`, `tag`, `index`, `bytes`; `extract_unknown_extension()`), and
+  fails the other codecs with the same message.
 - **A PER constraint violation** — a character string outside its SIZE or
   permitted alphabet cannot be represented in PER, so PER encode fails
   (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
