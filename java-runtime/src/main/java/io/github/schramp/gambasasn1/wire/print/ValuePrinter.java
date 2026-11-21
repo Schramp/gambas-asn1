@@ -11,6 +11,7 @@ import io.github.schramp.gambasasn1.wire.spec.Containing;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.types.Asn1Any;
@@ -135,7 +136,9 @@ public final class ValuePrinter {
             sb.append("/* no alternative selected */");
             return;
         }
-        sb.append("/* unknown extension ").append(ext.tag()).append(" */ ");
+        sb.append("/* unknown extension ")
+                .append(ext.origin() == Asn1Choice.UnknownExtension.Origin.BER ? ext.tag().toString() : "#" + ext.index())
+                .append(" */ ");
         octets(ext.bytes(), sb);
     }
 
@@ -171,6 +174,16 @@ public final class ValuePrinter {
     }
 
     private static void enumerated(EnumSlot slot, EnumSpec spec, StringBuilder sb) {
+        EnumUnknown u = slot.enumUnknown();
+        if (u != null) {
+            sb.append("/* unknown item of ").append(spec.name()).append(": ")
+                    .append(u.kind().name().toLowerCase(java.util.Locale.ROOT));
+            if (u.kind() != EnumUnknown.Kind.IDENTIFIER) {
+                sb.append(' ').append(u.value());
+            }
+            sb.append(" */");
+            return;
+        }
         long v = slot.enumGet();
         for (EnumEntry e : spec.entries()) {
             if (e.value() == v) {

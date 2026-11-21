@@ -6,10 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import gen.choice_ber.Ext;
 import gen.choice_ber.ExtRoot;
-import io.github.schramp.gambasasn1.wire.ber.Tag;
+import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.per.PerObject;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import java.util.HexFormat;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -56,16 +57,19 @@ class ChoicePerTest {
 
     /**
      * X.691 §23.8: an earlier version keeps an extension alternative it does
-     * not know (asn1c's Ext {@code b TRUE}) as its open-type contents.
+     * not know (asn1c's Ext {@code b TRUE}) as its extension index and
+     * open-type contents, and writes it back unchanged (X.680 §52.1).
      */
     @Test
     void earlierVersionKeepsUnknownAlternative() throws DecodeException {
         ExtRoot v = new ExtRoot();
         PerObject.decode(v, HexFormat.of().parseHex("800180"));
         assertEquals(-1, v.activeIndex());
-        assertEquals(Tag.context(0, false), v.unknownExtension().tag());
+        assertEquals(Asn1Choice.UnknownExtension.Origin.PER, v.unknownExtension().origin());
+        assertEquals(0, v.unknownExtension().index());
         assertArrayEquals(new byte[] {(byte) 0x80}, v.unknownExtension().bytes());
-        assertThrows(EncodeException.class, () -> PerObject.encode(v));
+        assertArrayEquals(HexFormat.of().parseHex("800180"), PerObject.encode(v));
+        assertThrows(EncodeException.class, () -> BerObject.encode(v));
     }
 
     @Test
