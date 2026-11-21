@@ -5,8 +5,10 @@ EnumUnknownV1 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     ColorV1    ::= ENUMERATED { red, green, ..., cyan }
     FixedColor ::= ENUMERATED { red, green }
     PaletteV1  ::= SEQUENCE OF ColorV1
+    FixedPalette ::= SEQUENCE OF FixedColor
 END
 
 EnumUnknownV2 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     ColorV2    ::= ENUMERATED { red, green, ..., cyan, magenta(10), yellow }
+    PaletteV2  ::= SEQUENCE OF ColorV2
 END

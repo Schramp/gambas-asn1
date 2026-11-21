@@ -297,6 +297,12 @@ static bool has_natural_alphabet(ast::BuiltinType bt) {
     return bt == BT::NumericString || bt == BT::PrintableString || bt == BT::Ia5String || bt == BT::VisibleString;
 }
 
+/// @brief Emit the declaration half of an ENUMERATED type: the Rust `enum`
+///        with one variant per item, and for an extensible type the
+///        `Unknown` variant that holds an item of a newer schema version.
+/// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
+/// @param os   Output stream to write to.
+/// @see X.680 §20 (ENUMERATED), §52.1 (extension additions).
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -305,7 +311,10 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
     // erase (e.g. "utf-8"/"utf8" both -> "Utf8", "a-b"/"ab" both -> "Ab").
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
-    os << "#[repr(i64)]\n";
+    // A C-like enum carries each item's number as its discriminant. An
+    // extensible one also has the tuple variant `Unknown` below, which
+    // cannot share an `as i64` cast; its numbers come from `enum_get`.
+    if (!spec.extensible) os << "#[repr(i64)]\n";
     // type_name/synthetic_name preserve the ASN.1 identifier as closely as
     // Rust syntax allows (hyphen -> underscore only, no word-split recase)
     // rather than reflowing it to dodge style lints — a real-world schema's
@@ -330,10 +339,16 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
                 "RustBackend: ENUMERATED '{}' — values '{}' and '{}' both map to Rust variant '{}'",
                 tname, it->second, v.asn1_name, vname));
         os << std::format("    /// ASN.1: `{}`\n", v.asn1_name);
-        os << std::format("    {} = {},\n", vname, v.value);
+        if (spec.extensible) os << std::format("    {},\n", vname);
+        else                 os << std::format("    {} = {},\n", vname, v.value);
     }
-    if (spec.extensible)
-        os << "    // extensible\n";
+    // An item of a newer schema version (X.680 §52.1), as far as its codec
+    // carried it. ASN.1 identifiers begin with a lowercase letter (X.680
+    // §12.3), so no item is named `Unknown`.
+    if (spec.extensible) {
+        os << "    /// An item of a newer schema version (X.680 §52.1).\n";
+        os << "    Unknown(asn1cpp_wire::spec::enumerated::EnumUnknown),\n";
+    }
     os << "}\n\n";
 }
 
@@ -436,8 +451,25 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // generated closure.
         os << std::format("impl asn1cpp_wire::spec::object::EnumSlot for {} {{\n", tname);
         os << "    fn enum_get(&self) -> i64 {\n";
-        os << "        *self as i64\n";
+        if (!spec.extensible) {
+            os << "        *self as i64\n";
+        } else {
+            os << "        match self {\n";
+            for (const auto& v : spec.values)
+                os << std::format("            {}::{} => {},\n", tname, variant_name(*this, v.asn1_name), v.value);
+            os << std::format("            {}::Unknown(u) => u.raw(),\n", tname);
+            os << "        }\n";
+        }
         os << "    }\n\n";
+        if (spec.extensible) {
+            os << "    fn enum_unknown(&self) -> ::std::option::Option<asn1cpp_wire::spec::enumerated::EnumUnknown> {\n";
+            os << std::format("        match self {{ {}::Unknown(u) => Some(*u), _ => None }}\n", tname);
+            os << "    }\n\n";
+            os << "    fn enum_set_unknown(&mut self, u: asn1cpp_wire::spec::enumerated::EnumUnknown) -> bool {\n";
+            os << std::format("        *self = {}::Unknown(u);\n", tname);
+            os << "        true\n";
+            os << "    }\n\n";
+        }
         // A binding of the enum's own type shares the namespace rustc
         // checks against its variants (E0170), so it is named `__inner`:
         // no ASN.1 identifier contains two consecutive hyphens (X.680
@@ -2005,9 +2037,10 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     // alternative declared after `...` in *this* schema version is already
     // a normal AlternativeSpec row above — this variant covers only
     // genuinely-unknown-to-us content, captured as a raw TLV (tag + value
-    // bytes) so decode->re-encode still round-trips byte-identically. See
-    // rust-runtime/wire/src/choice.rs's UnknownExtensionOps doc comment for
-    // the runtime side.
+    // bytes, or PER extension index + open type) so decode->re-encode in
+    // the same codec round-trips byte-identically. See
+    // rust-runtime/wire/src/spec/choice.rs's UnknownExtension for the
+    // runtime side.
     if (spec.ext_at >= 0) {
         auto [it, inserted] = seen_variants.emplace("UnknownExtension", "...");
         if (!inserted)
@@ -2015,7 +2048,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
                 "RustBackend: CHOICE '{}' — alternative '{}' collides with the reserved "
                 "'UnknownExtension' variant name",
                 spec.type_name, it->second));
-        os << std::format("    UnknownExtension(asn1cpp_wire::Tag, Vec<u8>),\n");
+        os << std::format("    UnknownExtension(asn1cpp_wire::spec::choice::UnknownExtension),\n");
     }
     os << "}\n\n";
 }
@@ -2373,15 +2406,15 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        {}[index](self)\n", select_mut_ident);
         os << "    }\n";
         if (spec.ext_at >= 0) {
-            os << "    fn construct_unknown_extension(&mut self, tag: asn1cpp_wire::Tag, bytes: Vec<u8>) {\n";
-            os << std::format("        *self = {}::UnknownExtension(tag, bytes);\n", spec.type_name);
+            os << "    fn construct_unknown_extension(&mut self, ext: asn1cpp_wire::spec::choice::UnknownExtension) {\n";
+            os << std::format("        *self = {}::UnknownExtension(ext);\n", spec.type_name);
             os << "    }\n";
-            os << "    fn extract_unknown_extension(&self) -> ::std::option::Option<(asn1cpp_wire::Tag, &[u8])> {\n";
-            os << std::format("        match self {{ {}::UnknownExtension(tag, bytes) => Some((*tag, bytes.as_slice())), _ => None }}\n", spec.type_name);
+            os << "    fn extract_unknown_extension(&self) -> ::std::option::Option<&asn1cpp_wire::spec::choice::UnknownExtension> {\n";
+            os << std::format("        match self {{ {}::UnknownExtension(ext) => Some(ext), _ => None }}\n", spec.type_name);
             os << "    }\n";
         } else {
-            os << "    fn construct_unknown_extension(&mut self, _tag: asn1cpp_wire::Tag, _bytes: Vec<u8>) {}\n";
-            os << "    fn extract_unknown_extension(&self) -> ::std::option::Option<(asn1cpp_wire::Tag, &[u8])> { None }\n";
+            os << "    fn construct_unknown_extension(&mut self, _ext: asn1cpp_wire::spec::choice::UnknownExtension) {}\n";
+            os << "    fn extract_unknown_extension(&self) -> ::std::option::Option<&asn1cpp_wire::spec::choice::UnknownExtension> { None }\n";
         }
         os << "}\n\n";
 

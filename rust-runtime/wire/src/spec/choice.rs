@@ -1,7 +1,7 @@
 //! CHOICE wire-framing facts — X.680 §29. The reflective `Asn1Choice`
 //! trait and the generic BER/XER/JER/PER walkers live in `spec::object`/
 //! `ber::object`/`xer::object`/`jer::object`/`per::object`; this module
-//! holds only the two plain-data types every one of those needs.
+//! holds only the plain-data types every one of those needs.
 
 use crate::ber::tag::Tag;
 
@@ -70,4 +70,50 @@ impl BerTagging {
 pub struct BerDispatch {
     pub tag: Tag,
     pub alt: usize,
+}
+
+/// @brief Codec an unknown CHOICE extension alternative was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnknownOrigin {
+    Ber,
+    Per,
+}
+
+/// @brief An alternative of an extensible CHOICE that this schema version
+///        does not define, kept as its codec carried it so it can be
+///        relayed (X.680 §52.1: extension additions are not a decoding
+///        error).
+///
+/// BER carries the alternative's TLV: `tag` (constructed bit included) and
+/// `bytes`, its contents octets. PER carries the extension index past the
+/// known alternatives (X.691 §23) and the open-type octets (§11.2). It
+/// encodes again only in the codec it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownExtension {
+    /// Codec it was read from.
+    pub origin: UnknownOrigin,
+    /// BER: the TLV's tag.
+    pub tag: Tag,
+    /// PER: extension index past the known alternatives.
+    pub index: i64,
+    /// BER contents octets / PER open-type octets.
+    pub bytes: Vec<u8>,
+}
+
+impl UnknownExtension {
+    /// @brief A BER alternative: its TLV's tag and contents octets.
+    pub fn ber(tag: Tag, bytes: Vec<u8>) -> Self {
+        UnknownExtension { origin: UnknownOrigin::Ber, tag, index: 0, bytes }
+    }
+    /// @brief A PER alternative: its extension index and open-type octets.
+    pub fn per(index: i64, bytes: Vec<u8>) -> Self {
+        UnknownExtension { origin: UnknownOrigin::Per, tag: Tag::context(0, false), index, bytes }
+    }
+    /// @brief Name of the codec it was read from, for messages.
+    pub fn origin_name(&self) -> &'static str {
+        match self.origin {
+            UnknownOrigin::Ber => "BER",
+            UnknownOrigin::Per => "PER",
+        }
+    }
 }

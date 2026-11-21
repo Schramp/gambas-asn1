@@ -206,12 +206,13 @@ pub trait Asn1Choice {
     fn active_index(&self) -> Option<usize>;
     fn get_active(&self) -> MemberRef<'_>;
     fn select_mut(&mut self, index: usize) -> MemberRefMut<'_>;
-    /// X.680 §29.6 extensibility — captures an unrecognized-tag TLV
-    /// (BER-only; see `spec::choice::UnknownExtensionOps`'s own doc for
-    /// why XER has no equivalent escape hatch). A no-op for a
-    /// non-extensible CHOICE.
-    fn construct_unknown_extension(&mut self, tag: Tag, bytes: Vec<u8>);
-    fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])>;
+    /// Keeps an alternative of a newer schema version, selecting nothing
+    /// (X.680 §52.1; read from BER or PER, see
+    /// `spec::choice::UnknownExtension`). A no-op for a non-extensible
+    /// CHOICE.
+    fn construct_unknown_extension(&mut self, ext: crate::spec::choice::UnknownExtension);
+    /// The unknown alternative held, if any.
+    fn extract_unknown_extension(&self) -> Option<&crate::spec::choice::UnknownExtension>;
 }
 
 /// Purely reflective SEQUENCE OF/SET OF interface (X.680 §25/§26 applied
@@ -355,13 +356,20 @@ pub trait Asn1Pdu: AsMemberRef + Default {
     const PDU_CONSTRAINTS: &'static crate::constraints::Constraints = &crate::constraints::UNCONSTRAINED;
 }
 
-/// @brief Encode error for a CHOICE with no known alternative to encode —
-///        an extensible CHOICE holding an unrecognized extension
-///        (`Asn1Choice::extract_unknown_extension`) that the codec has no
-///        form for. Shared by every codec's CHOICE walker.
-/// @param spec  The CHOICE's table, for its name.
-pub(crate) fn no_alternative_selected(spec: &ChoiceSpec) -> crate::encode_error::EncodeError {
-    crate::encode_error::EncodeError::new(format!("CHOICE {}: no alternative selected", spec.name))
+/// @brief Encode error for a CHOICE with no known alternative that `codec`
+///        can write: nothing selected, or an alternative of a newer schema
+///        version (`Asn1Choice::extract_unknown_extension`) read from
+///        another codec. Shared by every codec's CHOICE walker.
+/// @param obj    The CHOICE.
+/// @param codec  The encoding codec's name ("BER", "PER", "XER", "JER").
+pub(crate) fn no_alternative_selected(obj: &dyn Asn1Choice, codec: &str) -> crate::encode_error::EncodeError {
+    let name = obj.spec().name;
+    crate::encode_error::EncodeError::new(match obj.extract_unknown_extension() {
+        Some(ext) => format!(
+            "CHOICE {name}: extension alternative of a newer schema version, read from {}, has no {codec} encoding",
+            ext.origin_name()),
+        None => format!("CHOICE {name}: no alternative selected"),
+    })
 }
 
 /// Panic message for an `Asn1Pdu` whose `as_member_ref()` breaks the
@@ -375,9 +383,22 @@ pub(crate) const NOT_A_PDU: &str = "Asn1Pdu::as_member_ref() must yield Composit
 /// matching named entry (mirrors the C++ `EnumSpec::validate` contract,
 /// `spec::enumerated`'s own doc) rather than panicking, so the walker can
 /// report a decode error instead.
+///
+/// An extensible ENUMERATED also holds an item of a newer schema version
+/// (X.680 §52.1) as `enum_unknown()`; `enum_get` then returns its number,
+/// ordinal or 0 (`EnumUnknown::raw`). The defaults refuse, for a type that
+/// cannot hold one.
 pub trait EnumSlot {
     fn enum_get(&self) -> i64;
     fn enum_set(&mut self, v: i64) -> bool;
+    /// The unknown item held, if any.
+    fn enum_unknown(&self) -> Option<crate::spec::enumerated::EnumUnknown> {
+        None
+    }
+    /// Stores an unknown item; false when the type is not extensible.
+    fn enum_set_unknown(&mut self, _u: crate::spec::enumerated::EnumUnknown) -> bool {
+        false
+    }
 }
 
 /// Lets codegen write `&v.field`/`&mut v.field` uniformly whether a
@@ -419,10 +440,10 @@ impl<T: Asn1Choice + ?Sized> Asn1Choice for Box<T> {
     fn select_mut(&mut self, index: usize) -> MemberRefMut<'_> {
         (**self).select_mut(index)
     }
-    fn construct_unknown_extension(&mut self, tag: Tag, bytes: Vec<u8>) {
-        (**self).construct_unknown_extension(tag, bytes)
+    fn construct_unknown_extension(&mut self, ext: crate::spec::choice::UnknownExtension) {
+        (**self).construct_unknown_extension(ext)
     }
-    fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+    fn extract_unknown_extension(&self) -> Option<&crate::spec::choice::UnknownExtension> {
         (**self).extract_unknown_extension()
     }
 }

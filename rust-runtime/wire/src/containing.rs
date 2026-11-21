@@ -611,7 +611,11 @@ fn resolve(field: ContainedEncoding, outer: ContainedEncoding) -> ContainedEncod
 /// Read a `when` sibling's numeric value (ENUMERATED number, INTEGER, BOOLEAN 0/1).
 fn sibling_value(m: MemberRef) -> Option<i64> {
     match m {
-        MemberRef::Enumerated(slot, _) => Some(slot.enum_get()),
+        // An ordinal or identifier of a newer schema version is no value.
+        MemberRef::Enumerated(slot, _) => match slot.enum_unknown() {
+            None | Some(crate::spec::enumerated::EnumUnknown::Value(_)) => Some(slot.enum_get()),
+            Some(_) => None,
+        },
         MemberRef::Primitive(PrimitiveRef::Integer(v)) => Some(v.0),
         MemberRef::Primitive(PrimitiveRef::UInteger(v)) => Some(v.0 as i64),
         MemberRef::Primitive(PrimitiveRef::Boolean(v)) => Some(v.0 as i64),

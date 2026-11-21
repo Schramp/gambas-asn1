@@ -1,0 +1,14 @@
+[package]
+name = "unknown-items-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the unknown ENUMERATED item / CHOICE alternative tests (enum_unknown_test.asn1, choice_unknown_test.asn1). Pulls generated .rs from ASN1CPP_RUST_UNK_GEN_DIR (set by tests/CMakeLists.txt's rust_unknown_items), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "unknown_items"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
