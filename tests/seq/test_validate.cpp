@@ -344,6 +344,9 @@ int main() {
         }
     };
     { HasPct h{}; h.v = 50;   expect_rt("PercentInt valid roundtrip   → 0",  h, HasPct::asn_DEF, 0); }
+    // ENUMERATED: the decoder itself reports a number outside the items.
+    { HasColor h{}; h.v = Color::blue;                        expect_rt("Color blue roundtrip        → 0", h, HasColor::asn_DEF, 0); }
+    { HasColor h{}; h.v = Color(static_cast<Color::Enm>(99)); expect_rt("Color 99 roundtrip          → 2", h, HasColor::asn_DEF, 2); }
     { HasPct h{}; h.v = 200;  expect_rt("PercentInt invalid roundtrip→ 2",  h, HasPct::asn_DEF, 2); }
     { HasTariff h{}; h.v = 1500; expect_rt("Tariff valid roundtrip      → 0", h, HasTariff::asn_DEF, 0); }
     { HasTariff h{}; h.v = 500;  expect_rt("Tariff invalid roundtrip    → 2", h, HasTariff::asn_DEF, 2); }

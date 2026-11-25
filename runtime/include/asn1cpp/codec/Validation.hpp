@@ -191,20 +191,69 @@ inline void validate_on_encode(const char* codec_tag, const TypeDescriptor& def,
 #endif
 }
 
+/// @brief Count and trace one decode-side constraint violation of @p def.
+/// @param codec_tag  Short codec name for the trace line ("BER", "JER", ...).
+/// @param def        Type whose constraint the decoded value violates.
+/// @param delta      Non-zero distance to the nearest valid value (see validate()).
+/// @see validate_on_decode, store_decoded_enum — the two decode-side reporters.
+inline void report_decode_violation(const char* codec_tag, const TypeDescriptor& def, int64_t delta) {
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
+    bump_validate_fail();
+    record_validate_fail(def.name, delta, /*on_decode=*/true);
+    if (debug_flags() & DBG_VALIDATE_TRACE)
+        std::fprintf(stderr, "[VALIDATE-DEC][%s] %s delta=%lld\n",
+                     codec_tag, def.name, static_cast<long long>(delta));
+#else
+    (void)codec_tag; (void)def; (void)delta;
+#endif
+}
+
+/// @brief Post-decode validate hook: run validate() on the decoded value of
+///        @p def and report a violation.
+///
+/// ENUMERATED is skipped: every decoder classifies the number while storing
+/// it (an item, an unknown item of an extensible type per X.680 §52.1, or a
+/// reported violation — see store_decoded_enum), so checking it again here
+/// would repeat the item lookup.
+/// @param codec_tag  Short codec name for the trace line.
+/// @param def        Type just decoded.
+/// @param dest       The decoded value.
 inline void validate_on_decode(const char* codec_tag, const TypeDescriptor& def, const Asn1Object* dest) {
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
-    if (def.is_any || (debug_flags() & DBG_NO_VALIDATE)) return;
+    if (def.is_any || def.enum_spec || (debug_flags() & DBG_NO_VALIDATE)) return;
     int64_t delta = validate(def, dest);
-    if (delta != 0) {
-        bump_validate_fail();
-        record_validate_fail(def.name, delta, /*on_decode=*/true);
-        if (debug_flags() & DBG_VALIDATE_TRACE)
-            std::fprintf(stderr, "[VALIDATE-DEC][%s] %s delta=%lld\n",
-                         codec_tag, def.name, static_cast<long long>(delta));
-    }
+    if (delta != 0) report_decode_violation(codec_tag, def, delta);
 #else
     (void)codec_tag; (void)def; (void)dest;
 #endif
+}
+
+/// @brief Store a decoded ENUMERATED number, looking it up among the items once.
+///
+/// An item is stored as is. An extensible type keeps any other number as an
+/// unknown item of a newer schema version (X.680 §52.1), which is no
+/// violation. A non-extensible type stores it too and reports the violation
+/// here, in place of validate_on_decode's check (which skips ENUMERATED).
+/// Used by the decoders that read a number: BER (X.690 §8.4) and the JER
+/// bare-number form.
+/// @param codec_tag  Short codec name for the trace line.
+/// @param def        The ENUMERATED type (def.enum_spec non-null).
+/// @param ev         Destination value.
+/// @param v          Decoded number.
+inline void store_decoded_enum(const char* codec_tag, const TypeDescriptor& def,
+                               EnumValue& ev, long v) {
+    if (def.enum_spec->validate(v) == 0) {
+        ev.set(v);
+    } else if (def.enum_spec->extensible) {
+        ev.set_unknown_value(v);
+    } else {
+        ev.set(v);
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
+        if (!(debug_flags() & DBG_NO_VALIDATE)) report_decode_violation(codec_tag, def, 1);
+#else
+        (void)codec_tag;
+#endif
+    }
 }
 
 // Encode wrapper that reports whether any validate-fail occurred during this

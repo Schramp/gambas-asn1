@@ -960,8 +960,11 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
         // Unknown value — emit as number (X.697 extension point)
         s.os() << v;
     }
-    /// @brief Decode a quoted identifier; an unknown identifier of an
-    ///        extensible type is kept as an unknown item (X.680 §52.1).
+    /// @brief Decode a quoted identifier, or the bare-number form; an unknown
+    ///        identifier or number of an extensible type is kept as an
+    ///        unknown item (X.680 §52.1). The number form is classified by
+    ///        store_decoded_enum, which also reports a non-item of a
+    ///        non-extensible type.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
@@ -989,11 +992,7 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
         auto [ptr, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), v);
         if (ec != std::errc{})
             return decode_err(DecodeError("JER: invalid ENUMERATED: " + tok));
-        const EnumSpec& spec = *def.enum_spec;
-        if (spec.extensible && spec.validate(v) != 0)
-            static_cast<EnumValue*>(dest)->set_unknown_value(v);
-        else
-            static_cast<EnumValue*>(dest)->set(v);
+        store_decoded_enum("JER", def, *static_cast<EnumValue*>(dest), v);
         return decode_ok();
     }
 };
