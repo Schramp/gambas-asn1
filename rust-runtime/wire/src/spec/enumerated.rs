@@ -64,3 +64,46 @@ pub fn validate_enum(v: i64, spec: &EnumSpec) -> i64 {
         1
     }
 }
+
+/// @brief An ENUMERATED item of a newer schema version (X.680 §52.1), as
+///        far as its codec carried it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EnumUnknown {
+    /// BER: the number on the wire (also a JER bare number).
+    Value(i64),
+    /// PER: the extension ordinal past the known items (X.691 §14).
+    Ordinal(i64),
+    /// XER/JER: an identifier the type does not define (X.693 §8.6.4);
+    /// the name is not kept.
+    Identifier,
+}
+
+impl EnumUnknown {
+    /// @brief The number it carries: value, ordinal, or 0 for an identifier.
+    pub fn raw(self) -> i64 {
+        match self {
+            EnumUnknown::Value(v) | EnumUnknown::Ordinal(v) => v,
+            EnumUnknown::Identifier => 0,
+        }
+    }
+}
+
+/// @brief Encode error for an unknown item `codec` cannot represent, e.g.
+///        "ENUMERATED Color: extension item #3 of a newer schema version
+///        has no BER encoding".
+pub fn unknown_encode_error(spec: &EnumSpec, u: EnumUnknown, codec: &str) -> crate::encode_error::EncodeError {
+    let what = match u {
+        EnumUnknown::Value(v) => format!("value {v}"),
+        EnumUnknown::Ordinal(o) => format!("extension item #{o}"),
+        EnumUnknown::Identifier => "an unknown identifier".to_string(),
+    };
+    crate::encode_error::EncodeError::new(format!(
+        "ENUMERATED {}: {what} of a newer schema version has no {codec} encoding", spec.name))
+}
+
+/// @brief Decoder step for a number not among the items: an extensible
+///        type keeps it as `EnumUnknown::Value`, any other type refuses it.
+/// @return False when the slot refused the number.
+pub fn set_number(slot: &mut dyn crate::spec::object::EnumSlot, spec: &EnumSpec, v: i64) -> bool {
+    slot.enum_set(v) || (spec.extensible && slot.enum_set_unknown(EnumUnknown::Value(v)))
+}

@@ -6,6 +6,7 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.ber.BerPrimitive;
 import io.github.schramp.gambasasn1.wire.ber.BerReal;
@@ -242,6 +243,16 @@ public final class PerPrimitive {
      * a normally small non-negative whole number (§14.3).
      */
     static void encodeEnumerated(EnumSlot slot, EnumSpec spec, PerWriter w) {
+        // An unknown item encodes only as the ordinal PER carried.
+        EnumUnknown u = slot.enumUnknown();
+        if (u != null) {
+            if (u.kind() != EnumUnknown.Kind.ORDINAL) {
+                throw new EncodeException(u.encodeError(spec, "PER"));
+            }
+            w.putBits(1, 1);
+            PerLength.putNormallySmall(w, u.value());
+            return;
+        }
         long value = slot.enumGet();
         int index = -1;
         for (int i = 0; i < spec.entries().size(); i++) {
@@ -251,7 +262,7 @@ public final class PerPrimitive {
             }
         }
         if (index < 0) {
-            throw new EncodeException("PER: " + value + " is not an item of " + spec.name());
+            throw new EncodeException("ENUMERATED " + spec.name() + ": value " + value + " is not one of its items");
         }
         boolean inRoot = index < spec.rootCount();
         if (spec.extensible()) {
@@ -264,13 +275,20 @@ public final class PerPrimitive {
         }
     }
 
-    /** Decode counterpart of {@link #encodeEnumerated}; an index past the known items fails. */
+    /**
+     * Decode counterpart of {@link #encodeEnumerated}. An extension ordinal
+     * past the known items is an item of a newer schema version, kept as an
+     * unknown {@link EnumUnknown.Kind#ORDINAL} (X.680 §52.1).
+     */
     static void decodeEnumerated(EnumSlot slot, EnumSpec spec, PerReader r) throws DecodeException {
         long index;
         if (spec.extensible() && r.getBits(1) == 1) {
             long ext = PerLength.getNormallySmall(r);
             if (ext >= spec.entries().size() - spec.rootCount()) {
-                throw r.error("PER: unknown extension item of " + spec.name());
+                if (!slot.enumSetUnknown(EnumUnknown.ofOrdinal(ext))) {
+                    throw r.error("PER: unknown extension item of " + spec.name());
+                }
+                return;
             }
             index = spec.rootCount() + ext;
         } else {

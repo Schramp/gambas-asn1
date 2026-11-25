@@ -315,7 +315,9 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///        nested Java enum names the items in declaration order, with the
 ///        `ENUM_SPEC` table (items sorted by value, X.691 §11.4) and the
 ///        `EnumSlot` mapping between items and their values, and a
-///        `toString()` through the runtime's `ValuePrinter`.
+///        `toString()` through the runtime's `ValuePrinter`. An extensible
+///        type also holds an item of a newer schema version (X.680 §52.1)
+///        as an `EnumUnknown`, with `get()` null meanwhile.
 /// @param spec    Resolved items, extensibility and tag.
 /// @param session Per-type output session; writes the `.java` buffer.
 void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -353,21 +355,41 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    private static final long[] CODES = {";
     for (size_t i = 0; i < spec.values.size(); ++i) os << (i ? ", " : "") << java_long(spec.values[i].value);
     os << "};\n\n";
-    os << std::format("    private {0} value = {0}.{1};\n\n", item_type, escape(value_name(spec.values.front().asn1_name)));
-    os << std::format("    public {} get() {{\n        return value;\n    }}\n\n", item_type);
-    os << std::format("    public void set({} item) {{\n        value = java.util.Objects.requireNonNull(item);\n    }}\n\n", item_type);
+    const bool ext = spec.extensible;
+    os << std::format("    private {0} value = {0}.{1};\n", item_type, escape(value_name(spec.values.front().asn1_name)));
+    if (ext) os << std::format("    private {}.spec.EnumUnknown unknown;\n", kWire);
+    os << "\n";
+    if (ext) {
+        os << "    /** The item, or null while an item of a newer schema version is held ({@link #unknown()}). */\n";
+        os << std::format("    public {} get() {{\n        return unknown == null ? value : null;\n    }}\n\n", item_type);
+        os << "    /** The item of a newer schema version held, or null (X.680 §52.1). */\n";
+        os << std::format("    public {}.spec.EnumUnknown unknown() {{\n        return unknown;\n    }}\n\n", kWire);
+        os << std::format("    public void set({} item) {{\n        value = java.util.Objects.requireNonNull(item);\n        unknown = null;\n    }}\n\n", item_type);
+    } else {
+        os << std::format("    public {} get() {{\n        return value;\n    }}\n\n", item_type);
+        os << std::format("    public void set({} item) {{\n        value = java.util.Objects.requireNonNull(item);\n    }}\n\n", item_type);
+    }
     os << "    @java.lang.Override\n";
-    os << "    public long enumGet() {\n        return CODES[value.ordinal()];\n    }\n\n";
+    if (ext) os << "    public long enumGet() {\n        return unknown != null ? unknown.value() : CODES[value.ordinal()];\n    }\n\n";
+    else     os << "    public long enumGet() {\n        return CODES[value.ordinal()];\n    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public boolean enumSet(long code) {\n";
     os << "        for (int i = 0; i < CODES.length; i++) {\n";
     os << "            if (CODES[i] == code) {\n";
     os << "                value = ITEMS[i];\n";
+    if (ext) os << "                unknown = null;\n";
     os << "                return true;\n";
     os << "            }\n";
     os << "        }\n";
     os << "        return false;\n";
     os << "    }\n\n";
+    if (ext) {
+        os << "    @java.lang.Override\n";
+        os << std::format("    public {}.spec.EnumUnknown enumUnknown() {{\n        return unknown;\n    }}\n\n", kWire);
+        os << "    @java.lang.Override\n";
+        os << std::format("    public boolean enumSetUnknown({}.spec.EnumUnknown u) {{\n", kWire);
+        os << "        unknown = java.util.Objects.requireNonNull(u);\n        return true;\n    }\n\n";
+    }
     os << "    @java.lang.Override\n";
     os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n", kWire);
     os << std::format("        return new {}.spec.MemberRef.Enumerated(this, ENUM_SPEC);\n", kWire);
@@ -378,10 +400,17 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public boolean equals(java.lang.Object o) {\n";
-    os << std::format("        return o instanceof {} other && other.value == value;\n", t);
-    os << "    }\n\n";
-    os << "    @java.lang.Override\n";
-    os << "    public int hashCode() {\n        return value.hashCode();\n    }\n";
+    if (ext) {
+        os << std::format("        return o instanceof {} other && other.value == value && java.util.Objects.equals(other.unknown, unknown);\n", t);
+        os << "    }\n\n";
+        os << "    @java.lang.Override\n";
+        os << "    public int hashCode() {\n        return java.util.Objects.hash(value, unknown);\n    }\n";
+    } else {
+        os << std::format("        return o instanceof {} other && other.value == value;\n", t);
+        os << "    }\n\n";
+        os << "    @java.lang.Override\n";
+        os << "    public int hashCode() {\n        return value.hashCode();\n    }\n";
+    }
     os << java_to_string_method();
     os << ber_framing_method(spec);
     os << "}\n";

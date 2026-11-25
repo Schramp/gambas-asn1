@@ -29,6 +29,11 @@ const TypeLifecycleOps ChoiceInterface::k_noop_lifecycle{
     [](void*, void*){}
 };
 
+// Unknown extension alternatives of an extensible CHOICE: a std::string in
+// the alternative storage. Two objects so the address names the codec.
+const TypeLifecycleOps ChoiceInterface::k_unknown_ber_lifecycle{TypeTag<std::string>{}};
+const TypeLifecycleOps ChoiceInterface::k_unknown_per_lifecycle{TypeTag<std::string>{}};
+
 const TypeDescriptor asn_DEF_Any           = { "ANY",              Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true,  TypeKind::Any,      &per_any_handler,         &ber_any_handler,         TypeLifecycleOps(TypeTag<OctetString>{}) };
 const TypeDescriptor asn_DEF_Integer       = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_integer_handler,     &ber_integer_handler,     TypeLifecycleOps(TypeTag<Integer>{}) };
 const TypeDescriptor asn_DEF_UInteger      = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_uinteger_handler,    &ber_uinteger_handler,    TypeLifecycleOps(TypeTag<UInteger>{}) };

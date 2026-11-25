@@ -23,6 +23,7 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.XerInstruction;
@@ -208,7 +209,7 @@ public final class XerObject {
     private static void encodeChoiceContent(Asn1Choice c, XerWriter w, int depth) {
         int i = c.activeIndex();
         if (i < 0) {
-            throw new EncodeException("CHOICE " + c.spec().name() + ": no alternative selected");
+            throw new EncodeException(Asn1Choice.noAlternativeError(c, "XER"));
         }
         w.ascii("\n").indent(depth + 1);
         AltMeta alt = c.spec().alternatives().get(i);
@@ -485,8 +486,16 @@ public final class XerObject {
         return b;
     }
 
-    /** The item's identifier as an empty element; a value outside the table as its number. */
+    /**
+     * The item's identifier as an empty element; a value outside the table,
+     * an unknown BER number among them, as its number. An unknown ordinal or
+     * identifier has no XER form.
+     */
     private static void encodeEnumerated(EnumSlot slot, EnumSpec spec, XerWriter w) {
+        EnumUnknown u = slot.enumUnknown();
+        if (u != null && u.kind() != EnumUnknown.Kind.VALUE) {
+            throw new EncodeException(u.encodeError(spec, "XER"));
+        }
         long v = slot.enumGet();
         for (EnumEntry e : spec.entries()) {
             if (e.value() == v) {
@@ -497,7 +506,13 @@ public final class XerObject {
         w.ascii(Long.toString(v));
     }
 
-    /** @see "X.693 §8.3.7 — ENUMERATED as an empty element named by its identifier" */
+    /**
+     * An identifier element, or a bare number. An extensible type keeps an
+     * identifier or number it does not define as an unknown item (X.693
+     * §8.6.4, X.680 §52.1).
+     *
+     * @see "X.693 §8.3.7 — ENUMERATED as an empty element named by its identifier"
+     */
     private static void decodeEnumerated(EnumSlot slot, EnumSpec spec, XerReader r) throws DecodeException {
         int at = r.position();
         r.skipWhitespace();
@@ -510,7 +525,7 @@ public final class XerObject {
             } catch (NumberFormatException e) {
                 throw new DecodeException("XER ENUMERATED " + spec.name() + ": invalid value: " + text, at);
             }
-            if (!slot.enumSet(v)) {
+            if (!EnumUnknown.setNumber(slot, spec, v)) {
                 throw new DecodeException("XER ENUMERATED " + spec.name() + ": unknown value " + v, at);
             }
             return;
@@ -524,6 +539,12 @@ public final class XerObject {
                 slot.enumSet(e.value());
                 return;
             }
+        }
+        if (spec.extensible() && slot.enumSetUnknown(EnumUnknown.ofIdentifier())) {
+            if (!t.selfClosing()) {
+                r.consumeCloseTag(t.name());
+            }
+            return;
         }
         throw new DecodeException("XER ENUMERATED " + spec.name() + ": unknown identifier " + t.name(), at);
     }

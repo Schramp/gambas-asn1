@@ -338,6 +338,62 @@ value compares with an item in either operand order (`v == E::item`,
 per shape and `!=` and the reversed order are rewritten from it, so clang's
 `-Wambiguous-reversed-operator` stays silent.
 
+#### Items of a newer schema version
+
+An extensible ENUMERATED (`{ a, b, ... }`) may receive an item that a sender
+with a newer schema version added. X.680 §52.1 says such additions "shall not
+be treated as an error during the decoding process", and X.693 §8.6.1/§8.6.4
+require a BASIC-XER decoder to accept them. Each codec carries a different
+part of the item, and the C++ value records which (`unknown_kind()`):
+
+| Codec | Carries | Kept as | `value()` |
+|---|---|---|---|
+| BER | the number | `Unknown::Value` | the number |
+| PER | the extension ordinal (X.691 §14) | `Unknown::Ordinal` | the ordinal |
+| XER, JER | the identifier | `Unknown::Identifier` | 0 (the name is not kept) |
+
+`is_unknown()` is true for all three, and `v == E::item` is false for every
+item, so test `is_unknown()` before treating `value()` as an item. Assigning
+an item (`v = E::item`, `set()`) clears the state. Validation does not count
+an unknown item as a violation.
+
+The unknown item re-encodes unchanged in the codec it came from: the number in
+BER, the ordinal in PER. JER also writes an unknown BER number back as a bare
+JSON number and reads one back, as it does for any value outside the items.
+Any other codec fails the encode (`encode_failed()`), with a reason
+traced under `ASN1CPP_DEBUG` (`0x08` PER, `0x10` BER, `0x04` XER/JER):
+
+```
+ENUMERATED ColorV1: value 10 of a newer schema version has no PER encoding
+ENUMERATED ColorV1: extension item #2 of a newer schema version has no BER encoding
+ENUMERATED ColorV1: an unknown identifier of a newer schema version has no XER encoding
+```
+
+A non-extensible ENUMERATED is unchanged: BER and JER store a number outside
+the items as it is (validation counts it), and XER and JER reject an unknown
+identifier. A PER encode of a value that is no item now fails with
+`ENUMERATED <name>: value <n> is not one of its items`.
+
+**Rust.** A generated extensible enum has one more variant,
+`Unknown(asn1cpp_wire::spec::enumerated::EnumUnknown)`, with `EnumUnknown`
+being `Value(i64)`, `Ordinal(i64)` or `Identifier`. The codecs keep and
+re-encode it as C++ does and fail other encodes with the same messages
+(`Err(EncodeError)`). No item can be named `Unknown`: ASN.1 identifiers begin
+with a lowercase letter (X.680 §12.3). Because of that tuple variant, an
+extensible enum has no `#[repr(i64)]` and cannot be cast with `as i64`; read
+its number with `EnumSlot::enum_get()`. A `match` on it needs an `Unknown(_)`
+arm. A non-extensible enum is unchanged and rejects a number or identifier it
+does not define in every codec.
+
+**Java.** A generated extensible ENUMERATED class holds such an item as an
+`io.github.schramp.gambasasn1.wire.spec.EnumUnknown` record (`kind()` is
+`VALUE`, `ORDINAL` or `IDENTIFIER`; `value()` the number, ordinal or 0),
+read with `unknown()`. While it holds one, `get()` returns null; `set(item)`
+clears it. The codecs keep and re-encode it as C++ does and throw
+`EncodeException` with the same messages. An extensible CHOICE keeps an
+unknown alternative as `Asn1Choice.UnknownExtension` (`origin()`, `tag()`,
+`index()`, `bytes()`) and writes it back in the codec it came from.
+
 ### REAL values
 
 REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and
@@ -829,8 +885,10 @@ When a decoder encounters an extension member whose index exceeds the number of 
 alternatives in its schema (schema version skew), it skips the open-type payload by
 reading and discarding its length-prefixed bytes. This preserves forward compatibility:
 an older receiver can always decode a newer sender's message as long as the root members
-are unchanged. After decoding, `PerDecodeStream::skipped_extensions()` returns the number
-of open-type fields that were skipped; a nonzero value indicates the stream contained a
+are unchanged. An unknown CHOICE alternative is kept instead, so it can be encoded again
+(see "A CHOICE with no alternative to encode"). After decoding,
+`PerDecodeStream::skipped_extensions()` returns the number of open-type fields that were
+skipped or kept; a nonzero value indicates the stream contained a
 newer schema version than the decoder's descriptor tables.
 
 A `BIT STRING` defined with named bits (`BIT STRING { a(0), b(1), c(2) }`) gives its
@@ -1403,14 +1461,23 @@ Causes of a per-record error:
 - **A type with no codec** — a descriptor whose kind lands on a codec's
   fallback dispatch slot (or has no direct handler): C++ encode sets
   `encode_failed()`, decode returns `<Codec>: unsupported: <type>`.
-- **A CHOICE with no alternative to encode** — in C++ a CHOICE whose
-  `_present` is 0 (default-constructed, or an unknown extension skipped on
-  decode) fails BER/XER/JER/PER encode with `CHOICE <name>: no alternative
-  selected`. A Rust extensible CHOICE
-  holding an alternative the schema does not define (`UnknownExtension`,
-  kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
-  replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
-  alternative selected`.
+- **A CHOICE with no alternative to encode** — in C++ a default-constructed
+  CHOICE (`_present` is 0) fails BER/XER/JER/PER encode with `CHOICE <name>:
+  no alternative selected`. An extensible C++ CHOICE that decoded an
+  alternative of a newer schema version selects nothing and keeps it
+  (`unknown_extension()`, X.680 §52.1): BER keeps the TLV (tag and contents
+  octets), PER the extension index and open-type octets (X.691 §23). It
+  re-encodes unchanged in the codec it came from, so a relay passes it on;
+  copies and moves carry it, and selecting an alternative drops it. It is
+  held in the CHOICE's own alternative storage as a `std::string`, so an
+  extensible CHOICE's storage is at least `sizeof(std::string)`; an
+  alternative of up to 15 octets needs no allocation. Any
+  other codec fails the encode, e.g.
+  `CHOICE MsgV1: extension alternative of a newer schema version, read from PER, has no BER encoding`.
+  A Rust extensible CHOICE keeps such an alternative the same way, in its
+  `UnknownExtension(asn1cpp_wire::spec::choice::UnknownExtension)` variant
+  (`origin`, `tag`, `index`, `bytes`; `extract_unknown_extension()`), and
+  fails the other codecs with the same message.
 - **A PER constraint violation** — a character string outside its SIZE or
   permitted alphabet cannot be represented in PER, so PER encode fails
   (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
@@ -3301,7 +3368,9 @@ value from 2^63 up outside the root takes nine octets (§11.8.3).
 ENUMERATED is its item's index in the value-sorted table (X.691 §14): the root
 index in the table's `rootBits`, and with an extension marker a bit first and
 an extension item's index as a normally small number. A value that is no item
-fails the encode, an unknown index the decode.
+fails the encode, and a root index past the root items the decode; an
+extension index past the known items is kept as an unknown item (see "Items
+of a newer schema version").
 OCTET STRING and BIT STRING are a length determinant under their SIZE, with
 the extension bit of an extensible SIZE, then the octets or bits (X.691 §16,
 §17). A NamedBitList BIT STRING drops its trailing 0 bits down to the SIZE's
@@ -3335,8 +3404,8 @@ alternative's index in the table's `rangeBits` and its value, or an extension
 alternative's index as a normally small number and its value as an open-type
 field (X.691 §23); the table lists the alternatives in the canonical order of
 their tags (§23.3). An extension alternative the table does not know is kept
-as an unknown extension (its open-type contents under a context tag numbered
-by its extension index), which PER cannot encode again.
+as an unknown extension (`UnknownExtension.per`: its extension index and
+open-type contents) and PER writes it back unchanged (X.680 §52.1).
 A SEQUENCE OF or SET OF is its count under the SIZE, with the extension bit
 of an extensible SIZE, then its elements, each under the element's
 constraints: an inline element constraint or the referenced type's own

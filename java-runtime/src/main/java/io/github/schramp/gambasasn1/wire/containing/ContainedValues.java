@@ -13,6 +13,7 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedStatus;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
@@ -89,7 +90,10 @@ public final class ContainedValues {
     /** A {@code when} sibling's number: ENUMERATED value, INTEGER, BOOLEAN as 0/1; null otherwise. */
     private static Long siblingValue(MemberRef m) {
         return switch (m) {
-            case MemberRef.Enumerated(EnumSlot slot, var spec) -> slot.enumGet();
+            // An ordinal or identifier of a newer schema version is no value.
+            case MemberRef.Enumerated(EnumSlot slot, var spec) ->
+                    slot.enumUnknown() == null || slot.enumUnknown().kind() == EnumUnknown.Kind.VALUE
+                            ? Long.valueOf(slot.enumGet()) : null;
             case MemberRef.Primitive(Asn1Integer v, var owner) -> v.get();
             case MemberRef.Primitive(Asn1UInteger v, var owner) -> v.get();
             case MemberRef.Primitive(Asn1Boolean v, var owner) -> v.get() ? 1L : 0L;

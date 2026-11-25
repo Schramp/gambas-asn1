@@ -24,6 +24,13 @@ fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String, opts: Option<&cr
         MemberRef::Choice(inner) => encode_choice_into(inner, out, opts),
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out, opts),
         MemberRef::Enumerated(slot, spec) => {
+            // An unknown BER number is a bare JSON number, like any value
+            // outside the items; an ordinal or identifier has no JER form.
+            if let Some(u) = slot.enum_unknown() {
+                if !matches!(u, crate::spec::enumerated::EnumUnknown::Value(_)) {
+                    return Err(crate::spec::enumerated::unknown_encode_error(spec, u, "JER"));
+                }
+            }
             crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get());
             Ok(())
         }
@@ -222,7 +229,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
 /// other JER value (X.697 §11).
 pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
-        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
+        return Err(crate::spec::object::no_alternative_selected(obj, "JER"));
     };
     let alt = &obj.spec().alternatives[i];
     out.push_str("{\"");

@@ -604,11 +604,36 @@ struct AnyXerHandler final : IXerTypeHandler {
     }
 };
 
+/// @brief Store an XER/JER ENUMERATED identifier: the matching item, or for
+///        an extensible type an unknown item (X.680 §52.1; X.693 §8.6.1,
+///        §8.6.4: a BASIC-XER decoder accepts unknown enumerations).
+/// @return False when the identifier is no item of a non-extensible type.
+static bool set_enum_identifier(const EnumSpec& spec, EnumValue& ev, std::string_view name) {
+    for (int i = 0; i < spec.count; ++i) {
+        if (name == spec.entries[i].name) {
+            ev.set(spec.entries[i].value);
+            return true;
+        }
+    }
+    if (!spec.extensible) return false;
+    ev.set_unknown_identifier();
+    return true;
+}
+
 struct EnumeratedXerHandler final : IXerTypeHandler {
+    /// @brief Encode an ENUMERATED as \c <Type><item/></Type> (X.693 §9.3).
+    ///        An unknown item read from PER, XER or JER has no identifier
+    ///        here and fails the encode.
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
-        long v = static_cast<const EnumValue*>(src)->value();
+        const auto& ev = *static_cast<const EnumValue*>(src);
+        auto kind = ev.unknown_kind();
+        if (kind == EnumValue::Unknown::Ordinal || kind == EnumValue::Unknown::Identifier) {
+            s.set_encode_failed(enum_unknown_encode_error(def.name, ev, "XER").c_str());
+            return;
+        }
+        long v = ev.value();
         const EnumSpec& spec = *def.enum_spec;
         const char* name = nullptr;
         int lo = 0, hi = spec.count - 1;
@@ -622,6 +647,8 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
         else      os << v;
         os << "</" << def.name << ">\n";
     }
+    /// @brief Decode \c <Type><item/></Type>; an unknown identifier of an
+    ///        extensible type is kept as an unknown item (X.693 §8.6.4).
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto outer = xer_detail::consume_tag(s);
@@ -638,13 +665,8 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
         auto close_outer = xer_detail::consume_tag(s);
         if (!close_outer.closing || close_outer.name != def.name)
             return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        const EnumSpec& spec = *def.enum_spec;
-        for (int i = 0; i < spec.count; ++i) {
-            if (inner.name == spec.entries[i].name) {
-                static_cast<EnumValue*>(dest)->set(spec.entries[i].value);
-                return decode_ok();
-            }
-        }
+        if (set_enum_identifier(*def.enum_spec, *static_cast<EnumValue*>(dest), inner.name))
+            return decode_ok();
         return decode_err(DecodeError("XER: unknown enum value: " + inner.name));
     }
 };
@@ -733,15 +755,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     if (!cl.closing || cl.name != vt.name)
                         return decode_err(DecodeError("XER SEQOF ENUM: malformed value tag"));
                 }
-                const EnumSpec& esp = *edef.enum_spec;
-                bool found = false;
-                for (int k = 0; k < esp.count; ++k) {
-                    if (vt.name == esp.entries[k].name) {
-                        static_cast<EnumValue*>(eptr)->set(esp.entries[k].value);
-                        found = true; break;
-                    }
-                }
-                if (!found)
+                if (!set_enum_identifier(*edef.enum_spec, *static_cast<EnumValue*>(eptr), vt.name))
                     return decode_err(DecodeError("XER SEQOF ENUM: unknown value: " + vt.name));
             } else {
                 // X.693 §12: use declared element name when set, else edef.name
@@ -782,7 +796,13 @@ private:
             if (is_null) {
                 os << '<' << edef.name << "/>";
             } else if (edef.enum_spec) {
-                long v = static_cast<const EnumValue*>(eptr)->value();
+                const auto& ev = *static_cast<const EnumValue*>(eptr);
+                if (ev.unknown_kind() == EnumValue::Unknown::Ordinal ||
+                    ev.unknown_kind() == EnumValue::Unknown::Identifier) {
+                    s.set_encode_failed(enum_unknown_encode_error(edef.name, ev, "XER").c_str());
+                    return;
+                }
+                long v = ev.value();
                 const EnumSpec& esp = *edef.enum_spec;
                 const char* name = nullptr;
                 int lo = 0, hi = esp.count - 1;
@@ -1011,7 +1031,10 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) {
-            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            auto ext = ch->unknown_extension();
+            std::string reason = ext
+                ? choice_unknown_encode_error(def.name, *ext, "XER")
+                : std::string("CHOICE ") + def.name + ": no alternative selected";
             s.set_encode_failed(reason.c_str());
             return;
         }

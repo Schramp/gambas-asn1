@@ -5,13 +5,14 @@
 //! defers to §8.3's INTEGER rules directly), only the tag differs
 //! (universal 10, not 2). Decode writes through the reflective
 //! `EnumSlot::enum_set`, so the walker never needs the concrete generated
-//! enum type; an unknown value is a decode error.
+//! enum type. A value or identifier that is no item is kept as an unknown
+//! item by an extensible type (X.680 §52.1) and a decode error otherwise.
 
 use crate::integer::{decode_integer_bytes, encode_integer_bytes};
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::ber::writer::write_primitive;
-use crate::spec::enumerated::EnumSpec;
+use crate::spec::enumerated::{set_number, EnumSpec, EnumUnknown};
 use crate::xer::reader::XerReader;
 
 pub const ENUMERATED_TAG: Tag = Tag::universal(universal::ENUMERATED, false);
@@ -20,15 +21,18 @@ pub fn write_enumerated_tagged(out: &mut Vec<u8>, tag: Tag, n: i64) {
     write_primitive(out, tag, &encode_integer_bytes(n));
 }
 
-/// Reads one ENUMERATED TLV under `tag` (natural or an X.690 §8.14
-/// override) into `slot`.
-pub fn read_enumerated_tagged_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
+/// @brief Reads one ENUMERATED TLV under `tag` (natural or an X.690 §8.14
+///        override) into `slot`. A number that is no item is kept as
+///        `EnumUnknown::Value` when `spec` is extensible (X.680 §52.1).
+/// @return `Err` on a tag mismatch, a malformed value, or a number a
+///         non-extensible type does not define.
+pub fn read_enumerated_tagged_into(slot: &mut dyn crate::spec::object::EnumSlot, spec: &EnumSpec, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
     let tlv = r.read_tlv()?;
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected ENUMERATED tag, got {:?}", tlv.tag), r.pos()));
     }
     let raw = decode_integer_bytes(tlv.value)?;
-    if slot.enum_set(raw) {
+    if set_number(slot, spec, raw) {
         Ok(())
     } else {
         Err(DecodeError::new(format!("invalid ENUMERATED value: {raw}"), r.pos()))
@@ -55,15 +59,23 @@ pub fn xer_encode_enum(out: &mut String, spec: &EnumSpec, value: i64) {
     }
 }
 
-/// Decode counterpart of `xer_encode_enum`: one self-closing enumeration
-/// identifier tag, looked up in `spec` and written through `slot`.
+/// @brief Decode counterpart of `xer_encode_enum`: one self-closing
+///        enumeration identifier tag, looked up in `spec` and written
+///        through `slot`. An identifier `spec` does not define is kept as
+///        `EnumUnknown::Identifier` when `spec` is extensible (X.693 §8.6.4).
+/// @return `Err` for a missing tag or an identifier a non-extensible type
+///         does not define.
 pub fn xer_decode_enum_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut XerReader, spec: &EnumSpec) -> Result<(), DecodeError> {
     let ti = r.consume_tag();
     if !ti.self_closing {
         return Err(DecodeError::new("XER ENUMERATED: expected self-closing enum value tag".to_string(), 0));
     }
-    let raw = spec.entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
-        .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))?;
+    let Some(raw) = spec.entries.iter().find(|e| e.name == ti.name).map(|e| e.value) else {
+        if spec.extensible && slot.enum_set_unknown(EnumUnknown::Identifier) {
+            return Ok(());
+        }
+        return Err(DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0));
+    };
     if slot.enum_set(raw) {
         Ok(())
     } else {
@@ -89,7 +101,7 @@ mod tests {
 
     fn read_tagged(r: &mut Reader, tag: Tag) -> Result<i64, DecodeError> {
         let mut v = Raw::default();
-        read_enumerated_tagged_into(&mut v, r, tag)?;
+        read_enumerated_tagged_into(&mut v, &ENTRIES, r, tag)?;
         Ok(v.0)
     }
 

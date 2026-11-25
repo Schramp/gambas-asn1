@@ -2,7 +2,6 @@ package io.github.schramp.gambasasn1.wire.per;
 
 import io.github.schramp.gambasasn1.wire.DecodeOptions;
 import io.github.schramp.gambasasn1.wire.ber.BerReader;
-import io.github.schramp.gambasasn1.wire.ber.Tag;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
@@ -583,7 +582,16 @@ public final class PerObject {
         ChoiceSpec spec = ch.spec();
         int i = ch.activeIndex();
         if (i < 0) {
-            throw new EncodeException("CHOICE " + spec.name() + ": no alternative selected");
+            // An alternative of a newer schema version goes back as its
+            // extension index and open-type octets (X.691 §23.8).
+            Asn1Choice.UnknownExtension ext = ch.unknownExtension();
+            if (ext == null || ext.origin() != Asn1Choice.UnknownExtension.Origin.PER) {
+                throw new EncodeException(Asn1Choice.noAlternativeError(ch, "PER"));
+            }
+            w.putBits(1, 1);
+            PerLength.putNormallySmall(w, ext.index());
+            PerLength.putOctets(w, ext.bytes());
+            return;
         }
         int root = rootCount(spec);
         boolean inExt = spec.extAt() >= 0 && i >= root;
@@ -604,8 +612,8 @@ public final class PerObject {
 
     /**
      * Decode counterpart of {@link #encodeChoice}. An extension alternative
-     * this table does not know is kept as an unknown extension: its open-type
-     * contents under a context tag numbered by its extension index.
+     * this table does not know is kept as an unknown extension: its extension
+     * index and open-type contents, so it can be relayed (X.680 §52.1).
      */
     static void decodeChoice(Asn1Choice ch, PerReader r) throws DecodeException {
         ChoiceSpec spec = ch.spec();
@@ -624,10 +632,7 @@ public final class PerObject {
         long ext = PerLength.getNormallySmall(r);
         byte[] field = PerLength.getOctets(r);
         if (ext >= spec.alternatives().size() - root) {
-            if (ext > Integer.MAX_VALUE) {
-                throw r.error("PER: CHOICE " + spec.name() + " extension index " + ext + " beyond any table");
-            }
-            ch.setUnknownExtension(new Asn1Choice.UnknownExtension(Tag.context((int) ext, false), field));
+            ch.setUnknownExtension(Asn1Choice.UnknownExtension.per(ext, field));
             return;
         }
         int i = root + (int) ext;

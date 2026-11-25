@@ -31,10 +31,15 @@ void deep_copy(const TypeDescriptor& def, Asn1Object* dst, const Asn1Object* src
         int idx = src_ch->_present;
 
         if (idx <= 0 || idx > spec.count) {
-            // src is NOTHING: destroy dst's current alternative, reset to NOTHING.
+            // src selects nothing: destroy dst's current alternative, reset to
+            // NOTHING, and copy an unknown extension alternative src holds.
             dst_ch->active_lifecycle->destroy(dst_ch->val_);
             dst_ch->active_lifecycle = &ChoiceInterface::k_noop_lifecycle;
             dst_ch->_present = 0;
+            if (src_ch->unknown_extension()) {
+                src_ch->active_lifecycle->clone(dst_ch->val_, src_ch->val_);
+                dst_ch->active_lifecycle = src_ch->active_lifecycle;
+            }
             return;
         }
 

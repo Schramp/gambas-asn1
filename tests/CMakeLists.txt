@@ -920,6 +920,47 @@ target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
 add_dependencies(test_choice gen_choice_test)
 add_test(NAME choice COMMAND test_choice)
 
+# ---- ENUMERATED items of a newer schema version (X.680 §52.1) ---------------
+set(ENUM_UNKNOWN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_enum_unknown_test)
+set(ENUM_UNKNOWN_TYPES ColorV1 FixedColor PaletteV1 FixedPalette ColorV2 PaletteV2)
+set(_eu_outputs)
+set(_eu_cpps)
+foreach(t IN LISTS ENUM_UNKNOWN_TYPES)
+    list(APPEND _eu_outputs ${ENUM_UNKNOWN_GEN_DIR}/${t}.hpp ${ENUM_UNKNOWN_GEN_DIR}/${t}.cpp)
+    list(APPEND _eu_cpps ${ENUM_UNKNOWN_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_eu_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ENUM_UNKNOWN_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                                   -o ${ENUM_UNKNOWN_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+    COMMENT "Generating C++ from enum_unknown_test.asn1"
+)
+add_executable(test_enum_unknown seq/test_enum_unknown.cpp ${_eu_cpps})
+target_include_directories(test_enum_unknown PRIVATE ${ENUM_UNKNOWN_GEN_DIR})
+target_link_libraries(test_enum_unknown PRIVATE asn1cpp_runtime)
+add_test(NAME enum_unknown COMMAND test_enum_unknown)
+
+# ---- CHOICE alternatives of a newer schema version (X.680 §52.1) ------------
+set(CHOICE_UNKNOWN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_test)
+add_custom_command(
+    OUTPUT  ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.cpp
+            ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.cpp
+            ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.hpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CHOICE_UNKNOWN_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+                                   -o ${CHOICE_UNKNOWN_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+    COMMENT "Generating C++ from choice_unknown_test.asn1"
+)
+add_executable(test_choice_unknown seq/test_choice_unknown.cpp
+    ${CHOICE_UNKNOWN_GEN_DIR}/MsgV1.cpp ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2.cpp
+    ${CHOICE_UNKNOWN_GEN_DIR}/MsgV2D.cpp)
+target_include_directories(test_choice_unknown PRIVATE ${CHOICE_UNKNOWN_GEN_DIR})
+target_link_libraries(test_choice_unknown PRIVATE asn1cpp_runtime)
+add_test(NAME choice_unknown COMMAND test_choice_unknown)
+
 # ---- CHOICE selection state after a failed alternative decode ---------------
 set(CHOICE_STATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_state_test)
 add_custom_command(
@@ -2273,10 +2314,15 @@ set(java_leg_zero_width_items_PDUS
     Nulls Fives Flags Rows)
 set(java_leg_constructed_strings_PDUS
     Tagged Plain Bits Name Wrapped Opt OptSet CtxChoice NestChoice MixChoice Num When Inner Holder)
+set(java_leg_enum_unknown_PDUS
+    ColorV1 ColorV2 FixedColor PaletteV1 PaletteV2 FixedPalette)
+set(java_leg_choice_unknown_PDUS
+    MsgV1 MsgV2)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
         xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list real_jer_base jer_escape jer_null_absent
-        per_nkm_size size_lower_bound promoted_name_clash zero_width_items constructed_strings)
+        per_nkm_size size_lower_bound promoted_name_clash zero_width_items constructed_strings
+        enum_unknown choice_unknown)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
@@ -2674,6 +2720,32 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_choice_unknown_ext PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
+endif()
+
+# Rust leg of the items of a newer schema version (X.680 §52.1) — see
+# tests/rust/unknown_items/src/main.rs (C++ legs: test_enum_unknown,
+# test_choice_unknown).
+set(RUST_UNK_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_unknown_items)
+add_custom_command(
+    OUTPUT  ${RUST_UNK_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_UNK_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+                                   -o ${RUST_UNK_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/enum_unknown_test.asn1
+                    ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_unknown_test.asn1
+    COMMENT "Generating Rust from enum_unknown_test.asn1 + choice_unknown_test.asn1"
+)
+add_custom_target(gen_rust_unknown_items ALL DEPENDS ${RUST_UNK_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_unknown_items
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/unknown_items/Cargo.toml)
+    set_tests_properties(rust_unknown_items PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_UNK_GEN_DIR=${RUST_UNK_GEN_DIR}")
 endif()
 
 # Rust leg of the decode nesting limit test — see

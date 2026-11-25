@@ -65,9 +65,16 @@ bool encode_pkcs7(const ContainedEncodeArgs& a, std::vector<uint8_t>& out, std::
 }
 
 /// @brief Read a `when` sibling's value; false when it cannot be read.
+///        An unknown ENUMERATED item without a number (a PER ordinal, an
+///        XER/JER identifier) cannot be read: its ordinal is no item value.
 bool read_when_value(const ContainedSpec& cs, const Asn1Object* sib, int64_t& v) {
     switch (cs.when_kind) {
-    case ContainedSpec::WhenKind::Enumerated: v = static_cast<const EnumValue*>(sib)->value(); return true;
+    case ContainedSpec::WhenKind::Enumerated: {
+        const auto* ev = static_cast<const EnumValue*>(sib);
+        if (ev->is_unknown() && ev->unknown_kind() != EnumValue::Unknown::Value) return false;
+        v = ev->value();
+        return true;
+    }
     case ContainedSpec::WhenKind::Integer:    v = static_cast<const Integer*>(sib)->value(); return true;
     case ContainedSpec::WhenKind::UInteger:   v = static_cast<int64_t>(static_cast<const UInteger*>(sib)->value()); return true;
     case ContainedSpec::WhenKind::Boolean:    v = static_cast<const Boolean*>(sib)->value() ? 1 : 0; return true;

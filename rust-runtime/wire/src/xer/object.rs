@@ -29,6 +29,13 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize, opts: Option<&crate
         MemberRef::Choice(inner) => encode_choice_content(inner, out, depth, opts),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth, opts),
         MemberRef::Enumerated(slot, spec) => {
+            // An unknown BER number is written as the number, like any value
+            // outside the items; an ordinal or identifier has no XER form.
+            if let Some(u) = slot.enum_unknown() {
+                if !matches!(u, crate::spec::enumerated::EnumUnknown::Value(_)) {
+                    return Err(crate::spec::enumerated::unknown_encode_error(spec, u, "XER"));
+                }
+            }
             crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get());
             Ok(())
         }
@@ -254,7 +261,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), D
 /// further-nested recursion needs.
 pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
-        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
+        return Err(crate::spec::object::no_alternative_selected(obj, "XER"));
     };
     let alt = &obj.spec().alternatives[i];
     let active = obj.get_active();

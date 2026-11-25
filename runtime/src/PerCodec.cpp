@@ -952,10 +952,25 @@ public:
 
 class EnumeratedPerHandler final : public IPerTypeHandler {
 public:
+    /// @brief Encode an ENUMERATED (X.691 §14): a root item's index in the
+    ///        minimum bits, an extension item's ordinal as a normally small
+    ///        number (§11.6). An unknown item read from PER writes its
+    ///        ordinal back; a value that is no item, or an unknown item
+    ///        read from another codec, fails the encode.
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        long value = static_cast<const EnumValue*>(src)->value();
+        const auto& ev = *static_cast<const EnumValue*>(src);
         const EnumSpec& spec = *def.enum_spec;
+        if (ev.unknown_kind() == EnumValue::Unknown::Ordinal) {
+            stream.put_bits(1, 1, "ENUM.ext");
+            put_nsnn(stream, static_cast<int>(ev.value()));
+            return;
+        }
+        if (ev.is_unknown()) {
+            stream.set_encode_failed(enum_unknown_encode_error(def.name, ev, "PER").c_str());
+            return;
+        }
+        long value = ev.value();
         int rcount = spec.root_count > 0 ? spec.root_count : spec.count;
         // Binary search in entries (sorted by numeric value) to get sorted position.
         // This matches asn1c: PER ordinal = position in numerically-sorted value2enum,
@@ -968,8 +983,13 @@ public:
             else if (spec.entries[mid].value < value) lo = mid + 1;
             else hi = mid - 1;
         }
-        bool is_ext = (ordinal < 0) || (ordinal >= rcount);
-        int ext_ordinal = (ordinal >= rcount) ? (ordinal - rcount) : 0;
+        if (ordinal < 0) {
+            stream.set_encode_failed((std::string("ENUMERATED ") + def.name + ": value " +
+                                      std::to_string(value) + " is not one of its items").c_str());
+            return;
+        }
+        bool is_ext = ordinal >= rcount;
+        int ext_ordinal = is_ext ? (ordinal - rcount) : 0;
         if (spec.extensible) stream.put_bits(is_ext ? 1 : 0, 1, "ENUM.ext");
         if (!is_ext) {
             stream.put_bits(static_cast<uint64_t>(ordinal), range_bits(rcount), "ENUM.value");
@@ -979,7 +999,8 @@ public:
     }
     /// @brief Decode an ENUMERATED (X.691 §14): root index in the minimum
     ///        bits, or an extension ordinal as a normally small number
-    ///        (§11.6); an index past the known items is an error.
+    ///        (§11.6). An ordinal past the known extension items is kept as
+    ///        an unknown item (X.680 §52.1).
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const EnumSpec& spec = *def.enum_spec;
@@ -1004,8 +1025,10 @@ public:
             if (!ord) return decode_err(ord.error());
             // Compare before adding: the ordinal is any value up to INT_MAX
             // (X.691 §11.6 sets no limit), so root count + ordinal can overflow.
-            if (*ord >= spec.count - rcount)
-                return decode_err(DecodeError("PER: ENUM extension index out of range"));
+            if (*ord >= spec.count - rcount) {
+                static_cast<EnumValue*>(dest)->set_unknown_ordinal(*ord);
+                return decode_ok();
+            }
             static_cast<EnumValue*>(dest)->set(spec.entries[rcount + *ord].value);
             return decode_ok();
         }
@@ -1410,6 +1433,18 @@ public:
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
+        if (auto ext = ch->unknown_extension(); pr <= 0 && ext) {
+            // An alternative of a newer schema version goes back as its
+            // extension index and open-type octets (X.691 §23.8).
+            if (ext->origin != ChoiceUnknownExtension::Origin::Per) {
+                stream.set_encode_failed(choice_unknown_encode_error(def.name, *ext, "PER").c_str());
+                return;
+            }
+            stream.put_bits(1, 1, "CHO.ext");
+            put_nsnn(stream, static_cast<int>(ext->index));
+            per_detail::put_octets(stream, ext->bytes.data(), ext->bytes.size());
+            return;
+        }
         if (pr <= 0 || pr > spec.count) {
             std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
             stream.set_encode_failed(reason.c_str());
@@ -1507,12 +1542,14 @@ public:
                     Asn1Object* mptr = alt.get_mut_fn(ch);
                     auto r = decode_open_type(codec, stream, *alt.type_descriptor, mptr);
                     if (!r) return r;
-                } else {
-                    if (auto r = PerCodec::skip_ext(stream); !r) return r;
+                    return decode_ok();
                 }
-            } else {
-                if (auto r = PerCodec::skip_ext(stream); !r) return r;
             }
+            // An alternative of a newer schema version: keep its index and
+            // open-type octets so it can be relayed (X.680 §52.1, X.691 §23.8).
+            auto bytes = PerCodec::take_ext(stream);
+            if (!bytes) return decode_err(bytes.error());
+            ch->set_unknown_per(*ext_idx_r, *bytes);
             return decode_ok();
         }
     }

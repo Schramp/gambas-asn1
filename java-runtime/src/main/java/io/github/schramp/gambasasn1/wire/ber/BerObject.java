@@ -23,6 +23,8 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
 import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.Decoded;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
+import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
+import io.github.schramp.gambasasn1.wire.spec.EnumUnknown;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Positions;
@@ -259,6 +261,11 @@ public final class BerObject {
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
             case MemberRef.Primitive(var p, var owner) -> BerPrimitive.encode(p, framing, out);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
+                // An unknown item encodes only as the number BER carried.
+                EnumUnknown u = slot.enumUnknown();
+                if (u != null && u.kind() != EnumUnknown.Kind.VALUE) {
+                    throw new EncodeException(u.encodeError(spec, "BER"));
+                }
                 byte[] content = BerPrimitive.encodeInteger(slot.enumGet());
                 switch (framing.resolve()) {
                     case BerTagging.Implicit(Tag tag) -> BerWriter.writePrimitive(out, tag, content);
@@ -342,17 +349,17 @@ public final class BerObject {
             case MemberRef.Primitive(var p, var owner) -> BerPrimitive.decode(p, framing, r);
             case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
                 switch (framing.resolve()) {
-                    case BerTagging.Implicit(Tag tag) -> decodeEnumerated(slot, tag, r);
+                    case BerTagging.Implicit(Tag tag) -> decodeEnumerated(slot, spec, tag, r);
                     case BerTagging.Explicit(Tag tag) -> {
                         int start = r.position();
                         Tlv outer = r.readTlv();
                         if (!outer.tag().equals(tag)) {
                             throw new DecodeException("expected EXPLICIT tag " + tag + ", got " + outer.tag(), start);
                         }
-                        decodeEnumerated(slot, ENUMERATED_TAG, r.nested(outer.value()));
+                        decodeEnumerated(slot, spec, ENUMERATED_TAG, r.nested(outer.value()));
                     }
                     case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
-                    default -> decodeEnumerated(slot, ENUMERATED_TAG, r);
+                    default -> decodeEnumerated(slot, spec, ENUMERATED_TAG, r);
                 }
             }
             case MemberRef.Composite(Asn1Seq s) -> {
@@ -412,10 +419,11 @@ public final class BerObject {
     }
 
     /**
-     * One ENUMERATED TLV under {@code tag} into {@code slot} (X.690 §8.4);
-     * a value that is not one of the type's items is an error.
+     * One ENUMERATED TLV under {@code tag} into {@code slot} (X.690 §8.4).
+     * A value that is not one of the type's items is kept as an unknown item
+     * by an extensible type (X.680 §52.1) and an error otherwise.
      */
-    private static void decodeEnumerated(EnumSlot slot, Tag tag, BerReader r) throws DecodeException {
+    private static void decodeEnumerated(EnumSlot slot, EnumSpec spec, Tag tag, BerReader r) throws DecodeException {
         int start = r.position();
         Tlv tlv = r.readTlv();
         if (!tlv.tag().equals(tag)) {
@@ -423,7 +431,7 @@ public final class BerObject {
         }
         int len = tlv.value().remaining();
         long v = BerPrimitive.decodeInteger(tlv.value(), start);
-        if (!slot.enumSet(v)) {
+        if (!EnumUnknown.setNumber(slot, spec, v)) {
             throw new DecodeException("invalid ENUMERATED value: " + v, start);
         }
         r.markContents(slot, r.position() - len, r.position());
@@ -633,9 +641,11 @@ public final class BerObject {
             encodeMemberRef(c.getActive(), c.spec().alternatives().get(i).ber(), out, opts);
             return;
         }
+        // An alternative of a newer schema version goes back as the TLV it
+        // arrived in (X.680 §52.1 relaying).
         Asn1Choice.UnknownExtension ext = c.unknownExtension();
-        if (ext == null) {
-            throw new EncodeException("CHOICE " + c.spec().name() + ": no alternative selected");
+        if (ext == null || ext.origin() != Asn1Choice.UnknownExtension.Origin.BER) {
+            throw new EncodeException(Asn1Choice.noAlternativeError(c, "BER"));
         }
         BerWriter.writePrimitive(out, ext.tag(), ext.bytes());
     }
@@ -680,7 +690,7 @@ public final class BerObject {
             throw new DecodeException("CHOICE " + spec.name() + ": no alternative has tag " + tag, start);
         }
         Tlv tlv = r.readTlv();
-        c.setUnknownExtension(new Asn1Choice.UnknownExtension(tlv.tag(), tlv.value().remainingBytes()));
+        c.setUnknownExtension(Asn1Choice.UnknownExtension.ber(tlv.tag(), tlv.value().remainingBytes()));
     }
 
     /** The alternative whose dispatch entry has {@code tag}'s class and number, or -1. */

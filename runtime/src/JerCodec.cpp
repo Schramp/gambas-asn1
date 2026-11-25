@@ -934,9 +934,18 @@ struct AnyJerHandler final : IJerTypeHandler {
 
 // ENUMERATED → json: "identifier" (quoted, X.697 §8.4)
 struct EnumeratedJerHandler final : IJerTypeHandler {
+    /// @brief Encode an ENUMERATED as its quoted identifier (X.697 §8.4).
+    ///        An unknown item read from PER, XER or JER has no identifier
+    ///        here and fails the encode.
     void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        long v = static_cast<const EnumValue*>(src)->value();
+        const auto& ev = *static_cast<const EnumValue*>(src);
+        auto kind = ev.unknown_kind();
+        if (kind == EnumValue::Unknown::Ordinal || kind == EnumValue::Unknown::Identifier) {
+            s.set_encode_failed(enum_unknown_encode_error(def.name, ev, "JER").c_str());
+            return;
+        }
+        long v = ev.value();
         const EnumSpec& spec = *def.enum_spec;
         // Binary search for the name
         int lo = 0, hi = spec.count - 1;
@@ -951,6 +960,8 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
         // Unknown value — emit as number (X.697 extension point)
         s.os() << v;
     }
+    /// @brief Decode a quoted identifier; an unknown identifier of an
+    ///        extensible type is kept as an unknown item (X.680 §52.1).
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
@@ -958,11 +969,16 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
             std::string name;
             if (auto r = jer_detail::read_json_string(s, name); !r) return r;
             const EnumSpec& spec = *def.enum_spec;
+            auto& ev = *static_cast<EnumValue*>(dest);
             for (int i = 0; i < spec.count; ++i) {
                 if (name == spec.entries[i].name) {
-                    static_cast<EnumValue*>(dest)->set(spec.entries[i].value);
+                    ev.set(spec.entries[i].value);
                     return decode_ok();
                 }
+            }
+            if (spec.extensible) {
+                ev.set_unknown_identifier();
+                return decode_ok();
             }
             return decode_err(DecodeError("JER: unknown enum value: " + name));
         }
@@ -973,7 +989,11 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
         auto [ptr, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), v);
         if (ec != std::errc{})
             return decode_err(DecodeError("JER: invalid ENUMERATED: " + tok));
-        static_cast<EnumValue*>(dest)->set(v);
+        const EnumSpec& spec = *def.enum_spec;
+        if (spec.extensible && spec.validate(v) != 0)
+            static_cast<EnumValue*>(dest)->set_unknown_value(v);
+        else
+            static_cast<EnumValue*>(dest)->set(v);
         return decode_ok();
     }
 };
@@ -1216,7 +1236,10 @@ struct ChoiceJerHandler final : IJerTypeHandler {
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) {
-            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            auto ext = ch->unknown_extension();
+            std::string reason = ext
+                ? choice_unknown_encode_error(def.name, *ext, "JER")
+                : std::string("CHOICE ") + def.name + ": no alternative selected";
             s.set_encode_failed(reason.c_str());
             return;
         }
