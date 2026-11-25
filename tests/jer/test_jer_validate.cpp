@@ -118,6 +118,8 @@ int main() {
     };
 
     { HasPct h{}; h.v = 50;  expect_rt("PercentInt valid roundtrip   → 0", h, HasPct::asn_DEF, 0); }
+    { HasColor h{}; h.v = Color::red;                         expect_rt("Color red roundtrip          → 0", h, HasColor::asn_DEF, 0); }
+    { HasColor h{}; h.v = Color(static_cast<Color::Enm>(99)); expect_rt("Color 99 roundtrip (number)  → 2", h, HasColor::asn_DEF, 2); }
     { HasPct h{}; h.v = 200; expect_rt("PercentInt invalid roundtrip → 2", h, HasPct::asn_DEF, 2); }
     { HasTiny h{}; h.v = OctetString{std::vector<uint8_t>{1,2,3}}; expect_rt("TinyBlob valid (size 3)  → 0", h, HasTiny::asn_DEF, 0); }
     { HasTiny h{}; h.v = OctetString{std::vector<uint8_t>{1}};     expect_rt("TinyBlob invalid (size 1)→ 2", h, HasTiny::asn_DEF, 2); }
